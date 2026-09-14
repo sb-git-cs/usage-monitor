@@ -4,6 +4,7 @@ const config = require("./config");
 const poller = require("./poller");
 const alerts = require("./alerts");
 const taskbarLayout = require("./taskbarLayout");
+const autostart = require("./autostart");
 
 let cfg;
 let overlay;
@@ -429,9 +430,8 @@ function buildMenu() {
       type: "checkbox",
       checked: !!cfg.autostart,
       click: (item) => {
-        cfg.autostart = item.checked;
+        cfg.autostart = autostart.apply(item.checked);
         config.save(cfg);
-        app.setLoginItemSettings({ openAtLogin: !!cfg.autostart });
       },
     },
     {
@@ -670,7 +670,8 @@ if (!gotLock) {
     app.setName("Usage Monitor");
     cfg = config.ensure();
     overlayPinned = !!cfg.overlay_pinned;
-    app.setLoginItemSettings({ openAtLogin: !!cfg.autostart });
+    cfg.autostart = autostart.apply(cfg.autostart !== false);
+    config.save(cfg);
 
     createWindows();
     wireIpc();

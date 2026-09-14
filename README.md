@@ -10,7 +10,7 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 
 | Surface | What it does |
 | --- | --- |
-| **Desktop overlay** | Large glass HUD. Drag anywhere on screen; position is remembered. Pin to keep it up. Empty space clicks through. |
+| **Desktop overlay** | Large glass HUD in a single column. Drag anywhere; position is remembered. Hide minimizes to the taskbar. |
 | **Flyout** | Compact meters panel in a single column. **Open flyout** / **Hide flyout**. **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks or releases the full panel just above the taskbar. |
 | **Chips** | Small `C 82/100` strip **on** the taskbar. **Snap chips to taskbar** is this strip only. |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
@@ -46,7 +46,16 @@ The first launch:
 - Puts **Usage Monitor** on the Windows taskbar (click it to show the overlay)
 - Snaps the compact **chips** widget onto the taskbar in an empty gap (always visible unless you hide it)
 - Shows the **desktop overlay**
-- Enables **Start with Windows** (uncheck from the right-click menu if you do not want that)
+- Registers **Start with Windows** (login item + Startup folder shortcut). Uncheck **Start with Windows** in the right-click menu to turn that off.
+
+## Start with Windows
+
+After the first `npm start`, the app launches at sign-in. It registers:
+
+1. A Windows **logon item** pointing at this install’s `electron.exe` and the project folder
+2. A shortcut in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Usage Monitor.lnk`
+
+Node.js must stay on your PATH (or leave `node_modules/electron` in place). To disable, right-click the overlay or chips and uncheck **Start with Windows**.
 
 ## Use
 
@@ -56,8 +65,7 @@ The first launch:
   - Hide / show chips
   - Refresh now
   - **Refresh every** — 5, 15, 30, or 60 seconds (default **5s**)
-  - Start with Windows
-  - Pin overlay
+  - **Start with Windows** (on by default after first launch)
   - **Open flyout** / **Hide flyout**
   - **Snap flyout to taskbar** / **Unsnap flyout from taskbar**
   - **Snap chips to taskbar** / **Unsnap chips from taskbar**
@@ -85,6 +93,7 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 | No chips on the taskbar | Right-click overlay → **Show chips on taskbar**. They sit in an empty gap, not over the clock. |
 | Overlay missing | Click **Usage Monitor** on the Windows taskbar, or right-click chips → **Open overlay** |
 | Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off for 15 minutes and keeps the last good numbers |
+| Does not start at logon | Run `npm start` once, leave **Start with Windows** checked. Confirm `Usage Monitor.lnk` exists in the Windows Startup folder. |
 | Quit | Right-click chips or overlay → **Quit**. Closing/hiding the overlay only minimizes it. |
 
 ## License
