@@ -11,7 +11,7 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 | Surface | What it does |
 | --- | --- |
 | **Desktop overlay** | Large glass HUD. Drag anywhere on screen; position is remembered. Pin to keep it up. Empty space clicks through. |
-| **Flyout** | Compact meters panel in a single column. **Open flyout** / **Hide flyout** from the menu. **Snap flyout to taskbar** parks the full panel just above the taskbar. |
+| **Flyout** | Compact meters panel in a single column. **Open flyout** / **Hide flyout**. **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks or releases the full panel just above the taskbar. |
 | **Chips** | Small `C 82/100` strip **on** the taskbar. **Snap chips to taskbar** is this strip only. |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
 
@@ -59,8 +59,8 @@ The first launch:
   - Start with Windows
   - Pin overlay
   - **Open flyout** / **Hide flyout**
-  - **Snap flyout to taskbar** — full meters panel, just above the taskbar
-  - **Snap chips to taskbar** — small `C / X / G` strip on the taskbar
+  - **Snap flyout to taskbar** / **Unsnap flyout from taskbar**
+  - **Snap chips to taskbar** / **Unsnap chips from taskbar**
   - Quit
 - Drag overlay, flyout, or chips **from the title bar / dotted grip** to move them anywhere. Positions are saved.
 - Overlay and flyout use a **single-column** layout. Snap to taskbar keeps chips on the bar and the flyout panel just above it.

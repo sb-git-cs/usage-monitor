@@ -435,16 +435,20 @@ function buildMenu() {
       },
     },
     {
-      label: "Snap flyout to taskbar",
-      type: "checkbox",
-      checked: !!cfg.flyout_docked,
-      click: (item) => setFlyoutDocked(item.checked),
+      label: cfg.flyout_docked ? "Unsnap flyout from taskbar" : "Snap flyout to taskbar",
+      click: () => {
+        if (cfg.flyout_docked) {
+          setFlyoutDocked(false);
+        } else {
+          setFlyoutPinned(true);
+          setFlyoutDocked(true);
+          showFlyout();
+        }
+      },
     },
     {
-      label: "Snap chips to taskbar",
-      type: "checkbox",
-      checked: !!cfg.chips_docked,
-      click: (item) => setChipsDocked(item.checked),
+      label: cfg.chips_docked ? "Unsnap chips from taskbar" : "Snap chips to taskbar",
+      click: () => setChipsDocked(!cfg.chips_docked),
     },
     { type: "separator" },
     { label: "Quit", click: () => app.quit() },
