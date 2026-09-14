@@ -12,6 +12,8 @@ const DEFAULTS = {
   chips_docked: false,
   chips_x: null,
   chips_y: null,
+  chips_dock_x: null,
+  chips_dock_y: null,
   flyout_docked: false,
   flyout_pinned: false,
   flyout_x: null,

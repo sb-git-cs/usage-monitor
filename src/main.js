@@ -5,6 +5,7 @@ const poller = require("./poller");
 const alerts = require("./alerts");
 const { iconFor } = require("./trayIcons");
 const { hottestWindow, statusOk, ALERT_USED_PCT } = require("./models");
+const taskbarLayout = require("./taskbarLayout");
 
 let cfg;
 let overlay;
@@ -69,31 +70,42 @@ function taskbarInfo(display) {
   };
 }
 
+function otherDockedRects(except) {
+  const out = [];
+  if (except !== "flyout" && flyout && cfg.flyout_docked && flyout.isVisible() && !flyout.isDestroyed()) {
+    const b = flyout.getBounds();
+    out.push({ x: b.x, y: b.y, w: b.width, h: b.height, name: "flyout" });
+  }
+  if (except !== "chips" && chips && cfg.chips_docked && chips.isVisible() && !chips.isDestroyed()) {
+    const b = chips.getBounds();
+    out.push({ x: b.x, y: b.y, w: b.width, h: b.height, name: "chips" });
+  }
+  return out;
+}
+
+function applyDockedPos(win, pos) {
+  if (!win || !pos || !pos.ok) return;
+  placingChips = true;
+  placingFlyout = true;
+  win.setPosition(pos.x, pos.y);
+  placingChips = false;
+  placingFlyout = false;
+}
+
 function placeChipsDocked() {
   if (!chips) return;
-  const display = screen.getPrimaryDisplay();
-  const info = taskbarInfo(display);
   const [w, h] = chips.getSize();
-  const trayReserve = 176;
-  const { bounds } = info;
-  let x;
-  let y;
-  if (info.edge === "bottom") {
-    x = bounds.x + bounds.width - trayReserve - w - 10;
-    y = bounds.y + bounds.height - info.thickness + Math.round((info.thickness - h) / 2);
-  } else if (info.edge === "top") {
-    x = bounds.x + bounds.width - trayReserve - w - 10;
-    y = bounds.y + Math.round((info.thickness - h) / 2);
-  } else if (info.edge === "right") {
-    x = bounds.x + bounds.width - info.thickness + Math.round((info.thickness - w) / 2);
-    y = bounds.y + bounds.height - trayReserve - h - 10;
-  } else {
-    x = bounds.x + Math.round((info.thickness - w) / 2);
-    y = bounds.y + bounds.height - trayReserve - h - 10;
+  const extras = otherDockedRects("chips");
+  let pos;
+  if (cfg.chips_dock_x != null) {
+    pos = taskbarLayout.snapDocked(cfg.chips_dock_x, cfg.chips_dock_y || 0, w, h, extras);
   }
-  placingChips = true;
-  chips.setPosition(Math.round(x), Math.round(y));
-  placingChips = false;
+  if (!pos || !pos.ok) pos = taskbarLayout.defaultDocked(w, h, extras);
+  if (pos && pos.ok) {
+    cfg.chips_dock_x = pos.x;
+    cfg.chips_dock_y = pos.y;
+    applyDockedPos(chips, pos);
+  }
 }
 
 function placeChipsFloating() {
@@ -163,31 +175,13 @@ function sendFlyoutState() {
 
 function placeFlyoutDocked() {
   if (!flyout) return;
-  const display = screen.getPrimaryDisplay();
-  const info = taskbarInfo(display);
   const w = 252;
-  const h = Math.min(32, Math.max(28, info.thickness - 12));
-  const trayReserve = 176;
-  const { bounds } = info;
-  let x;
-  let y;
+  const h = 32;
   placingFlyout = true;
   flyout.setSize(w, h);
-  if (info.edge === "bottom") {
-    x = bounds.x + bounds.width - trayReserve - w - 8;
-    y = bounds.y + bounds.height - info.thickness + Math.round((info.thickness - h) / 2);
-  } else if (info.edge === "top") {
-    x = bounds.x + bounds.width - trayReserve - w - 8;
-    y = bounds.y + Math.round((info.thickness - h) / 2);
-  } else if (info.edge === "right") {
-    x = bounds.x + bounds.width - info.thickness + Math.round((info.thickness - w) / 2);
-    y = bounds.y + bounds.height - trayReserve - h - 8;
-  } else {
-    x = bounds.x + Math.round((info.thickness - w) / 2);
-    y = bounds.y + bounds.height - trayReserve - h - 8;
-  }
-  flyout.setPosition(Math.round(x), Math.round(y));
   placingFlyout = false;
+  const pos = taskbarLayout.defaultDocked(w, h, otherDockedRects("flyout"));
+  if (pos && pos.ok) applyDockedPos(flyout, pos);
 }
 
 function placeFlyoutNearTray(bounds) {
@@ -455,8 +449,8 @@ function createWindows() {
   });
 
   chips = createWindow({
-    width: 248,
-    height: 32,
+    width: 168,
+    height: 24,
     focusable: true,
     hasShadow: false,
   });
@@ -471,7 +465,21 @@ function createWindows() {
   chips.on("moved", () => {
     if (placingChips) return;
     if (cfg.chips_docked) {
-      setChipsDocked(false);
+      const [x, y] = chips.getPosition();
+      const [w, h] = chips.getSize();
+      const snapped = taskbarLayout.snapDocked(x, y, w, h, otherDockedRects("chips"));
+      if (snapped.offTaskbar) {
+        setChipsDocked(false);
+        return;
+      }
+      if (snapped.ok && (snapped.x !== x || snapped.y !== y)) {
+        applyDockedPos(chips, snapped);
+      }
+      if (snapped.ok) {
+        cfg.chips_dock_x = snapped.x;
+        cfg.chips_dock_y = snapped.y;
+        config.save(cfg);
+      }
       return;
     }
     persistChipsPosition();
@@ -525,6 +533,17 @@ function wireIpc() {
   });
   ipcMain.handle("usage://get-interval", () => cfg.poll_interval_secs || 5);
   ipcMain.on("usage://set-interval", (_e, secs) => setPollInterval(secs));
+  ipcMain.on("usage://chips-resize", (_e, w, h) => {
+    if (!chips || chips.isDestroyed()) return;
+    const width = Math.max(72, Math.min(420, Math.round(w)));
+    const height = Math.max(18, Math.min(40, Math.round(h)));
+    const [cw, ch] = chips.getSize();
+    if (Math.abs(cw - width) < 2 && Math.abs(ch - height) < 2) return;
+    placingChips = true;
+    chips.setSize(width, height);
+    placingChips = false;
+    if (cfg.chips_docked) placeChipsDocked();
+  });
   ipcMain.on("usage://chips-hit", (_e, hit) => {
     if (!chips || chips.isDestroyed()) return;
     if (hit) chips.setIgnoreMouseEvents(false);
@@ -572,6 +591,7 @@ if (!gotLock) {
     });
 
     screen.on("display-metrics-changed", () => {
+      taskbarLayout.invalidate();
       placeChips();
       if (cfg.flyout_docked) placeFlyoutDocked();
     });

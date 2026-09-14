@@ -61,6 +61,7 @@ The first launch:
   - Dock chips to taskbar
   - Quit
 - Drag the flyout title bar to move it. Dragging a docked flyout undocks it. The panel is glass (see-through); clicks on empty space pass through to whatever is behind.
+- **Docked chips** sit in empty taskbar space only (they will not cover Start, app icons, or the clock). They stay small. Drag the grip along the taskbar to reposition; drag off the bar to undock.
 - Overlay **×** hides the HUD; it does not quit the app
 - Click a provider card to open that product’s official usage page
 

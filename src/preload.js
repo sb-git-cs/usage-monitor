@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("usage", {
   setIntervalSecs: (secs) => ipcRenderer.send("usage://set-interval", secs),
   onInterval: (cb) => ipcRenderer.on("usage://interval", (_e, secs) => cb(secs)),
   setChipsHit: (hit) => ipcRenderer.send("usage://chips-hit", hit),
+  resizeChips: (w, h) => ipcRenderer.send("usage://chips-resize", w, h),
   getChipsDocked: () => ipcRenderer.invoke("usage://get-chips-docked"),
   onChipsDocked: (cb) => ipcRenderer.on("usage://chips-docked", (_e, docked) => cb(docked)),
   setFlyoutHit: (hit) => ipcRenderer.send("usage://flyout-hit", hit),

@@ -36,6 +36,10 @@ function render(snapshot) {
     parts.push(`<div class="pct-icon ${cls}" data-id="${p.id}"><span class="who">${letter(p.id)}</span>${num}</div>`);
   }
   root.innerHTML = parts.join("");
+  requestAnimationFrame(() => {
+    const r = bar.getBoundingClientRect();
+    window.usage.resizeChips(Math.ceil(r.width + 1), Math.ceil(r.height + 1));
+  });
   root.querySelectorAll(".pct-icon").forEach((el) => {
     el.addEventListener("click", () => window.usage.toggleFlyout());
     el.addEventListener("contextmenu", (e) => {
