@@ -12,6 +12,7 @@
   },
   "scripts": {
     "start": "electron .",
+    "start:silent": "wscript scripts/launch.vbs",
     "dist": "electron-builder --win nsis"
   },
   "devDependencies": {

@@ -317,8 +317,7 @@ function showFlyout(bounds) {
 function hideFlyout(force) {
   if (!flyout) return;
   if (!force && flyoutStaysOpen()) return;
-  flyout.setAlwaysOnTop(false);
-  flyout.minimize();
+  flyout.hide();
 }
 
 function broadcast(snap) {
@@ -461,7 +460,6 @@ function createWindows() {
     height: 360,
     focusable: true,
     hasShadow: false,
-    skipTaskbar: false,
   });
   flyout.loadFile(ui("flyout.html"));
   flyout.setAlwaysOnTop(true, cfg.flyout_docked || cfg.flyout_pinned ? "pop-up-menu" : "floating");
@@ -554,16 +552,18 @@ function wireIpc() {
   ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
 }
 
+app.setName("Usage Monitor");
+if (process.platform === "win32") {
+  app.setAppUserModelId("Shivam.UsageMonitor");
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", () => showFlyout());
   app.whenReady().then(() => {
-    if (process.platform === "win32") {
-      app.setAppUserModelId("local.usage-monitor");
-    }
-    app.setName("Usage Monitor");
+    Menu.setApplicationMenu(null);
     cfg = config.ensure();
     cfg.autostart = autostart.apply(cfg.autostart !== false);
     config.save(cfg);
@@ -575,7 +575,7 @@ if (!gotLock) {
       flyout.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
       sendFlyoutState();
       if (latest) flyout.webContents.send("usage://snapshot", latest);
-      showFlyout();
+      if (flyoutStaysOpen()) showFlyout();
     });
     chips.webContents.on("did-finish-load", () => {
       chips.webContents.send("usage://chips-docked", !!cfg.chips_docked);
