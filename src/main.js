@@ -231,18 +231,9 @@ function sendFlyoutState() {
 
 function placeFlyoutDocked() {
   if (!flyout) return;
-  const [cw, ch] = flyout.getSize();
-  const w = Math.min(Math.max(cw, 160), 280);
-  const h = Math.min(Math.max(ch, 24), 36);
-  placingFlyout = true;
-  flyout.setSize(w, h);
-  placingFlyout = false;
+  const [w, h] = flyout.getSize();
   const extras = otherDockedRects("flyout");
-  let pos;
-  if (cfg.flyout_dock_x != null) {
-    pos = taskbarLayout.snapDocked(cfg.flyout_dock_x, cfg.flyout_dock_y || 0, w, h, extras);
-  }
-  if (!pos || !pos.ok) pos = taskbarLayout.defaultDocked(w, h, extras);
+  const pos = taskbarLayout.anchorAboveTaskbar(w, h, extras, cfg.flyout_dock_x);
   if (pos && pos.ok) {
     cfg.flyout_dock_x = pos.x;
     cfg.flyout_dock_y = pos.y;
@@ -298,18 +289,14 @@ function setFlyoutDocked(docked, opts = {}) {
   flyout.setAlwaysOnTop(true, cfg.flyout_docked ? "pop-up-menu" : "floating");
   if (cfg.flyout_docked) {
     placeFlyoutDocked();
-    keepWidgetOnTop(flyout, true);
-  } else {
+    flyout.setAlwaysOnTop(true, "pop-up-menu");
+    if (!flyout.isVisible()) flyout.showInactive();
+  } else if (opts.keepPos && flyout) {
+    const [w, h] = flyout.getSize();
+    const p = clampToDisplay(cfg.flyout_x, cfg.flyout_y, w, h);
     placingFlyout = true;
-    flyout.setSize(320, 360);
+    flyout.setPosition(p.x, p.y);
     placingFlyout = false;
-    if (opts.keepPos) {
-      const [w, h] = flyout.getSize();
-      const p = clampToDisplay(cfg.flyout_x, cfg.flyout_y, w, h);
-      placingFlyout = true;
-      flyout.setPosition(p.x, p.y);
-      placingFlyout = false;
-    }
   }
 }
 
@@ -495,8 +482,8 @@ function finishDrag() {
 
   if (win === flyout) {
     if (cfg.flyout_docked) {
-      const snapped = taskbarLayout.snapDocked(x, y, w, h, otherDockedRects("flyout"));
-      if (snapped.ok) {
+      const snapped = taskbarLayout.anchorAboveTaskbar(w, h, otherDockedRects("flyout"), x);
+      if (snapped && snapped.ok) {
         cfg.flyout_dock_x = snapped.x;
         cfg.flyout_dock_y = snapped.y;
         applyDockedPos(flyout, snapped);
@@ -638,12 +625,10 @@ function wireIpc() {
   }));
   ipcMain.on("usage://flyout-resize", (_e, h, w) => {
     if (!flyout) return;
-    if (cfg.flyout_docked) {
-      setSizeKeepPos(flyout, w || 252, Math.min(h || 32, 36));
-      return;
-    }
-    const height = Math.max(120, Math.min(700, Math.round(h) + 4));
-    setSizeKeepPos(flyout, w || 320, height);
+    const width = Math.max(280, Math.min(520, Math.round(w || 320)));
+    const height = Math.max(140, Math.min(860, Math.round(h)));
+    setSizeKeepPos(flyout, width, height);
+    if (cfg.flyout_docked && !dragState) placeFlyoutDocked();
   });
   ipcMain.on("usage://tray-menu", () => popupAppMenu());
   ipcMain.on("usage://open-usage", (_e, id) => {

@@ -11,8 +11,8 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 | Surface | What it does |
 | --- | --- |
 | **Desktop overlay** | Large glass HUD. Drag anywhere on screen; position is remembered. Pin to keep it up. Empty space clicks through. |
-| **Flyout** | Compact glass panel. Drag anywhere. **Keep flyout open** pins it as a desktop widget. **Snap flyout to taskbar** parks a slim version in an empty taskbar gap (never over Start, app icons, or the clock). Drag off the taskbar to float it again. |
-| **Chips** | Smallest `C 82/100` widget. Drag anywhere. **Snap chips to taskbar** uses the same gap-aware docking. Drag along the bar to reposition; drag off to place it anywhere. |
+| **Flyout** | Compact meters panel (all 5-hour / weekly rows). Width fits `used/total %`. **Keep flyout open** pins it on the desktop. **Snap flyout to taskbar** parks the **full panel** just above the taskbar in an empty gap — not the chips bar. |
+| **Chips** | Small `C 82/100` strip **on** the taskbar. **Snap chips to taskbar** is this strip only. |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
 
 ![Taskbar flyout](docs/screenshots/tray-flyout.png)
@@ -59,8 +59,8 @@ The first launch:
   - Start with Windows
   - Pin overlay
   - **Keep flyout open** — stays up; drag it anywhere
-  - **Snap flyout to taskbar** — gap-aware; will not cover existing taskbar widgets
-  - **Snap chips to taskbar** — same gap-aware docking, compact
+  - **Snap flyout to taskbar** — full meters panel, just above the taskbar
+  - **Snap chips to taskbar** — small `C / X / G` strip on the taskbar
   - Quit
 - Drag overlay, flyout, or chips **from the title bar / dotted grip** to move them anywhere. Positions are saved.
 - **Stick overlay here** / **Keep flyout open** / **Snap to taskbar** locks that surface. Snapped widgets stay on the taskbar in an empty gap until you uncheck snap. Uncheck snap first if you want to float them again.

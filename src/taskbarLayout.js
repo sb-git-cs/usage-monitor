@@ -121,4 +121,48 @@ function defaultDocked(w, h, extras) {
   return { x: Math.round(cross), y: Math.round(along), offTaskbar: false, ok: true };
 }
 
-module.exports = { loadLayout, invalidate, snapDocked, defaultDocked };
+function anchorAboveTaskbar(w, h, extras, preferredAlong) {
+  const layout = loadLayout();
+  const tray = layout && layout.tray;
+  if (!tray) return null;
+  const { edge, horizontal } = axisOf(tray);
+  const occupied = [...(layout.occupied || []), ...extraOccupied(extras)];
+  const sizeAlong = horizontal ? w : h;
+  const gaps = intervalsOnAxis(tray, occupied, horizontal)
+    .map(([a, b]) => [a + PAD, b - PAD])
+    .filter(([a, b]) => b - a >= sizeAlong);
+
+  let along;
+  if (gaps.length) {
+    let chosen = gaps[gaps.length - 1];
+    if (preferredAlong != null) {
+      let best = Infinity;
+      for (const g of gaps) {
+        const clamped = Math.min(Math.max(preferredAlong, g[0]), g[1] - sizeAlong);
+        const dist = Math.abs(clamped - preferredAlong);
+        if (dist < best) {
+          best = dist;
+          chosen = g;
+        }
+      }
+      along = Math.min(Math.max(preferredAlong, chosen[0]), chosen[1] - sizeAlong);
+    } else {
+      along = chosen[1] - sizeAlong;
+    }
+  } else {
+    along = (horizontal ? tray.x + tray.w : tray.y + tray.h) - sizeAlong - PAD;
+  }
+
+  let x;
+  let y;
+  if (horizontal) {
+    x = along;
+    y = edge === "bottom" ? tray.y - h : tray.y + tray.h;
+  } else {
+    y = along;
+    x = edge === "right" ? tray.x - w : tray.x + tray.w;
+  }
+  return { x: Math.round(x), y: Math.round(y), ok: true, offTaskbar: false };
+}
+
+module.exports = { loadLayout, invalidate, snapDocked, defaultDocked, anchorAboveTaskbar };
