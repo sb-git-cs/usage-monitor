@@ -1,29 +1,65 @@
-const { execFileSync } = require("child_process");
+const { execFile } = require("child_process");
 const path = require("path");
 
 const SCRIPT = path.join(__dirname, "..", "scripts", "taskbar-layout.ps1");
 const PAD = 6;
 let cache = { at: 0, data: null };
+let refreshing = false;
 
-function loadLayout() {
-  const now = Date.now();
-  if (cache.data && now - cache.at < 1500) return cache.data;
+function fallbackFromScreen() {
   try {
-    const raw = execFileSync(
-      "powershell.exe",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT],
-      { encoding: "utf8", timeout: 4000, windowsHide: true }
-    );
-    const parsed = JSON.parse(String(raw).trim());
-    cache = { at: now, data: parsed };
-    return parsed;
+    const { screen } = require("electron");
+    const d = screen.getPrimaryDisplay();
+    const { bounds, workArea } = d;
+    const bottom = bounds.y + bounds.height - (workArea.y + workArea.height);
+    const trayH = Math.max(bottom, 40);
+    const tray = {
+      x: bounds.x,
+      y: bounds.y + bounds.height - trayH,
+      w: bounds.width,
+      h: trayH,
+    };
+    return {
+      tray,
+      occupied: [
+        { name: "ReBarWindow32", x: bounds.x, y: tray.y, w: Math.floor(bounds.width * 0.55), h: tray.h },
+        { name: "TrayNotifyWnd", x: bounds.x + bounds.width - 180, y: tray.y, w: 180, h: tray.h },
+      ],
+    };
   } catch {
-    return cache.data;
+    return null;
   }
 }
 
+function refreshAsync() {
+  if (refreshing) return;
+  refreshing = true;
+  execFile(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT],
+    { encoding: "utf8", timeout: 4000, windowsHide: true },
+    (err, stdout) => {
+      refreshing = false;
+      if (err || !stdout) return;
+      try {
+        const parsed = JSON.parse(String(stdout).trim());
+        if (parsed && parsed.tray) cache = { at: Date.now(), data: parsed };
+      } catch {
+        /* keep previous */
+      }
+    }
+  );
+}
+
+function loadLayout() {
+  const now = Date.now();
+  if (!cache.data || now - cache.at > 8000) refreshAsync();
+  return cache.data || fallbackFromScreen();
+}
+
 function invalidate() {
-  cache = { at: 0, data: null };
+  cache = { at: 0, data: cache.data };
+  refreshAsync();
 }
 
 function axisOf(tray) {

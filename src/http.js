@@ -9,7 +9,23 @@ function request(method, url, { headers = {}, body = null } = {}) {
     const u = new URL(url);
     const lib = u.protocol === "http:" ? http : https;
     const payload = body == null ? null : Buffer.from(body);
-    const req = lib.request(
+    let settled = false;
+    let req;
+    const done = (fn) => (arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killer);
+      fn(arg);
+    };
+    const killer = setTimeout(() => {
+      try {
+        if (req) req.destroy();
+      } catch {
+        /* ignore */
+      }
+      done(reject)(new Error("timeout"));
+    }, TIMEOUT_MS);
+    req = lib.request(
       {
         protocol: u.protocol,
         hostname: u.hostname,
@@ -27,15 +43,21 @@ function request(method, url, { headers = {}, body = null } = {}) {
         res.on("data", (c) => chunks.push(c));
         res.on("end", () => {
           const text = Buffer.concat(chunks).toString("utf8");
-          resolve({ status: res.statusCode, text, headers: res.headers });
+          done(resolve)({ status: res.statusCode, text, headers: res.headers });
         });
       }
     );
     req.on("timeout", () => {
       req.destroy();
-      reject(new Error("timeout"));
+      done(reject)(new Error("timeout"));
     });
-    req.on("error", reject);
+    req.on("error", done(reject));
+    req.on("socket", (socket) => {
+      socket.setTimeout(TIMEOUT_MS, () => {
+        socket.destroy();
+        done(reject)(new Error("timeout"));
+      });
+    });
     if (payload) req.write(payload);
     req.end();
   });

@@ -581,6 +581,18 @@ if (!gotLock) {
       chips.webContents.send("usage://chips-docked", !!cfg.chips_docked);
       if (latest) chips.webContents.send("usage://snapshot", latest);
     });
+    const revive = (win) => {
+      if (!win || win.isDestroyed()) return;
+      win.webContents.on("render-process-gone", () => {
+        try {
+          win.webContents.reload();
+        } catch {
+          /* ignore */
+        }
+      });
+    };
+    revive(flyout);
+    revive(chips);
 
     screen.on("display-metrics-changed", () => {
       taskbarLayout.invalidate();
@@ -596,19 +608,15 @@ if (!gotLock) {
       });
     });
 
-    let lastTrayKey = "";
     setInterval(() => {
       if (dragState) return;
-      const layout = taskbarLayout.loadLayout();
-      const key = JSON.stringify(layout && layout.tray);
-      if (key !== lastTrayKey) {
-        lastTrayKey = key;
-        if (cfg.chips_docked && !cfg.chips_hidden) placeChipsDocked();
-        if (cfg.flyout_docked && flyout && flyout.isVisible()) placeFlyoutDocked();
+      if (chips && !cfg.chips_hidden && chips.isVisible()) {
+        chips.setAlwaysOnTop(true, cfg.chips_docked ? "screen-saver" : "pop-up-menu");
       }
-      if (chips && !cfg.chips_hidden) keepWidgetOnTop(chips, cfg.chips_docked);
-      if (flyout && cfg.flyout_docked && flyout.isVisible()) keepWidgetOnTop(flyout, true);
-    }, 2000);
+      if (flyout && cfg.flyout_docked && flyout.isVisible()) {
+        flyout.setAlwaysOnTop(true, "pop-up-menu");
+      }
+    }, 15000);
   });
 }
 

@@ -6,6 +6,24 @@ const cache = require("./cache");
 
 const adapters = { claude, codex, grok };
 const backoffUntil = {};
+const ADAPTER_TIMEOUT_MS = 9000;
+const POLL_WATCHDOG_MS = 16000;
+
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label || "op"} timeout`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
 
 function mergeWithCache(fresh, cached) {
   if (!cached) return fresh;
@@ -37,7 +55,7 @@ async function pollOnce(cfg) {
             return { ...cached, status: { state: "stale", age_secs: Math.round(age) }, source: "cache" };
           }
         }
-        const fresh = await adapters[id].fetchUsage(cfg);
+        const fresh = await withTimeout(adapters[id].fetchUsage(cfg), ADAPTER_TIMEOUT_MS, id);
         if (fresh && fresh._rateLimited) {
           backoffUntil[id] = Date.now() + 15 * 60 * 1000;
           delete fresh._rateLimited;
@@ -72,13 +90,19 @@ async function pollOnce(cfg) {
 function start(cfg, onSnapshot) {
   let timer = null;
   let inflight = false;
+  let inflightAt = 0;
   let stopped = false;
 
   async function tick() {
-    if (inflight || stopped) return;
+    if (stopped) return;
+    if (inflight) {
+      if (Date.now() - inflightAt < POLL_WATCHDOG_MS) return;
+      inflight = false;
+    }
     inflight = true;
+    inflightAt = Date.now();
     try {
-      const snap = await pollOnce(cfg);
+      const snap = await withTimeout(pollOnce(cfg), POLL_WATCHDOG_MS, "poll");
       if (!stopped) onSnapshot(snap);
     } catch (err) {
       console.error("poll failed", err.message);
