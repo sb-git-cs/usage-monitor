@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld("usage", {
   getChipsDocked: () => ipcRenderer.invoke("usage://get-chips-docked"),
   onChipsDocked: (cb) => ipcRenderer.on("usage://chips-docked", (_e, docked) => cb(docked)),
   setFlyoutHit: (hit) => ipcRenderer.send("usage://flyout-hit", hit),
-  resizeFlyout: (h) => ipcRenderer.send("usage://flyout-resize", h),
+  resizeFlyout: (h, w) => ipcRenderer.send("usage://flyout-resize", h, w),
   toggleFlyoutPin: () => ipcRenderer.send("usage://flyout-toggle-pin"),
   toggleFlyoutDock: () => ipcRenderer.send("usage://flyout-toggle-dock"),
   getFlyoutState: () => ipcRenderer.invoke("usage://get-flyout-state"),

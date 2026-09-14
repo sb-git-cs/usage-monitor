@@ -16,11 +16,15 @@ dockBtn.addEventListener("click", (e) => {
 });
 bindIntervalSelect(document.getElementById("interval"));
 
+let docked = false;
+
 function applyFlyoutState(state) {
   if (!state) return;
+  docked = !!state.docked;
   pinBtn.classList.toggle("active", !!state.pinned);
   dockBtn.classList.toggle("active", !!state.docked);
-  root.classList.toggle("docked", !!state.docked);
+  root.classList.toggle("docked", docked);
+  if (window.__last) render(window.__last);
 }
 
 document.addEventListener("mouseover", () => window.usage.setFlyoutHit(true));
@@ -31,7 +35,38 @@ document.addEventListener("mouseleave", () => {
 window.usage.onFlyoutState(applyFlyoutState);
 window.usage.getFlyoutState().then(applyFlyoutState);
 
+function renderDocked(snapshot) {
+  const parts = [`<div class="chip-grip" title="Drag to undock"></div>`];
+  for (const p of snapshot.providers || []) {
+    const hot = (p.windows || []).filter((w) => w.used_pct != null);
+    const five = hot.find((w) => w.kind === "five_hour");
+    const win = five || hot.reduce((a, b) => (!a || b.used_pct > a.used_pct ? b : a), null);
+    let cls = "gray";
+    let num = "—";
+    if (win) {
+      num = formatUsedTotal(win, true);
+      cls = alerting(win) ? "alert" : "ok";
+    }
+    parts.push(
+      `<div class="tb-item ${cls}" data-id="${p.id}" title="${p.display_name}"><span class="who">${letter(p.id)}</span>${num}</div>`
+    );
+  }
+  body.innerHTML = parts.join("");
+  body.querySelectorAll(".tb-item").forEach((el) => {
+    el.addEventListener("click", () => window.usage.openUsage(el.dataset.id));
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      window.usage.openTrayMenu();
+    });
+  });
+  requestAnimationFrame(() => window.usage.resizeFlyout(32, 252));
+}
+
 function render(snapshot) {
+  if (docked) {
+    renderDocked(snapshot);
+    return;
+  }
   const parts = [];
   for (const p of snapshot.providers || []) {
     const hint = statusText(p);

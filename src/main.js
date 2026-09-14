@@ -165,25 +165,27 @@ function placeFlyoutDocked() {
   if (!flyout) return;
   const display = screen.getPrimaryDisplay();
   const info = taskbarInfo(display);
-  const [w, h] = flyout.getSize();
+  const w = 252;
+  const h = Math.min(32, Math.max(28, info.thickness - 12));
   const trayReserve = 176;
-  const { bounds, workArea } = info;
+  const { bounds } = info;
   let x;
   let y;
-  if (info.edge === "bottom") {
-    x = bounds.x + bounds.width - trayReserve - w - 10;
-    y = workArea.y + workArea.height - h;
-  } else if (info.edge === "top") {
-    x = bounds.x + bounds.width - trayReserve - w - 10;
-    y = workArea.y;
-  } else if (info.edge === "right") {
-    x = workArea.x + workArea.width - w;
-    y = bounds.y + bounds.height - trayReserve - h - 10;
-  } else {
-    x = workArea.x;
-    y = bounds.y + bounds.height - trayReserve - h - 10;
-  }
   placingFlyout = true;
+  flyout.setSize(w, h);
+  if (info.edge === "bottom") {
+    x = bounds.x + bounds.width - trayReserve - w - 8;
+    y = bounds.y + bounds.height - info.thickness + Math.round((info.thickness - h) / 2);
+  } else if (info.edge === "top") {
+    x = bounds.x + bounds.width - trayReserve - w - 8;
+    y = bounds.y + Math.round((info.thickness - h) / 2);
+  } else if (info.edge === "right") {
+    x = bounds.x + bounds.width - info.thickness + Math.round((info.thickness - w) / 2);
+    y = bounds.y + bounds.height - trayReserve - h - 8;
+  } else {
+    x = bounds.x + Math.round((info.thickness - w) / 2);
+    y = bounds.y + bounds.height - trayReserve - h - 8;
+  }
   flyout.setPosition(Math.round(x), Math.round(y));
   placingFlyout = false;
 }
@@ -233,6 +235,15 @@ function setFlyoutDocked(docked) {
   if (cfg.flyout_docked) {
     placeFlyoutDocked();
     flyout.showInactive();
+    if (chips && !chips.isDestroyed()) chips.hide();
+  } else {
+    placingFlyout = true;
+    flyout.setSize(320, 360);
+    placingFlyout = false;
+    if (chips && !chips.isDestroyed()) {
+      placeChips();
+      chips.showInactive();
+    }
   }
 }
 
@@ -454,7 +465,7 @@ function createWindows() {
   chips.setIgnoreMouseEvents(true, { forward: true });
   chips.once("ready-to-show", () => {
     placeChips();
-    chips.showInactive();
+    if (!cfg.flyout_docked) chips.showInactive();
     chips.setIgnoreMouseEvents(true, { forward: true });
   });
   chips.on("moved", () => {
@@ -490,13 +501,16 @@ function wireIpc() {
     if (hit) flyout.setIgnoreMouseEvents(false);
     else flyout.setIgnoreMouseEvents(true, { forward: true });
   });
-  ipcMain.on("usage://flyout-resize", (_e, h) => {
+  ipcMain.on("usage://flyout-resize", (_e, h, w) => {
     if (!flyout) return;
+    if (cfg.flyout_docked) {
+      placeFlyoutDocked();
+      return;
+    }
     const height = Math.max(120, Math.min(700, Math.round(h) + 4));
     const [, cur] = flyout.getSize();
     if (Math.abs(cur - height) < 4) return;
-    flyout.setSize(320, height);
-    if (cfg.flyout_docked) placeFlyoutDocked();
+    flyout.setSize(w || 320, height);
   });
   ipcMain.on("usage://tray-menu", () => {
     if (trays[0]) trays[0].popUpContextMenu(buildMenu());
