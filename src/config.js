@@ -6,12 +6,13 @@ const ALLOWED_INTERVALS = [5, 15, 30, 60];
 
 const DEFAULTS = {
   poll_interval_secs: 5,
-  config_version: 3,
+  config_version: 4,
   overlay_visible: true,
   overlay_pinned: false,
   overlay_x: null,
   overlay_y: null,
-  chips_docked: false,
+  chips_docked: true,
+  chips_hidden: false,
   chips_x: null,
   chips_y: null,
   chips_dock_x: null,
@@ -61,6 +62,12 @@ function ensure() {
   if (fileVersion < 3) {
     cfg.poll_interval_secs = 5;
     cfg.config_version = 3;
+    dirty = true;
+  }
+  if (fileVersion < 4) {
+    cfg.chips_docked = true;
+    cfg.chips_hidden = false;
+    cfg.config_version = 4;
     dirty = true;
   }
   if (!ALLOWED_INTERVALS.includes(Number(cfg.poll_interval_secs))) {

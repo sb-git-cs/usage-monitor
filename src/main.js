@@ -62,6 +62,7 @@ function createWindow(opts) {
     transparent: true,
     resizable: false,
     skipTaskbar: true,
+    title: "Usage Monitor",
     alwaysOnTop: true,
     fullscreenable: false,
     backgroundColor: "#00000000",
@@ -165,6 +166,24 @@ function placeChips() {
   else placeChipsFloating();
 }
 
+function keepWidgetOnTop(win, docked) {
+  if (!win || win.isDestroyed()) return;
+  win.setAlwaysOnTop(true, docked ? "screen-saver" : "pop-up-menu");
+  if (!win.isVisible()) win.showInactive();
+  win.moveTop();
+}
+
+function setChipsHidden(hidden) {
+  cfg.chips_hidden = !!hidden;
+  config.save(cfg);
+  if (!chips || chips.isDestroyed()) return;
+  if (cfg.chips_hidden) chips.hide();
+  else {
+    placeChips();
+    keepWidgetOnTop(chips, cfg.chips_docked);
+  }
+}
+
 function setChipsDocked(docked, opts = {}) {
   cfg.chips_docked = !!docked;
   if (!cfg.chips_docked && chips) {
@@ -174,7 +193,7 @@ function setChipsDocked(docked, opts = {}) {
   }
   config.save(cfg);
   if (chips && !chips.isDestroyed()) {
-    chips.setAlwaysOnTop(true, cfg.chips_docked ? "pop-up-menu" : "floating");
+    keepWidgetOnTop(chips, cfg.chips_docked);
     chips.webContents.send("usage://chips-docked", cfg.chips_docked);
   }
   if (cfg.chips_docked) placeChipsDocked();
@@ -279,7 +298,7 @@ function setFlyoutDocked(docked, opts = {}) {
   flyout.setAlwaysOnTop(true, cfg.flyout_docked ? "pop-up-menu" : "floating");
   if (cfg.flyout_docked) {
     placeFlyoutDocked();
-    flyout.showInactive();
+    keepWidgetOnTop(flyout, true);
   } else {
     placingFlyout = true;
     flyout.setSize(320, 360);
@@ -343,7 +362,9 @@ function persistOverlayPosition() {
 
 function showOverlay(focus) {
   if (!overlay) return;
+  if (overlay.isMinimized()) overlay.restore();
   if (!overlay.isVisible()) placeOverlay();
+  overlay.setAlwaysOnTop(true, overlayPinned ? "pop-up-menu" : "floating");
   if (focus) overlay.show();
   else overlay.showInactive();
   cfg.overlay_visible = true;
@@ -352,7 +373,8 @@ function showOverlay(focus) {
 
 function hideOverlay() {
   if (!overlay) return;
-  overlay.hide();
+  overlay.setAlwaysOnTop(false);
+  overlay.minimize();
   cfg.overlay_visible = false;
   config.save(cfg);
 }
@@ -382,11 +404,15 @@ function broadcastInterval() {
 function buildMenu() {
   return Menu.buildFromTemplate([
     {
-      label: overlay && overlay.isVisible() ? "Hide overlay" : "Open overlay",
+      label: overlay && overlay.isVisible() && !overlay.isMinimized() ? "Hide overlay" : "Open overlay",
       click: () => {
-        if (overlay.isVisible()) hideOverlay();
+        if (overlay.isVisible() && !overlay.isMinimized()) hideOverlay();
         else showOverlay(true);
       },
+    },
+    {
+      label: cfg.chips_hidden ? "Show chips on taskbar" : "Hide chips",
+      click: () => setChipsHidden(!cfg.chips_hidden),
     },
     { label: "Refresh now", click: () => poll && poll.refresh() },
     {
@@ -515,12 +541,27 @@ function createWindows() {
     height: 560,
     focusable: true,
     hasShadow: false,
+    skipTaskbar: false,
   });
   overlay.loadFile(ui("overlay.html"));
   overlay.setAlwaysOnTop(true, overlayPinned ? "pop-up-menu" : "floating");
   overlay.on("moved", () => {
     if (placingOverlay || dragState) return;
     persistOverlayPosition();
+  });
+  overlay.on("minimize", () => {
+    cfg.overlay_visible = false;
+    saveSoon();
+  });
+  overlay.on("restore", () => {
+    cfg.overlay_visible = true;
+    overlay.setAlwaysOnTop(true, overlayPinned ? "pop-up-menu" : "floating");
+    saveSoon();
+  });
+  overlay.on("close", (e) => {
+    if (app.isQuitting) return;
+    e.preventDefault();
+    hideOverlay();
   });
   overlay.on("closed", () => {
     overlay = null;
@@ -552,8 +593,9 @@ function createWindows() {
   chips.loadFile(ui("chips.html"));
   chips.setAlwaysOnTop(true, cfg.chips_docked ? "pop-up-menu" : "floating");
   chips.once("ready-to-show", () => {
+    if (cfg.chips_hidden) return;
     placeChips();
-    chips.showInactive();
+    keepWidgetOnTop(chips, cfg.chips_docked);
   });
   chips.on("moved", () => {
     if (placingChips || dragState) return;
@@ -634,6 +676,7 @@ if (!gotLock) {
     if (process.platform === "win32") {
       app.setAppUserModelId("local.usage-monitor");
     }
+    app.setName("Usage Monitor");
     cfg = config.ensure();
     overlayPinned = !!cfg.overlay_pinned;
     app.setLoginItemSettings({ openAtLogin: !!cfg.autostart });
@@ -671,6 +714,20 @@ if (!gotLock) {
         onClick: () => showOverlay(true),
       });
     });
+
+    let lastTrayKey = "";
+    setInterval(() => {
+      if (dragState) return;
+      const layout = taskbarLayout.loadLayout();
+      const key = JSON.stringify(layout && layout.tray);
+      if (key !== lastTrayKey) {
+        lastTrayKey = key;
+        if (cfg.chips_docked && !cfg.chips_hidden) placeChipsDocked();
+        if (cfg.flyout_docked && flyout && flyout.isVisible()) placeFlyoutDocked();
+      }
+      if (chips && !cfg.chips_hidden) keepWidgetOnTop(chips, cfg.chips_docked);
+      if (flyout && cfg.flyout_docked && flyout.isVisible()) keepWidgetOnTop(flyout, true);
+    }, 2000);
   });
 }
 
@@ -679,5 +736,6 @@ app.on("window-all-closed", (e) => {
 });
 
 app.on("before-quit", () => {
+  app.isQuitting = true;
   if (poll) poll.stop();
 });
