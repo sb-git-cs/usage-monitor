@@ -531,7 +531,7 @@ function wireIpc() {
   }));
   ipcMain.on("usage://flyout-resize", (_e, h, w) => {
     if (!flyout) return;
-    const width = Math.max(280, Math.min(520, Math.round(w || 320)));
+    const width = Math.max(360, Math.min(760, Math.round(w || 520)));
     const height = Math.max(140, Math.min(860, Math.round(h)));
     setSizeKeepPos(flyout, width, height);
     if (cfg.flyout_docked && !dragState) placeFlyoutDocked();

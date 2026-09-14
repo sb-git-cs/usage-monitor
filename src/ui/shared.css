@@ -43,7 +43,7 @@ html.fit, html.fit body {
 }
 .flyout {
   width: max-content;
-  min-width: 300px;
+  min-width: 520px;
   border-radius: 12px;
   padding: 10px 14px 14px;
   background: rgba(17, 24, 39, 0.42);
@@ -102,7 +102,7 @@ html.fit, html.fit body {
   min-width: 276px;
   background: rgba(31, 41, 55, 0.45); border: 1px solid #273244; border-radius: 10px;
 }
-.p-head { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-bottom: 6px; }
+.p-head { display: flex; flex-direction: row; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .p-name { font-size: 12px; font-weight: 650; }
 .overlay .p-name { font-size: 13px; }
 .p-plan { font-size: 11px; color: var(--muted); }
@@ -110,25 +110,27 @@ html.fit, html.fit body {
 .accent-codex { box-shadow: inset 2px 0 0 var(--codex); }
 .accent-grok { box-shadow: inset 2px 0 0 var(--grok); }
 .flyout .provider { padding-left: 8px; }
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
 .row {
   display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: auto auto;
-  column-gap: 10px;
-  row-gap: 4px;
+  grid-template-columns: 28px minmax(48px, 1fr) max-content max-content;
+  gap: 6px;
   align-items: center;
   font-size: 11px;
   color: #d1d5db;
-  margin: 8px 0;
+  margin: 0;
+  min-width: 0;
 }
-.row-label { font-weight: 650; grid-column: 1; grid-row: 1; }
+.row-label { font-weight: 650; white-space: nowrap; }
 .row .pct {
-  grid-column: 2; grid-row: 1;
   text-align: right; font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap;
 }
-.row .meter { grid-column: 1; grid-row: 2; height: 8px; }
+.row .meter { height: 6px; min-width: 48px; }
 .row .eta {
-  grid-column: 2; grid-row: 2;
   text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .row.alert { color: #fecaca; }

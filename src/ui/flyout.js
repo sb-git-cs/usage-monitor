@@ -23,7 +23,7 @@ window.usage.getFlyoutState().then(applyFlyoutState);
 
 function fitFlyout() {
   root.style.width = "max-content";
-  const w = Math.ceil(Math.max(root.scrollWidth, root.offsetWidth, 300));
+  const w = Math.ceil(Math.max(root.scrollWidth, root.offsetWidth, 520));
   const h = Math.ceil(Math.max(root.scrollHeight, root.offsetHeight));
   window.usage.resizeFlyout(h + 4, w + 4);
 }
@@ -37,9 +37,11 @@ function render(snapshot) {
     if (hint && !(p.windows && p.windows.length)) {
       parts.push(`<div class="hint">${hint}</div>`);
     } else {
+      const extras = [];
+      parts.push(`<div class="metrics">`);
       for (const w of p.windows || []) {
         if (w.kind === "credits" && w.used_pct == null) {
-          parts.push(`<div class="credits" style="font-size:11px;color:#9ca3af"><span>${w.label}</span><span></span></div>`);
+          extras.push(`<div class="credits">${w.label}</div>`);
           continue;
         }
         const alert = alerting(w) ? " alert" : "";
@@ -53,6 +55,8 @@ function render(snapshot) {
           <span class="eta" data-reset="${w.resets_at || ""}">${formatEta(w.resets_at)}</span>
         </div>`);
       }
+      parts.push(`</div>`);
+      extras.forEach((html) => parts.push(html));
     }
     parts.push("</section>");
   }
