@@ -15,6 +15,22 @@ let trays = [];
 let poll;
 let latest;
 let overlayPinned = false;
+let placingOverlay = false;
+let saveTimer = null;
+
+function saveSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => config.save(cfg), 200);
+}
+
+function clampToDisplay(x, y, w, h) {
+  const display = screen.getDisplayNearestPoint({ x: x || 0, y: y || 0 });
+  const b = display.bounds;
+  return {
+    x: Math.round(Math.min(Math.max(x, b.x), b.x + b.width - w)),
+    y: Math.round(Math.min(Math.max(y, b.y), b.y + b.height - h)),
+  };
+}
 
 const USAGE_URLS = {
   claude: "https://claude.ai/settings/usage",
@@ -136,19 +152,27 @@ function placeChips() {
   else placeChipsFloating();
 }
 
-function setChipsDocked(docked) {
+function setChipsDocked(docked, opts = {}) {
   cfg.chips_docked = !!docked;
   if (!cfg.chips_docked && chips) {
     const pos = chips.getPosition();
-    cfg.chips_x = pos[0];
-    cfg.chips_y = pos[1];
+    cfg.chips_x = opts.keepPos && opts.x != null ? opts.x : pos[0];
+    cfg.chips_y = opts.keepPos && opts.y != null ? opts.y : pos[1];
   }
   config.save(cfg);
   if (chips && !chips.isDestroyed()) {
     chips.setAlwaysOnTop(true, cfg.chips_docked ? "pop-up-menu" : "floating");
     chips.webContents.send("usage://chips-docked", cfg.chips_docked);
   }
-  placeChips();
+  if (cfg.chips_docked) placeChipsDocked();
+  else if (!opts.keepPos) placeChipsFloating();
+  else if (chips) {
+    const [w, h] = chips.getSize();
+    const p = clampToDisplay(cfg.chips_x, cfg.chips_y, w, h);
+    placingChips = true;
+    chips.setPosition(p.x, p.y);
+    placingChips = false;
+  }
 }
 
 function persistChipsPosition() {
@@ -156,7 +180,7 @@ function persistChipsPosition() {
   const pos = chips.getPosition();
   cfg.chips_x = pos[0];
   cfg.chips_y = pos[1];
-  config.save(cfg);
+  saveSoon();
 }
 
 let placingFlyout = false;
@@ -175,13 +199,23 @@ function sendFlyoutState() {
 
 function placeFlyoutDocked() {
   if (!flyout) return;
-  const w = 252;
-  const h = 32;
+  const [cw, ch] = flyout.getSize();
+  const w = Math.min(Math.max(cw, 160), 280);
+  const h = Math.min(Math.max(ch, 24), 36);
   placingFlyout = true;
   flyout.setSize(w, h);
   placingFlyout = false;
-  const pos = taskbarLayout.defaultDocked(w, h, otherDockedRects("flyout"));
-  if (pos && pos.ok) applyDockedPos(flyout, pos);
+  const extras = otherDockedRects("flyout");
+  let pos;
+  if (cfg.flyout_dock_x != null) {
+    pos = taskbarLayout.snapDocked(cfg.flyout_dock_x, cfg.flyout_dock_y || 0, w, h, extras);
+  }
+  if (!pos || !pos.ok) pos = taskbarLayout.defaultDocked(w, h, extras);
+  if (pos && pos.ok) {
+    cfg.flyout_dock_x = pos.x;
+    cfg.flyout_dock_y = pos.y;
+    applyDockedPos(flyout, pos);
+  }
 }
 
 function placeFlyoutNearTray(bounds) {
@@ -204,10 +238,9 @@ function placeFlyoutNearTray(bounds) {
     x = wa.x + wa.width - w - 16;
     y = wa.y + wa.height - h - 8;
   }
-  x = Math.max(wa.x + 8, Math.min(x, wa.x + wa.width - w - 8));
-  y = Math.max(wa.y + 8, Math.min(y, wa.y + wa.height - h - 8));
+  const p = clampToDisplay(x, y, w, h);
   placingFlyout = true;
-  flyout.setPosition(x, y);
+  flyout.setPosition(p.x, p.y);
   placingFlyout = false;
 }
 
@@ -216,12 +249,17 @@ function persistFlyoutPosition() {
   const pos = flyout.getPosition();
   cfg.flyout_x = pos[0];
   cfg.flyout_y = pos[1];
-  config.save(cfg);
+  saveSoon();
 }
 
-function setFlyoutDocked(docked) {
+function setFlyoutDocked(docked, opts = {}) {
   cfg.flyout_docked = !!docked;
   if (cfg.flyout_docked) cfg.flyout_pinned = true;
+  if (!cfg.flyout_docked && flyout) {
+    const pos = flyout.getPosition();
+    cfg.flyout_x = opts.keepPos && opts.x != null ? opts.x : pos[0];
+    cfg.flyout_y = opts.keepPos && opts.y != null ? opts.y : pos[1];
+  }
   config.save(cfg);
   sendFlyoutState();
   if (!flyout) return;
@@ -229,14 +267,16 @@ function setFlyoutDocked(docked) {
   if (cfg.flyout_docked) {
     placeFlyoutDocked();
     flyout.showInactive();
-    if (chips && !chips.isDestroyed()) chips.hide();
   } else {
     placingFlyout = true;
     flyout.setSize(320, 360);
     placingFlyout = false;
-    if (chips && !chips.isDestroyed()) {
-      placeChips();
-      chips.showInactive();
+    if (opts.keepPos) {
+      const [w, h] = flyout.getSize();
+      const p = clampToDisplay(cfg.flyout_x, cfg.flyout_y, w, h);
+      placingFlyout = true;
+      flyout.setPosition(p.x, p.y);
+      placingFlyout = false;
     }
   }
 }
@@ -264,8 +304,33 @@ function hideFlyout(force) {
   flyout.hide();
 }
 
+function placeOverlay() {
+  if (!overlay) return;
+  const [w, h] = overlay.getSize();
+  let x = cfg.overlay_x;
+  let y = cfg.overlay_y;
+  if (x == null || y == null) {
+    const wa = screen.getPrimaryDisplay().workArea;
+    x = wa.x + wa.width - w - 16;
+    y = wa.y + 48;
+  }
+  const p = clampToDisplay(x, y, w, h);
+  placingOverlay = true;
+  overlay.setPosition(p.x, p.y);
+  placingOverlay = false;
+}
+
+function persistOverlayPosition() {
+  if (!overlay || placingOverlay) return;
+  const pos = overlay.getPosition();
+  cfg.overlay_x = pos[0];
+  cfg.overlay_y = pos[1];
+  saveSoon();
+}
+
 function showOverlay(focus) {
   if (!overlay) return;
+  placeOverlay();
   if (focus) overlay.show();
   else overlay.showInactive();
   cfg.overlay_visible = true;
@@ -373,13 +438,13 @@ function buildMenu() {
       click: (item) => setFlyoutPinned(item.checked),
     },
     {
-      label: "Dock flyout to taskbar",
+      label: "Snap flyout to taskbar",
       type: "checkbox",
       checked: !!cfg.flyout_docked,
       click: (item) => setFlyoutDocked(item.checked),
     },
     {
-      label: "Dock chips to taskbar",
+      label: "Snap chips to taskbar",
       type: "checkbox",
       checked: !!cfg.chips_docked,
       click: (item) => setChipsDocked(item.checked),
@@ -419,9 +484,12 @@ function createWindows() {
     width: 380,
     height: 560,
     focusable: true,
+    hasShadow: false,
   });
   overlay.loadFile(ui("overlay.html"));
   overlay.setAlwaysOnTop(true, "floating");
+  overlay.setIgnoreMouseEvents(true, { forward: true });
+  overlay.on("moved", () => persistOverlayPosition());
   overlay.on("closed", () => {
     overlay = null;
   });
@@ -439,7 +507,19 @@ function createWindows() {
   flyout.on("moved", () => {
     if (placingFlyout) return;
     if (cfg.flyout_docked) {
-      setFlyoutDocked(false);
+      const [x, y] = flyout.getPosition();
+      const [w, h] = flyout.getSize();
+      const snapped = taskbarLayout.snapDocked(x, y, w, h, otherDockedRects("flyout"));
+      if (snapped.offTaskbar) {
+        setFlyoutDocked(false, { keepPos: true, x, y });
+        return;
+      }
+      if (snapped.ok && (snapped.x !== x || snapped.y !== y)) applyDockedPos(flyout, snapped);
+      if (snapped.ok) {
+        cfg.flyout_dock_x = snapped.x;
+        cfg.flyout_dock_y = snapped.y;
+        saveSoon();
+      }
       return;
     }
     persistFlyoutPosition();
@@ -459,7 +539,7 @@ function createWindows() {
   chips.setIgnoreMouseEvents(true, { forward: true });
   chips.once("ready-to-show", () => {
     placeChips();
-    if (!cfg.flyout_docked) chips.showInactive();
+    chips.showInactive();
     chips.setIgnoreMouseEvents(true, { forward: true });
   });
   chips.on("moved", () => {
@@ -469,7 +549,7 @@ function createWindows() {
       const [w, h] = chips.getSize();
       const snapped = taskbarLayout.snapDocked(x, y, w, h, otherDockedRects("chips"));
       if (snapped.offTaskbar) {
-        setChipsDocked(false);
+        setChipsDocked(false, { keepPos: true, x, y });
         return;
       }
       if (snapped.ok && (snapped.x !== x || snapped.y !== y)) {
@@ -478,7 +558,7 @@ function createWindows() {
       if (snapped.ok) {
         cfg.chips_dock_x = snapped.x;
         cfg.chips_dock_y = snapped.y;
-        config.save(cfg);
+        saveSoon();
       }
       return;
     }
@@ -492,6 +572,11 @@ function createWindows() {
 function wireIpc() {
   ipcMain.on("usage://refresh", () => poll && poll.refresh());
   ipcMain.on("usage://overlay-hide", () => hideOverlay());
+  ipcMain.on("usage://overlay-hit", (_e, hit) => {
+    if (!overlay || overlay.isDestroyed()) return;
+    if (hit) overlay.setIgnoreMouseEvents(false);
+    else overlay.setIgnoreMouseEvents(true, { forward: true });
+  });
   ipcMain.on("usage://flyout-hide", () => hideFlyout(true));
   ipcMain.on("usage://overlay-toggle-pin", togglePin);
   ipcMain.on("usage://flyout-toggle", () => {
@@ -573,11 +658,7 @@ if (!gotLock) {
       overlay.webContents.send("usage://pinned", overlayPinned);
       overlay.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
       if (latest) overlay.webContents.send("usage://snapshot", latest);
-      if (cfg.overlay_visible) {
-        const wa = screen.getPrimaryDisplay().workArea;
-        overlay.setPosition(wa.x + wa.width - 400, wa.y + 48);
-        showOverlay(false);
-      }
+      if (cfg.overlay_visible) showOverlay(false);
     });
     flyout.webContents.on("did-finish-load", () => {
       flyout.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
@@ -594,6 +675,8 @@ if (!gotLock) {
       taskbarLayout.invalidate();
       placeChips();
       if (cfg.flyout_docked) placeFlyoutDocked();
+      else if (flyout && flyout.isVisible()) placeFlyoutNearTray();
+      if (overlay && overlay.isVisible()) placeOverlay();
     });
 
     poll = poller.start(cfg, (snap) => {

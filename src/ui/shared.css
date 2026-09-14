@@ -84,7 +84,16 @@ html, body {
   opacity: 0.45;
   border-radius: 2px;
 }
-.overlay { width: 380px; border-radius: 12px; padding: 0 0 10px; }
+.overlay {
+  width: 380px;
+  border-radius: 12px;
+  padding: 0 0 10px;
+  background: rgba(17, 24, 39, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: none;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
 .head {
   display: flex; align-items: center; justify-content: space-between;
   color: #e5e7eb; font-size: 12px; font-weight: 600;

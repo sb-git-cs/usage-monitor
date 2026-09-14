@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("usage", {
   onPinned: (cb) => ipcRenderer.on("usage://pinned", (_e, pinned) => cb(pinned)),
   refresh: () => ipcRenderer.send("usage://refresh"),
   hideOverlay: () => ipcRenderer.send("usage://overlay-hide"),
+  setOverlayHit: (hit) => ipcRenderer.send("usage://overlay-hit", hit),
   hideFlyout: () => ipcRenderer.send("usage://flyout-hide"),
   togglePin: () => ipcRenderer.send("usage://overlay-toggle-pin"),
   toggleFlyout: () => ipcRenderer.send("usage://flyout-toggle"),

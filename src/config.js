@@ -9,6 +9,8 @@ const DEFAULTS = {
   config_version: 3,
   overlay_visible: true,
   overlay_pinned: false,
+  overlay_x: null,
+  overlay_y: null,
   chips_docked: false,
   chips_x: null,
   chips_y: null,
@@ -18,6 +20,8 @@ const DEFAULTS = {
   flyout_pinned: false,
   flyout_x: null,
   flyout_y: null,
+  flyout_dock_x: null,
+  flyout_dock_y: null,
   autostart: true,
   notify_on_limit_reached: true,
   adapters: {

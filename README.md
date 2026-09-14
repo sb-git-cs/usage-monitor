@@ -10,9 +10,9 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 
 | Surface | What it does |
 | --- | --- |
-| **Chips bar** (`C` / `X` / `G`) | Semi-transparent, click-through around the chips so it does not block the desktop. Drag the dotted grip to move. Optional **Dock chips to taskbar** sits it on the taskbar, left of the clock / tray icons. Shows **used/total %**. Red means under 20% remaining. |
-| **Flyout** | Glass meters panel. Drag the title bar to move. **Dock flyout to taskbar** turns it into a slim widget **on the Windows taskbar**, left of the clock / tray icons. Empty space clicks through. |
-| **Overlay** | Always-on-top HUD with larger meters. Pin it, drag it, close it (quit is tray-only). |
+| **Desktop overlay** | Large glass HUD. Drag anywhere on screen; position is remembered. Pin to keep it up. Empty space clicks through. |
+| **Flyout** | Compact glass panel. Drag anywhere. **Keep flyout open** pins it as a desktop widget. **Snap flyout to taskbar** parks a slim version in an empty taskbar gap (never over Start, app icons, or the clock). Drag off the taskbar to float it again. |
+| **Chips** | Smallest `C 82/100` widget. Drag anywhere. **Snap chips to taskbar** uses the same gap-aware docking. Drag along the bar to reposition; drag off to place it anywhere. |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
 
 ![Taskbar flyout](docs/screenshots/tray-flyout.png)
@@ -56,12 +56,13 @@ The first launch:
   - **Refresh every** — 5, 15, 30, or 60 seconds (default **5s**)
   - Start with Windows
   - Pin overlay
-  - **Keep flyout open** — stays up and can be dragged
-  - **Dock flyout to taskbar** — slim `C 82/100` widget **on the taskbar**, left of the tray icons
-  - Dock chips to taskbar
+  - **Keep flyout open** — stays up; drag it anywhere
+  - **Snap flyout to taskbar** — gap-aware; will not cover existing taskbar widgets
+  - **Snap chips to taskbar** — same gap-aware docking, compact
   - Quit
-- Drag the flyout title bar to move it. Dragging a docked flyout undocks it. The panel is glass (see-through); clicks on empty space pass through to whatever is behind.
-- **Docked chips** sit in empty taskbar space only (they will not cover Start, app icons, or the clock). They stay small. Drag the grip along the taskbar to reposition; drag off the bar to undock.
+- Overlay, flyout, and chips are all **draggable anywhere** on the screen. Positions are saved.
+- Snapping to the taskbar only uses **empty gaps** (between app icons and the clock/tray). Drag off the bar to float again.
+- Glass panels: you can see through them; clicks on empty space pass through.
 - Overlay **×** hides the HUD; it does not quit the app
 - Click a provider card to open that product’s official usage page
 

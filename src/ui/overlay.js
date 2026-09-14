@@ -54,6 +54,12 @@ function render(snapshot) {
   });
 }
 
+document.addEventListener("mouseover", () => window.usage.setOverlayHit(true));
+document.addEventListener("mouseleave", () => {
+  if (document.activeElement && document.activeElement.tagName === "SELECT") return;
+  window.usage.setOverlayHit(false);
+});
+
 window.usage.onPinned((pinned) => {
   pinBtn.classList.toggle("active", !!pinned);
 });
