@@ -45,11 +45,106 @@ function createWindow(opts) {
   });
 }
 
+let placingChips = false;
+
+function taskbarInfo(display) {
+  const { bounds, workArea } = display;
+  const topGap = workArea.y - bounds.y;
+  const leftGap = workArea.x - bounds.x;
+  const rightGap = bounds.x + bounds.width - (workArea.x + workArea.width);
+  const bottomGap = bounds.y + bounds.height - (workArea.y + workArea.height);
+  const gaps = [
+    { edge: "top", thickness: topGap },
+    { edge: "left", thickness: leftGap },
+    { edge: "right", thickness: rightGap },
+    { edge: "bottom", thickness: bottomGap },
+  ];
+  gaps.sort((a, b) => b.thickness - a.thickness);
+  const best = gaps[0];
+  return {
+    edge: best.thickness > 8 ? best.edge : "bottom",
+    thickness: Math.max(best.thickness, 48),
+    bounds,
+    workArea,
+  };
+}
+
+function placeChipsDocked() {
+  if (!chips) return;
+  const display = screen.getPrimaryDisplay();
+  const info = taskbarInfo(display);
+  const [w, h] = chips.getSize();
+  const trayReserve = 176;
+  const { bounds } = info;
+  let x;
+  let y;
+  if (info.edge === "bottom") {
+    x = bounds.x + bounds.width - trayReserve - w - 10;
+    y = bounds.y + bounds.height - info.thickness + Math.round((info.thickness - h) / 2);
+  } else if (info.edge === "top") {
+    x = bounds.x + bounds.width - trayReserve - w - 10;
+    y = bounds.y + Math.round((info.thickness - h) / 2);
+  } else if (info.edge === "right") {
+    x = bounds.x + bounds.width - info.thickness + Math.round((info.thickness - w) / 2);
+    y = bounds.y + bounds.height - trayReserve - h - 10;
+  } else {
+    x = bounds.x + Math.round((info.thickness - w) / 2);
+    y = bounds.y + bounds.height - trayReserve - h - 10;
+  }
+  placingChips = true;
+  chips.setPosition(Math.round(x), Math.round(y));
+  placingChips = false;
+}
+
+function placeChipsFloating() {
+  if (!chips) return;
+  const [w, h] = chips.getSize();
+  let x = cfg.chips_x;
+  let y = cfg.chips_y;
+  const display =
+    x != null && y != null
+      ? screen.getDisplayNearestPoint({ x, y })
+      : screen.getPrimaryDisplay();
+  const b = display.bounds;
+  if (x == null || y == null) {
+    const wa = display.workArea;
+    x = wa.x + wa.width - w - 12;
+    y = wa.y + wa.height - h - 8;
+  }
+  x = Math.min(Math.max(x, b.x), b.x + b.width - w);
+  y = Math.min(Math.max(y, b.y), b.y + b.height - h);
+  placingChips = true;
+  chips.setPosition(Math.round(x), Math.round(y));
+  placingChips = false;
+}
+
 function placeChips() {
   if (!chips) return;
-  const wa = screen.getPrimaryDisplay().workArea;
-  const [w, h] = chips.getSize();
-  chips.setPosition(wa.x + wa.width - w - 12, wa.y + wa.height - h - 8);
+  if (cfg.chips_docked) placeChipsDocked();
+  else placeChipsFloating();
+}
+
+function setChipsDocked(docked) {
+  cfg.chips_docked = !!docked;
+  if (!cfg.chips_docked && chips) {
+    const pos = chips.getPosition();
+    cfg.chips_x = pos[0];
+    cfg.chips_y = pos[1];
+  }
+  config.save(cfg);
+  if (chips && !chips.isDestroyed()) {
+    chips.setAlwaysOnTop(true, cfg.chips_docked ? "pop-up-menu" : "floating");
+    chips.webContents.send("usage://chips-docked", cfg.chips_docked);
+  }
+  placeChips();
+}
+
+function persistChipsPosition() {
+  if (!chips || cfg.chips_docked || placingChips) return;
+  const pos = chips.getPosition();
+  cfg.chips_x = pos[0];
+  cfg.chips_y = pos[1];
+  config.save(cfg);
 }
 
 function placeFlyoutNearTray(bounds) {
@@ -182,6 +277,12 @@ function buildMenu() {
       label: overlayPinned ? "Unpin overlay" : "Pin overlay",
       click: togglePin,
     },
+    {
+      label: "Dock chips to taskbar",
+      type: "checkbox",
+      checked: !!cfg.chips_docked,
+      click: (item) => setChipsDocked(item.checked),
+    },
     { type: "separator" },
     { label: "Quit", click: () => app.quit() },
   ]);
@@ -236,16 +337,26 @@ function createWindows() {
   });
 
   chips = createWindow({
-    width: 230,
-    height: 30,
-    focusable: false,
+    width: 248,
+    height: 32,
+    focusable: true,
+    hasShadow: false,
   });
   chips.loadFile(ui("chips.html"));
-  chips.setAlwaysOnTop(true, "status");
-  chips.setIgnoreMouseEvents(false);
+  chips.setAlwaysOnTop(true, cfg.chips_docked ? "pop-up-menu" : "floating");
+  chips.setIgnoreMouseEvents(true, { forward: true });
   chips.once("ready-to-show", () => {
     placeChips();
     chips.showInactive();
+    chips.setIgnoreMouseEvents(true, { forward: true });
+  });
+  chips.on("moved", () => {
+    if (placingChips) return;
+    if (cfg.chips_docked) {
+      setChipsDocked(false);
+      return;
+    }
+    persistChipsPosition();
   });
   chips.on("closed", () => {
     chips = null;
@@ -274,6 +385,12 @@ function wireIpc() {
   });
   ipcMain.handle("usage://get-interval", () => cfg.poll_interval_secs || 5);
   ipcMain.on("usage://set-interval", (_e, secs) => setPollInterval(secs));
+  ipcMain.on("usage://chips-hit", (_e, hit) => {
+    if (!chips || chips.isDestroyed()) return;
+    if (hit) chips.setIgnoreMouseEvents(false);
+    else chips.setIgnoreMouseEvents(true, { forward: true });
+  });
+  ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -308,8 +425,11 @@ if (!gotLock) {
       if (latest) flyout.webContents.send("usage://snapshot", latest);
     });
     chips.webContents.on("did-finish-load", () => {
+      chips.webContents.send("usage://chips-docked", !!cfg.chips_docked);
       if (latest) chips.webContents.send("usage://snapshot", latest);
     });
+
+    screen.on("display-metrics-changed", () => placeChips());
 
     poll = poller.start(cfg, (snap) => {
       broadcast(snap);

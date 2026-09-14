@@ -14,4 +14,7 @@ contextBridge.exposeInMainWorld("usage", {
   getInterval: () => ipcRenderer.invoke("usage://get-interval"),
   setIntervalSecs: (secs) => ipcRenderer.send("usage://set-interval", secs),
   onInterval: (cb) => ipcRenderer.on("usage://interval", (_e, secs) => cb(secs)),
+  setChipsHit: (hit) => ipcRenderer.send("usage://chips-hit", hit),
+  getChipsDocked: () => ipcRenderer.invoke("usage://get-chips-docked"),
+  onChipsDocked: (cb) => ipcRenderer.on("usage://chips-docked", (_e, docked) => cb(docked)),
 });

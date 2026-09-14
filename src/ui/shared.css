@@ -99,14 +99,40 @@ html, body {
 .hint { font-size: 11px; color: var(--muted); padding: 4px 0 2px; }
 .badge { font-size: 10px; color: var(--amber); margin-left: 6px; }
 .chips {
-  display: flex; gap: 6px; padding: 3px; background: rgba(24,24,24,0.92);
-  border: 1px solid #374151; border-radius: 8px;
+  display: flex; align-items: center; gap: 6px; padding: 3px 4px 3px 2px;
+  background: rgba(17, 24, 39, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: none;
 }
+.chips.docked {
+  background: rgba(17, 24, 39, 0.28);
+  border-color: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+}
+.chip-grip {
+  width: 10px; height: 18px; flex: 0 0 10px;
+  cursor: grab;
+  -webkit-app-region: drag;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255,255,255,0.35) 0 2px,
+    transparent 2px 5px
+  );
+  opacity: 0.55;
+  border-radius: 2px;
+  margin: 0 2px;
+}
+.chips.docked .chip-grip { opacity: 0.35; }
+#root { display: flex; gap: 6px; -webkit-app-region: no-drag; }
 .pct-icon {
   height: 22px; min-width: 58px; padding: 0 6px; border-radius: 6px;
-  background: #111827; border: 1px solid #4b5563; display: flex;
-  align-items: center; justify-content: center; gap: 3px;
+  background: rgba(17, 24, 39, 0.55); border: 1px solid rgba(75, 85, 99, 0.7);
+  display: flex; align-items: center; justify-content: center; gap: 3px;
   font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 .pct-icon .who { font-weight: 650; opacity: 0.8; font-size: 10px; }
 .pct-icon.red { color: #fecaca; border-color: #ef4444; }

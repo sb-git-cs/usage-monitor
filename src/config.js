@@ -9,6 +9,9 @@ const DEFAULTS = {
   config_version: 3,
   overlay_visible: true,
   overlay_pinned: false,
+  chips_docked: false,
+  chips_x: null,
+  chips_y: null,
   autostart: true,
   notify_on_limit_reached: true,
   adapters: {
