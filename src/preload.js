@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld("usage", {
   toggleFlyout: () => ipcRenderer.send("usage://flyout-toggle"),
   openTrayMenu: () => ipcRenderer.send("usage://tray-menu"),
   openUsage: (id) => ipcRenderer.send("usage://open-usage", id),
-  resizeOverlay: (h) => ipcRenderer.send("usage://overlay-resize", h),
+  resizeOverlay: (h, w) => ipcRenderer.send("usage://overlay-resize", h, w),
   getInterval: () => ipcRenderer.invoke("usage://get-interval"),
   setIntervalSecs: (secs) => ipcRenderer.send("usage://set-interval", secs),
   onInterval: (cb) => ipcRenderer.on("usage://interval", (_e, secs) => cb(secs)),

@@ -537,8 +537,8 @@ function togglePin() {
 
 function createWindows() {
   overlay = createWindow({
-    width: 380,
-    height: 560,
+    width: 400,
+    height: 620,
     focusable: true,
     hasShadow: false,
     skipTaskbar: false,
@@ -585,8 +585,8 @@ function createWindows() {
   });
 
   chips = createWindow({
-    width: 168,
-    height: 24,
+    width: 260,
+    height: 28,
     focusable: true,
     hasShadow: false,
   });
@@ -649,20 +649,22 @@ function wireIpc() {
   ipcMain.on("usage://open-usage", (_e, id) => {
     shell.openExternal(USAGE_URLS[id] || "https://grok.com");
   });
-  ipcMain.on("usage://overlay-resize", (_e, h) => {
+  ipcMain.on("usage://overlay-resize", (_e, h, w) => {
     if (!overlay) return;
-    const height = Math.max(120, Math.min(900, Math.round(h) + 4));
-    setSizeKeepPos(overlay, 380, height);
+    const width = Math.max(300, Math.min(560, Math.round(w || 380)));
+    const height = Math.max(140, Math.min(980, Math.round(h)));
+    setSizeKeepPos(overlay, width, height);
   });
   ipcMain.handle("usage://get-interval", () => cfg.poll_interval_secs || 5);
   ipcMain.on("usage://set-interval", (_e, secs) => setPollInterval(secs));
   ipcMain.on("usage://chips-resize", (_e, w, h) => {
     if (!chips || chips.isDestroyed()) return;
-    const width = Math.max(72, Math.min(420, Math.round(w)));
-    const height = Math.max(18, Math.min(40, Math.round(h)));
+    const width = Math.max(96, Math.min(720, Math.round(w)));
+    const height = Math.max(24, Math.min(48, Math.round(h)));
     const [cw, ch] = chips.getSize();
     if (Math.abs(cw - width) < 2 && Math.abs(ch - height) < 2) return;
     setSizeKeepPos(chips, width, height);
+    if (cfg.chips_docked && !cfg.chips_hidden && !dragState) placeChipsDocked();
   });
   ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
 }

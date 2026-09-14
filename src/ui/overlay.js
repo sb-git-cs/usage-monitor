@@ -53,8 +53,11 @@ function render(snapshot) {
     el.addEventListener("click", () => window.usage.openUsage(el.dataset.id));
   });
   requestAnimationFrame(() => {
-    const h = document.getElementById("root").scrollHeight;
-    window.usage.resizeOverlay(h);
+    const root = document.getElementById("root");
+    root.style.width = "max-content";
+    const w = Math.ceil(Math.max(root.scrollWidth, root.offsetWidth, 300));
+    const h = Math.ceil(Math.max(root.scrollHeight, root.offsetHeight));
+    window.usage.resizeOverlay(h + 4, w + 4);
   });
 }
 

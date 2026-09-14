@@ -4,6 +4,7 @@ const grip = document.getElementById("grip");
 
 function setDocked(docked) {
   bar.classList.toggle("docked", !!docked);
+  if (window.__last) render(window.__last);
 }
 
 bindDrag(bar, "button, .pct-icon");
@@ -24,8 +25,10 @@ function render(snapshot) {
   }
   root.innerHTML = parts.join("");
   requestAnimationFrame(() => {
-    const r = bar.getBoundingClientRect();
-    window.usage.resizeChips(Math.ceil(r.width + 1), Math.ceil(r.height + 1));
+    bar.style.width = "max-content";
+    const w = Math.ceil(Math.max(bar.scrollWidth, bar.offsetWidth));
+    const h = Math.ceil(Math.max(bar.scrollHeight, bar.offsetHeight, 24));
+    window.usage.resizeChips(w + 4, h + 4);
   });
   root.querySelectorAll(".pct-icon").forEach((el) => {
     el.addEventListener("click", () => window.usage.toggleFlyout());
@@ -41,6 +44,9 @@ grip.addEventListener("contextmenu", (e) => {
   window.usage.openTrayMenu();
 });
 
-window.usage.onSnapshot(render);
+window.usage.onSnapshot((s) => {
+  window.__last = s;
+  render(s);
+});
 window.usage.onChipsDocked(setDocked);
 window.usage.getChipsDocked().then(setDocked);
