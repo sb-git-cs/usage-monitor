@@ -147,32 +147,116 @@ function persistChipsPosition() {
   config.save(cfg);
 }
 
+let placingFlyout = false;
+
+function flyoutStaysOpen() {
+  return !!(cfg && (cfg.flyout_docked || cfg.flyout_pinned));
+}
+
+function sendFlyoutState() {
+  if (!flyout || flyout.isDestroyed()) return;
+  flyout.webContents.send("usage://flyout-state", {
+    docked: !!cfg.flyout_docked,
+    pinned: !!cfg.flyout_pinned,
+  });
+}
+
+function placeFlyoutDocked() {
+  if (!flyout) return;
+  const display = screen.getPrimaryDisplay();
+  const info = taskbarInfo(display);
+  const [w, h] = flyout.getSize();
+  const trayReserve = 176;
+  const { bounds, workArea } = info;
+  let x;
+  let y;
+  if (info.edge === "bottom") {
+    x = bounds.x + bounds.width - trayReserve - w - 10;
+    y = workArea.y + workArea.height - h;
+  } else if (info.edge === "top") {
+    x = bounds.x + bounds.width - trayReserve - w - 10;
+    y = workArea.y;
+  } else if (info.edge === "right") {
+    x = workArea.x + workArea.width - w;
+    y = bounds.y + bounds.height - trayReserve - h - 10;
+  } else {
+    x = workArea.x;
+    y = bounds.y + bounds.height - trayReserve - h - 10;
+  }
+  placingFlyout = true;
+  flyout.setPosition(Math.round(x), Math.round(y));
+  placingFlyout = false;
+}
+
 function placeFlyoutNearTray(bounds) {
   if (!flyout) return;
   const wa = screen.getPrimaryDisplay().workArea;
   const [w, h] = flyout.getSize();
   let x;
   let y;
-  if (bounds && bounds.x != null) {
+  if (cfg.flyout_docked) {
+    placeFlyoutDocked();
+    return;
+  }
+  if (cfg.flyout_pinned && cfg.flyout_x != null && cfg.flyout_y != null) {
+    x = cfg.flyout_x;
+    y = cfg.flyout_y;
+  } else if (bounds && bounds.x != null) {
     x = Math.round(bounds.x + bounds.width / 2 - w / 2);
     y = Math.round(bounds.y - h - 8);
   } else {
     x = wa.x + wa.width - w - 16;
-    y = wa.y + wa.height - h - 40;
+    y = wa.y + wa.height - h - 8;
   }
   x = Math.max(wa.x + 8, Math.min(x, wa.x + wa.width - w - 8));
   y = Math.max(wa.y + 8, Math.min(y, wa.y + wa.height - h - 8));
+  placingFlyout = true;
   flyout.setPosition(x, y);
+  placingFlyout = false;
+}
+
+function persistFlyoutPosition() {
+  if (!flyout || cfg.flyout_docked || placingFlyout) return;
+  const pos = flyout.getPosition();
+  cfg.flyout_x = pos[0];
+  cfg.flyout_y = pos[1];
+  config.save(cfg);
+}
+
+function setFlyoutDocked(docked) {
+  cfg.flyout_docked = !!docked;
+  if (cfg.flyout_docked) cfg.flyout_pinned = true;
+  config.save(cfg);
+  sendFlyoutState();
+  if (!flyout) return;
+  flyout.setAlwaysOnTop(true, cfg.flyout_docked ? "pop-up-menu" : "floating");
+  if (cfg.flyout_docked) {
+    placeFlyoutDocked();
+    flyout.showInactive();
+  }
+}
+
+function setFlyoutPinned(pinned) {
+  cfg.flyout_pinned = !!pinned;
+  if (!cfg.flyout_pinned) cfg.flyout_docked = false;
+  config.save(cfg);
+  sendFlyoutState();
+  if (cfg.flyout_pinned && flyout && !flyout.isVisible()) flyout.showInactive();
 }
 
 function showFlyout(bounds) {
-  placeFlyoutNearTray(bounds);
+  if (!flyout) return;
+  if (cfg.flyout_docked) placeFlyoutDocked();
+  else placeFlyoutNearTray(bounds);
   flyout.show();
-  flyout.focus();
+  if (!flyoutStaysOpen()) flyout.focus();
+  else flyout.showInactive();
 }
 
-function hideFlyout() {
-  if (flyout && flyout.isVisible()) flyout.hide();
+function hideFlyout(force) {
+  if (!flyout || !flyout.isVisible()) return;
+  if (!force && flyoutStaysOpen()) return;
+  flyout.hide();
 }
 
 function showOverlay(focus) {
@@ -278,6 +362,18 @@ function buildMenu() {
       click: togglePin,
     },
     {
+      label: "Keep flyout open",
+      type: "checkbox",
+      checked: !!cfg.flyout_pinned,
+      click: (item) => setFlyoutPinned(item.checked),
+    },
+    {
+      label: "Dock flyout to taskbar",
+      type: "checkbox",
+      checked: !!cfg.flyout_docked,
+      click: (item) => setFlyoutDocked(item.checked),
+    },
+    {
       label: "Dock chips to taskbar",
       type: "checkbox",
       checked: !!cfg.chips_docked,
@@ -304,7 +400,7 @@ function createTrays() {
     const tray = new Tray(iconFor(letter(id), null, false, true));
     tray.setToolTip("Usage Monitor");
     tray.on("click", (_e, bounds) => {
-      if (flyout.isVisible()) hideFlyout();
+      if (flyout.isVisible() && !flyoutStaysOpen()) hideFlyout(true);
       else showFlyout(bounds);
     });
     tray.on("right-click", () => tray.popUpContextMenu(buildMenu()));
@@ -329,9 +425,20 @@ function createWindows() {
     width: 320,
     height: 360,
     focusable: true,
+    hasShadow: false,
   });
   flyout.loadFile(ui("flyout.html"));
-  flyout.on("blur", () => hideFlyout());
+  flyout.setAlwaysOnTop(true, cfg.flyout_docked ? "pop-up-menu" : "floating");
+  flyout.setIgnoreMouseEvents(true, { forward: true });
+  flyout.on("blur", () => hideFlyout(false));
+  flyout.on("moved", () => {
+    if (placingFlyout) return;
+    if (cfg.flyout_docked) {
+      setFlyoutDocked(false);
+      return;
+    }
+    persistFlyoutPosition();
+  });
   flyout.on("closed", () => {
     flyout = null;
   });
@@ -366,11 +473,30 @@ function createWindows() {
 function wireIpc() {
   ipcMain.on("usage://refresh", () => poll && poll.refresh());
   ipcMain.on("usage://overlay-hide", () => hideOverlay());
-  ipcMain.on("usage://flyout-hide", hideFlyout);
+  ipcMain.on("usage://flyout-hide", () => hideFlyout(true));
   ipcMain.on("usage://overlay-toggle-pin", togglePin);
   ipcMain.on("usage://flyout-toggle", () => {
-    if (flyout.isVisible()) hideFlyout();
+    if (flyout.isVisible() && !flyoutStaysOpen()) hideFlyout(true);
     else showFlyout();
+  });
+  ipcMain.on("usage://flyout-toggle-pin", () => setFlyoutPinned(!cfg.flyout_pinned));
+  ipcMain.on("usage://flyout-toggle-dock", () => setFlyoutDocked(!cfg.flyout_docked));
+  ipcMain.handle("usage://get-flyout-state", () => ({
+    docked: !!(cfg && cfg.flyout_docked),
+    pinned: !!(cfg && cfg.flyout_pinned),
+  }));
+  ipcMain.on("usage://flyout-hit", (_e, hit) => {
+    if (!flyout || flyout.isDestroyed()) return;
+    if (hit) flyout.setIgnoreMouseEvents(false);
+    else flyout.setIgnoreMouseEvents(true, { forward: true });
+  });
+  ipcMain.on("usage://flyout-resize", (_e, h) => {
+    if (!flyout) return;
+    const height = Math.max(120, Math.min(700, Math.round(h) + 4));
+    const [, cur] = flyout.getSize();
+    if (Math.abs(cur - height) < 4) return;
+    flyout.setSize(320, height);
+    if (cfg.flyout_docked) placeFlyoutDocked();
   });
   ipcMain.on("usage://tray-menu", () => {
     if (trays[0]) trays[0].popUpContextMenu(buildMenu());
@@ -422,14 +548,19 @@ if (!gotLock) {
     });
     flyout.webContents.on("did-finish-load", () => {
       flyout.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
+      sendFlyoutState();
       if (latest) flyout.webContents.send("usage://snapshot", latest);
+      if (flyoutStaysOpen()) showFlyout();
     });
     chips.webContents.on("did-finish-load", () => {
       chips.webContents.send("usage://chips-docked", !!cfg.chips_docked);
       if (latest) chips.webContents.send("usage://snapshot", latest);
     });
 
-    screen.on("display-metrics-changed", () => placeChips());
+    screen.on("display-metrics-changed", () => {
+      placeChips();
+      if (cfg.flyout_docked) placeFlyoutDocked();
+    });
 
     poll = poller.start(cfg, (snap) => {
       broadcast(snap);

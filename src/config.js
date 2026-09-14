@@ -12,6 +12,10 @@ const DEFAULTS = {
   chips_docked: false,
   chips_x: null,
   chips_y: null,
+  flyout_docked: false,
+  flyout_pinned: false,
+  flyout_x: null,
+  flyout_y: null,
   autostart: true,
   notify_on_limit_reached: true,
   adapters: {

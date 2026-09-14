@@ -11,7 +11,7 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 | Surface | What it does |
 | --- | --- |
 | **Chips bar** (`C` / `X` / `G`) | Semi-transparent, click-through around the chips so it does not block the desktop. Drag the dotted grip to move. Optional **Dock chips to taskbar** sits it on the taskbar, left of the clock / tray icons. Shows **used/total %**. Red means under 20% remaining. |
-| **Flyout** | Left-click a chip. Compact bars for every window plus reset countdown. |
+| **Flyout** | Semi-transparent compact meters. Drag the title bar to move. Pin to keep it open, or **Dock flyout to taskbar** to sit it left of the clock / tray icons as a widget. Empty space around it clicks through. |
 | **Overlay** | Always-on-top HUD with larger meters. Pin it, drag it, close it (quit is tray-only). |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
 
@@ -56,9 +56,11 @@ The first launch:
   - **Refresh every** — 5, 15, 30, or 60 seconds (default **5s**)
   - Start with Windows
   - Pin overlay
-  - **Dock chips to taskbar** — merge the bar onto the taskbar, left of the tray icons
+  - **Keep flyout open** — stays up and can be dragged
+  - **Dock flyout to taskbar** — widget on the taskbar, left of the tray icons
+  - Dock chips to taskbar
   - Quit
-- Drag the dotted grip on the chips bar to move it. Dragging a docked bar undocks it. Empty space around the chips clicks through to whatever is behind.
+- Drag the flyout title bar to move it. Dragging a docked flyout undocks it. The panel is glass (see-through); clicks on empty space pass through to whatever is behind.
 - Overlay **×** hides the HUD; it does not quit the app
 - Click a provider card to open that product’s official usage page
 

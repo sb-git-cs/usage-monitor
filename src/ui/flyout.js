@@ -1,9 +1,35 @@
 const body = document.getElementById("body");
+const root = document.getElementById("root");
+const pinBtn = document.getElementById("pin");
+const dockBtn = document.getElementById("dock");
 document.getElementById("refresh").addEventListener("click", (e) => {
   e.stopPropagation();
   window.usage.refresh();
 });
+pinBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  window.usage.toggleFlyoutPin();
+});
+dockBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  window.usage.toggleFlyoutDock();
+});
 bindIntervalSelect(document.getElementById("interval"));
+
+function applyFlyoutState(state) {
+  if (!state) return;
+  pinBtn.classList.toggle("active", !!state.pinned);
+  dockBtn.classList.toggle("active", !!state.docked);
+  root.classList.toggle("docked", !!state.docked);
+}
+
+document.addEventListener("mouseover", () => window.usage.setFlyoutHit(true));
+document.addEventListener("mouseleave", () => {
+  if (document.activeElement && document.activeElement.tagName === "SELECT") return;
+  window.usage.setFlyoutHit(false);
+});
+window.usage.onFlyoutState(applyFlyoutState);
+window.usage.getFlyoutState().then(applyFlyoutState);
 
 function render(snapshot) {
   const parts = [];
@@ -36,6 +62,9 @@ function render(snapshot) {
   body.innerHTML = parts.join("");
   body.querySelectorAll(".provider").forEach((el) => {
     el.addEventListener("click", () => window.usage.openUsage(el.dataset.id));
+  });
+  requestAnimationFrame(() => {
+    window.usage.resizeFlyout(root.scrollHeight);
   });
 }
 
