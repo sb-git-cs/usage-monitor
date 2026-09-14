@@ -27,11 +27,7 @@ function applyFlyoutState(state) {
   if (window.__last) render(window.__last);
 }
 
-document.addEventListener("mouseover", () => window.usage.setFlyoutHit(true));
-document.addEventListener("mouseleave", () => {
-  if (document.activeElement && document.activeElement.tagName === "SELECT") return;
-  window.usage.setFlyoutHit(false);
-});
+bindDrag(root);
 window.usage.onFlyoutState(applyFlyoutState);
 window.usage.getFlyoutState().then(applyFlyoutState);
 
@@ -88,7 +84,7 @@ function render(snapshot) {
           <span>${flyoutLabel(w)}</span>
           <div class="meter"><div class="fill ${color}" style="width:${width}%"></div></div>
           <span class="pct">${pct}</span>
-          <span class="eta">${formatEta(w.resets_at)}</span>
+          <span class="eta" data-reset="${w.resets_at || ""}">${formatEta(w.resets_at)}</span>
         </div>`);
       }
     }
@@ -115,5 +111,7 @@ window.usage.onSnapshot((s) => {
   render(s);
 });
 setInterval(() => {
-  if (window.__last) render(window.__last);
+  document.querySelectorAll("[data-reset]").forEach((el) => {
+    el.textContent = formatEta(el.dataset.reset);
+  });
 }, 1000);

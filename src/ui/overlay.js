@@ -36,7 +36,7 @@ function render(snapshot) {
           <div class="win-label">${overlayLabel(w)} <span class="win-frac">used/total</span></div>
           <div class="win-pct${alert ? " alert" : ""}">${pct}</div>
           <div class="meter overlay-meter"><div class="fill ${alert ? "red" : "green"}" style="width:${width}%"></div></div>
-          <div class="win-reset">${overlayEta(w.resets_at)}</div>
+          <div class="win-reset" data-reset="${w.resets_at || ""}">${overlayEta(w.resets_at)}</div>
         </div>`);
       }
       if (p.footnotes && p.footnotes.length) {
@@ -58,11 +58,7 @@ function render(snapshot) {
   });
 }
 
-document.addEventListener("mouseover", () => window.usage.setOverlayHit(true));
-document.addEventListener("mouseleave", () => {
-  if (document.activeElement && document.activeElement.tagName === "SELECT") return;
-  window.usage.setOverlayHit(false);
-});
+bindDrag(document.getElementById("root"));
 
 window.usage.onPinned((pinned) => {
   pinBtn.classList.toggle("active", !!pinned);
@@ -72,7 +68,9 @@ window.usage.onSnapshot((s) => {
   render(s);
 });
 setInterval(() => {
-  if (window.__last) render(window.__last);
+  document.querySelectorAll("[data-reset]").forEach((el) => {
+    el.textContent = overlayEta(el.dataset.reset);
+  });
 }, 1000);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !pinBtn.classList.contains("active")) window.usage.hideOverlay();

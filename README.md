@@ -62,8 +62,8 @@ There are no extra icons in the Windows notification area. Use overlay, flyout, 
   - **Snap flyout to taskbar** — gap-aware; will not cover existing taskbar widgets
   - **Snap chips to taskbar** — same gap-aware docking, compact
   - Quit
-- Overlay, flyout, and chips are all **draggable anywhere** on the screen. Positions are saved.
-- Snapping to the taskbar only uses **empty gaps** (between app icons and the clock/tray). Drag off the bar to float again.
+- Drag overlay, flyout, or chips **from the title bar / dotted grip** to move them anywhere. Positions are saved.
+- **Stick overlay here** / **Keep flyout open** / **Snap to taskbar** locks that surface. Snapped widgets stay on the taskbar in an empty gap until you uncheck snap. Uncheck snap first if you want to float them again.
 - Glass panels: you can see through them; clicks on empty space pass through.
 - Overlay **×** hides the HUD; it does not quit the app
 - Click a provider card to open that product’s official usage page

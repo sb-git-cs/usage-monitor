@@ -25,4 +25,7 @@ contextBridge.exposeInMainWorld("usage", {
   toggleFlyoutDock: () => ipcRenderer.send("usage://flyout-toggle-dock"),
   getFlyoutState: () => ipcRenderer.invoke("usage://get-flyout-state"),
   onFlyoutState: (cb) => ipcRenderer.on("usage://flyout-state", (_e, state) => cb(state)),
+  dragBegin: (sx, sy) => ipcRenderer.send("usage://drag-begin", sx, sy),
+  dragTo: (sx, sy) => ipcRenderer.send("usage://drag-to", sx, sy),
+  dragEnd: () => ipcRenderer.send("usage://drag-end"),
 });

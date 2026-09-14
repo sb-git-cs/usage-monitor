@@ -4,22 +4,9 @@ const grip = document.getElementById("grip");
 
 function setDocked(docked) {
   bar.classList.toggle("docked", !!docked);
-  grip.style.webkitAppRegion = "drag";
 }
 
-function hitFromEvent(e) {
-  return !!(e.target && e.target.closest && e.target.closest(".pct-icon, .chip-grip"));
-}
-
-document.addEventListener("mouseover", (e) => {
-  window.usage.setChipsHit(hitFromEvent(e));
-});
-document.addEventListener("mouseout", (e) => {
-  const next = e.relatedTarget;
-  if (next && next.closest && next.closest(".pct-icon, .chip-grip")) return;
-  window.usage.setChipsHit(false);
-});
-document.addEventListener("mouseleave", () => window.usage.setChipsHit(false));
+bindDrag(bar, "button, .pct-icon");
 
 function render(snapshot) {
   const parts = [];
@@ -46,13 +33,9 @@ function render(snapshot) {
       e.preventDefault();
       window.usage.openTrayMenu();
     });
-    el.addEventListener("mouseenter", () => window.usage.setChipsHit(true));
-    el.addEventListener("mouseleave", () => window.usage.setChipsHit(false));
   });
 }
 
-grip.addEventListener("mouseenter", () => window.usage.setChipsHit(true));
-grip.addEventListener("mouseleave", () => window.usage.setChipsHit(false));
 grip.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   window.usage.openTrayMenu();
