@@ -4,27 +4,35 @@ const { URL } = require("url");
 
 const TIMEOUT_MS = 8000;
 
+const httpsAgent = new https.Agent({ keepAlive: false, maxSockets: 6 });
+const httpAgent = new http.Agent({ keepAlive: false, maxSockets: 6 });
+
 function request(method, url, { headers = {}, body = null } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const lib = u.protocol === "http:" ? http : https;
+    const agent = u.protocol === "http:" ? httpAgent : httpsAgent;
     const payload = body == null ? null : Buffer.from(body);
     let settled = false;
     let req;
-    const done = (fn) => (arg) => {
+
+    const finish = (err, val) => {
       if (settled) return;
       settled = true;
       clearTimeout(killer);
-      fn(arg);
+      if (err) reject(err);
+      else resolve(val);
     };
+
     const killer = setTimeout(() => {
       try {
         if (req) req.destroy();
       } catch {
         /* ignore */
       }
-      done(reject)(new Error("timeout"));
+      finish(new Error("timeout"));
     }, TIMEOUT_MS);
+
     req = lib.request(
       {
         protocol: u.protocol,
@@ -32,32 +40,26 @@ function request(method, url, { headers = {}, body = null } = {}) {
         port: u.port || (u.protocol === "https:" ? 443 : 80),
         path: u.pathname + u.search,
         method,
+        agent,
         headers: {
           ...headers,
           ...(payload ? { "Content-Length": payload.length } : {}),
         },
-        timeout: TIMEOUT_MS,
       },
       (res) => {
         const chunks = [];
         res.on("data", (c) => chunks.push(c));
         res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf8");
-          done(resolve)({ status: res.statusCode, text, headers: res.headers });
+          finish(null, {
+            status: res.statusCode,
+            text: Buffer.concat(chunks).toString("utf8"),
+            headers: res.headers,
+          });
         });
+        res.on("error", finish);
       }
     );
-    req.on("timeout", () => {
-      req.destroy();
-      done(reject)(new Error("timeout"));
-    });
-    req.on("error", done(reject));
-    req.on("socket", (socket) => {
-      socket.setTimeout(TIMEOUT_MS, () => {
-        socket.destroy();
-        done(reject)(new Error("timeout"));
-      });
-    });
+    req.on("error", finish);
     if (payload) req.write(payload);
     req.end();
   });
