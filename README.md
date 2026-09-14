@@ -35,10 +35,10 @@ You do not need all three. A missing login shows as gray with a sign-in hint.
 git clone https://github.com/shivam-17/usage-monitor.git
 cd usage-monitor
 npm install
-npm run start:silent
+npm start
 ```
 
-`npm start` also works, but it keeps an Electron/console host open. **`npm run start:silent`** launches only the chips/flyout widgets (no extra Electron window). Logon uses the same silent launcher.
+`npm start` **detaches** from the terminal: you can close the console and the app keeps running. Quit only from the right-click **Quit** menu. Use `npm run start:fg` if you want logs in the terminal (that process *will* die if you close the console).
 
 The first launch:
 
@@ -86,7 +86,7 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 | Flyout missing | Click **Usage Monitor** on the Windows taskbar, or right-click chips → **Open flyout** |
 | Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off for 15 minutes and keeps the last good numbers |
 | Does not start at logon | Run `npm run start:silent` once, leave **Start with Windows** checked. Confirm `Usage Monitor.vbs` exists in the Windows Startup folder. |
-| Extra Electron window | Use `npm run start:silent` instead of `npm start`. The flyout stays hidden until you open it. |
+| Extra Electron window / dies with the terminal | Use `npm start` (detached). Quit only from the right-click **Quit** menu. |
 | Quit | Right-click chips or flyout → **Quit**. Hiding the flyout only minimizes it. |
 
 ## License

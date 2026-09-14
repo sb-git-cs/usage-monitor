@@ -553,6 +553,8 @@ function wireIpc() {
 }
 
 app.setName("Usage Monitor");
+process.on("SIGHUP", () => {});
+process.on("SIGINT", () => {});
 if (process.platform === "win32") {
   app.setAppUserModelId("Shivam.UsageMonitor");
 }

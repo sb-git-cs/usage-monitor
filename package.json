@@ -11,8 +11,9 @@
     "url": "https://github.com/shivam-17/usage-monitor.git"
   },
   "scripts": {
-    "start": "electron .",
-    "start:silent": "wscript scripts/launch.vbs",
+    "start": "node scripts/start.js",
+    "start:silent": "node scripts/start.js",
+    "start:fg": "electron .",
     "dist": "electron-builder --win nsis"
   },
   "devDependencies": {
