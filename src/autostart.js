@@ -26,22 +26,28 @@ function shortcutPath() {
   return path.join(startupDir(), "Usage Monitor.lnk");
 }
 
+function psQuote(value) {
+  return "'" + String(value).replace(/'/g, "''") + "'";
+}
+
 function writeShortcut() {
   const lnk = shortcutPath();
   const exe = electronExe();
   const root = appRoot();
   fs.mkdirSync(startupDir(), { recursive: true });
-  const ps = [
+  const script = path.join(app.getPath("temp"), "usage-monitor-autostart.ps1");
+  const body = [
     "$ws = New-Object -ComObject WScript.Shell",
-    `$s = $ws.CreateShortcut(${JSON.stringify(lnk)})`,
-    `$s.TargetPath = ${JSON.stringify(exe)}`,
-    `$s.Arguments = ${JSON.stringify(`"${root}"`)}`,
-    `$s.WorkingDirectory = ${JSON.stringify(root)}`,
+    `$s = $ws.CreateShortcut(${psQuote(lnk)})`,
+    `$s.TargetPath = ${psQuote(exe)}`,
+    `$s.Arguments = ${psQuote(`"${root}"`)}`,
+    `$s.WorkingDirectory = ${psQuote(root)}`,
     "$s.WindowStyle = 1",
-    '$s.Description = "Usage Monitor"',
+    `$s.Description = ${psQuote("Usage Monitor")}`,
     "$s.Save()",
-  ].join("; ");
-  execFileSync("powershell.exe", ["-NoProfile", "-Command", ps], {
+  ].join("\r\n");
+  fs.writeFileSync(script, body, "utf8");
+  execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script], {
     windowsHide: true,
     timeout: 10000,
   });
