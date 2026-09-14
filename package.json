@@ -1,0 +1,33 @@
+{
+  "name": "usage-monitor",
+  "version": "1.0.0",
+  "description": "Windows tray + overlay meters for Claude Code, Codex, and Grok Build",
+  "main": "src/main.js",
+  "private": true,
+  "license": "MIT",
+  "author": "Shivam Bajpai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shivam-17/usage-monitor.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "local.usage-monitor",
+    "productName": "Usage Monitor",
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
