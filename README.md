@@ -43,14 +43,16 @@ npm start
 
 The first launch:
 
-- Shows the overlay on the right of the screen
-- Places a movable, semi-transparent `C` / `X` / `G` chips bar (dock it to the taskbar from the menu if you want it as a widget)
-- Enables **Start with Windows** (uncheck from the tray menu if you do not want that)
+- Shows the **desktop overlay** on the right of the screen
+- Shows the compact **chips** bar (`C` / `X` / `G`)
+- Enables **Start with Windows** (uncheck from the right-click menu if you do not want that)
+
+There are no extra icons in the Windows notification area. Use overlay, flyout, and chips only.
 
 ## Use
 
-- **Left-click** a tray chip → flyout
-- **Right-click** a tray chip → menu
+- **Left-click** chips → flyout
+- **Right-click** overlay, flyout, or chips → menu
   - Open / hide overlay
   - Refresh now
   - **Refresh every** — 5, 15, 30, or 60 seconds (default **5s**)
@@ -80,7 +82,7 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 | Symptom | What to try |
 | --- | --- |
 | Gray `C` / `X` / `G` | Open that CLI once and sign in (`claude`, `codex login`, `grok login`) |
-| No chips by the clock | Right-click a tray icon → uncheck **Dock chips to taskbar**, or drag the grip. System tray icons may still sit behind **^** |
+| No chips on screen | Right-click the overlay or flyout → uncheck **Snap chips to taskbar**, or drag the chips grip |
 | Overlay missing | Right-click a chip → **Open overlay** |
 | Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off for 15 minutes and keeps the last good numbers |
 | Quit | Right-click a tray chip → **Quit** (closing the overlay is not enough) |

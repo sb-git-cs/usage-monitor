@@ -103,6 +103,10 @@ function render(snapshot) {
   });
 }
 
+document.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  window.usage.openTrayMenu();
+});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") window.usage.hideFlyout();
 });

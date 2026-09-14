@@ -2,6 +2,10 @@ const body = document.getElementById("body");
 const pinBtn = document.getElementById("pin");
 document.getElementById("close").addEventListener("click", () => window.usage.hideOverlay());
 pinBtn.addEventListener("click", () => window.usage.togglePin());
+document.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  window.usage.openTrayMenu();
+});
 bindIntervalSelect(document.getElementById("interval"));
 
 function overlayEta(iso) {

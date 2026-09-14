@@ -1,17 +1,14 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, screen } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell, screen } = require("electron");
 const path = require("path");
 const config = require("./config");
 const poller = require("./poller");
 const alerts = require("./alerts");
-const { iconFor } = require("./trayIcons");
-const { hottestWindow, statusOk, ALERT_USED_PCT } = require("./models");
 const taskbarLayout = require("./taskbarLayout");
 
 let cfg;
 let overlay;
 let flyout;
 let chips;
-let trays = [];
 let poll;
 let latest;
 let overlayPinned = false;
@@ -349,37 +346,6 @@ function broadcast(snap) {
   for (const win of [overlay, flyout, chips]) {
     if (win && !win.isDestroyed()) win.webContents.send("usage://snapshot", snap);
   }
-  updateTrays(snap);
-}
-
-function letter(id) {
-  return id === "claude" ? "C" : id === "codex" ? "X" : "G";
-}
-
-function updateTrays(snap) {
-  const providers = snap.providers || [];
-  providers.forEach((p, i) => {
-    const tray = trays[i];
-    if (!tray) return;
-    const hot = hottestWindow(p);
-    const gray = !statusOk(p);
-    const alerting = hot && hot.used_pct >= ALERT_USED_PCT;
-    tray.setImage(iconFor(letter(p.id), hot && hot.used_pct, alerting, gray));
-    const lines = [`${p.display_name}${p.plan ? " · " + p.plan : ""}`];
-    if (p.windows && p.windows.length) {
-      for (const w of p.windows) {
-        if (w.used_pct == null) {
-          lines.push(w.label);
-        } else {
-          const bang = w.used_pct >= ALERT_USED_PCT ? "! " : "";
-          lines.push(`${bang}${w.label} ${Math.round(w.used_pct)}/100%`);
-        }
-      }
-    } else if (p.status) {
-      lines.push(p.status.hint || p.status.message || p.status.state);
-    }
-    tray.setToolTip(lines.join("\n"));
-  });
 }
 
 function setPollInterval(secs) {
@@ -454,29 +420,16 @@ function buildMenu() {
   ]);
 }
 
+function popupAppMenu() {
+  buildMenu().popup();
+}
+
 function togglePin() {
   overlayPinned = !overlayPinned;
   cfg.overlay_pinned = overlayPinned;
   config.save(cfg);
   if (overlay) overlay.setAlwaysOnTop(true);
   if (overlay && !overlay.isDestroyed()) overlay.webContents.send("usage://pinned", overlayPinned);
-}
-
-function createTrays() {
-  for (const t of trays) t.destroy();
-  trays = [];
-  const ids = ["claude", "codex", "grok"];
-  ids.forEach((id, index) => {
-    const tray = new Tray(iconFor(letter(id), null, false, true));
-    tray.setToolTip("Usage Monitor");
-    tray.on("click", (_e, bounds) => {
-      if (flyout.isVisible() && !flyoutStaysOpen()) hideFlyout(true);
-      else showFlyout(bounds);
-    });
-    tray.on("right-click", () => tray.popUpContextMenu(buildMenu()));
-    if (index === 0) tray.setContextMenu(buildMenu());
-    trays.push(tray);
-  });
 }
 
 function createWindows() {
@@ -605,9 +558,7 @@ function wireIpc() {
     if (Math.abs(cur - height) < 4) return;
     flyout.setSize(w || 320, height);
   });
-  ipcMain.on("usage://tray-menu", () => {
-    if (trays[0]) trays[0].popUpContextMenu(buildMenu());
-  });
+  ipcMain.on("usage://tray-menu", () => popupAppMenu());
   ipcMain.on("usage://open-usage", (_e, id) => {
     shell.openExternal(USAGE_URLS[id] || "https://grok.com");
   });
@@ -651,7 +602,6 @@ if (!gotLock) {
     app.setLoginItemSettings({ openAtLogin: !!cfg.autostart });
 
     createWindows();
-    createTrays();
     wireIpc();
 
     overlay.webContents.on("did-finish-load", () => {
