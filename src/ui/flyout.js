@@ -1,14 +1,9 @@
 const body = document.getElementById("body");
 const root = document.getElementById("root");
-const pinBtn = document.getElementById("pin");
 const dockBtn = document.getElementById("dock");
 document.getElementById("refresh").addEventListener("click", (e) => {
   e.stopPropagation();
   window.usage.refresh();
-});
-pinBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  window.usage.toggleFlyoutPin();
 });
 dockBtn.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -18,7 +13,6 @@ bindIntervalSelect(document.getElementById("interval"));
 
 function applyFlyoutState(state) {
   if (!state) return;
-  pinBtn.classList.toggle("active", !!state.pinned);
   dockBtn.classList.toggle("active", !!state.docked);
   root.classList.toggle("docked", !!state.docked);
 }
@@ -53,7 +47,7 @@ function render(snapshot) {
         const width = w.used_pct == null ? 0 : Math.min(100, w.used_pct);
         const color = alerting(w) ? "red" : "green";
         parts.push(`<div class="row${alert}">
-          <span>${flyoutLabel(w)}</span>
+          <span class="row-label">${flyoutLabel(w)}</span>
           <div class="meter"><div class="fill ${color}" style="width:${width}%"></div></div>
           <span class="pct">${pct}</span>
           <span class="eta" data-reset="${w.resets_at || ""}">${formatEta(w.resets_at)}</span>

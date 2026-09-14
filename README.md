@@ -11,7 +11,7 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 | Surface | What it does |
 | --- | --- |
 | **Desktop overlay** | Large glass HUD. Drag anywhere on screen; position is remembered. Pin to keep it up. Empty space clicks through. |
-| **Flyout** | Compact meters panel (all 5-hour / weekly rows). Width fits `used/total %`. **Keep flyout open** pins it on the desktop. **Snap flyout to taskbar** parks the **full panel** just above the taskbar in an empty gap — not the chips bar. |
+| **Flyout** | Compact meters panel in a single column. **Open flyout** / **Hide flyout** from the menu. **Snap flyout to taskbar** parks the full panel just above the taskbar. |
 | **Chips** | Small `C 82/100` strip **on** the taskbar. **Snap chips to taskbar** is this strip only. |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
 
@@ -58,12 +58,12 @@ The first launch:
   - **Refresh every** — 5, 15, 30, or 60 seconds (default **5s**)
   - Start with Windows
   - Pin overlay
-  - **Keep flyout open** — stays up; drag it anywhere
+  - **Open flyout** / **Hide flyout**
   - **Snap flyout to taskbar** — full meters panel, just above the taskbar
   - **Snap chips to taskbar** — small `C / X / G` strip on the taskbar
   - Quit
 - Drag overlay, flyout, or chips **from the title bar / dotted grip** to move them anywhere. Positions are saved.
-- **Stick overlay here** / **Keep flyout open** / **Snap to taskbar** locks that surface. Snapped widgets stay on the taskbar in an empty gap until you uncheck snap. Uncheck snap first if you want to float them again.
+- Overlay and flyout use a **single-column** layout. Snap to taskbar keeps chips on the bar and the flyout panel just above it.
 - Glass panels: you can see through them; clicks on empty space pass through.
 - Overlay **×** hides the HUD; it does not quit the app
 - Click a provider card to open that product’s official usage page

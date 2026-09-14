@@ -413,6 +413,18 @@ function buildMenu() {
     },
     { type: "separator" },
     {
+      label: flyout && flyout.isVisible() ? "Hide flyout" : "Open flyout",
+      click: () => {
+        if (flyout && flyout.isVisible()) {
+          setFlyoutPinned(false);
+          hideFlyout(true);
+        } else {
+          setFlyoutPinned(true);
+          showFlyout();
+        }
+      },
+    },
+    {
       label: "Start with Windows",
       type: "checkbox",
       checked: !!cfg.autostart,
@@ -421,18 +433,6 @@ function buildMenu() {
         config.save(cfg);
         app.setLoginItemSettings({ openAtLogin: !!cfg.autostart });
       },
-    },
-    {
-      label: "Stick overlay here",
-      type: "checkbox",
-      checked: !!overlayPinned,
-      click: togglePin,
-    },
-    {
-      label: "Keep flyout open",
-      type: "checkbox",
-      checked: !!cfg.flyout_pinned,
-      click: (item) => setFlyoutPinned(item.checked),
     },
     {
       label: "Snap flyout to taskbar",
