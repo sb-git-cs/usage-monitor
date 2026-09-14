@@ -7,10 +7,6 @@ const ALLOWED_INTERVALS = [5, 15, 30, 60];
 const DEFAULTS = {
   poll_interval_secs: 5,
   config_version: 4,
-  overlay_visible: true,
-  overlay_pinned: false,
-  overlay_x: null,
-  overlay_y: null,
   chips_docked: true,
   chips_hidden: false,
   chips_x: null,

@@ -22,12 +22,6 @@ function formatEta(iso) {
   return `${days[d.getDay()]} ${hours}:${pad(d.getMinutes())} ${ampm}`;
 }
 
-function overlayLabel(win) {
-  if (win.kind === "five_hour") return "5-hour";
-  if (win.kind === "weekly") return "Weekly";
-  return win.label;
-}
-
 function flyoutLabel(win) {
   if (win.kind === "five_hour") return "5h";
   if (win.kind === "weekly") return "Wk";

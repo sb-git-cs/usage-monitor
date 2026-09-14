@@ -2,16 +2,11 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("usage", {
   onSnapshot: (cb) => ipcRenderer.on("usage://snapshot", (_e, snap) => cb(snap)),
-  onPinned: (cb) => ipcRenderer.on("usage://pinned", (_e, pinned) => cb(pinned)),
   refresh: () => ipcRenderer.send("usage://refresh"),
-  hideOverlay: () => ipcRenderer.send("usage://overlay-hide"),
-  setOverlayHit: (hit) => ipcRenderer.send("usage://overlay-hit", hit),
   hideFlyout: () => ipcRenderer.send("usage://flyout-hide"),
-  togglePin: () => ipcRenderer.send("usage://overlay-toggle-pin"),
   toggleFlyout: () => ipcRenderer.send("usage://flyout-toggle"),
   openTrayMenu: () => ipcRenderer.send("usage://tray-menu"),
   openUsage: (id) => ipcRenderer.send("usage://open-usage", id),
-  resizeOverlay: (h, w) => ipcRenderer.send("usage://overlay-resize", h, w),
   getInterval: () => ipcRenderer.invoke("usage://get-interval"),
   setIntervalSecs: (secs) => ipcRenderer.send("usage://set-interval", secs),
   onInterval: (cb) => ipcRenderer.on("usage://interval", (_e, secs) => cb(secs)),

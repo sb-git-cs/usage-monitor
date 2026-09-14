@@ -7,13 +7,10 @@ const taskbarLayout = require("./taskbarLayout");
 const autostart = require("./autostart");
 
 let cfg;
-let overlay;
 let flyout;
 let chips;
 let poll;
 let latest;
-let overlayPinned = false;
-let placingOverlay = false;
 let saveTimer = null;
 
 function saveSoon() {
@@ -35,11 +32,9 @@ function setSizeKeepPos(win, w, h) {
   const [x, y] = win.getPosition();
   const [cw, ch] = win.getSize();
   if (Math.abs(cw - w) < 2 && Math.abs(ch - h) < 2) return;
-  placingOverlay = true;
   placingFlyout = true;
   placingChips = true;
   win.setBounds({ x, y, width: Math.round(w), height: Math.round(h) });
-  placingOverlay = false;
   placingFlyout = false;
   placingChips = false;
 }
@@ -311,6 +306,7 @@ function setFlyoutPinned(pinned) {
 
 function showFlyout(bounds) {
   if (!flyout) return;
+  if (flyout.isMinimized()) flyout.restore();
   if (cfg.flyout_docked) placeFlyoutDocked();
   else if (!flyout.isVisible() || !cfg.flyout_pinned) placeFlyoutNearTray(bounds);
   flyout.show();
@@ -319,57 +315,15 @@ function showFlyout(bounds) {
 }
 
 function hideFlyout(force) {
-  if (!flyout || !flyout.isVisible()) return;
+  if (!flyout) return;
   if (!force && flyoutStaysOpen()) return;
-  flyout.hide();
-}
-
-function placeOverlay() {
-  if (!overlay) return;
-  const [w, h] = overlay.getSize();
-  let x = cfg.overlay_x;
-  let y = cfg.overlay_y;
-  if (x == null || y == null) {
-    const wa = screen.getPrimaryDisplay().workArea;
-    x = wa.x + wa.width - w - 16;
-    y = wa.y + 48;
-  }
-  const p = clampToDisplay(x, y, w, h);
-  placingOverlay = true;
-  overlay.setPosition(p.x, p.y);
-  placingOverlay = false;
-}
-
-function persistOverlayPosition() {
-  if (!overlay || placingOverlay) return;
-  const pos = overlay.getPosition();
-  cfg.overlay_x = pos[0];
-  cfg.overlay_y = pos[1];
-  saveSoon();
-}
-
-function showOverlay(focus) {
-  if (!overlay) return;
-  if (overlay.isMinimized()) overlay.restore();
-  if (!overlay.isVisible()) placeOverlay();
-  overlay.setAlwaysOnTop(true, overlayPinned ? "pop-up-menu" : "floating");
-  if (focus) overlay.show();
-  else overlay.showInactive();
-  cfg.overlay_visible = true;
-  config.save(cfg);
-}
-
-function hideOverlay() {
-  if (!overlay) return;
-  overlay.setAlwaysOnTop(false);
-  overlay.minimize();
-  cfg.overlay_visible = false;
-  config.save(cfg);
+  flyout.setAlwaysOnTop(false);
+  flyout.minimize();
 }
 
 function broadcast(snap) {
   latest = snap;
-  for (const win of [overlay, flyout, chips]) {
+  for (const win of [flyout, chips]) {
     if (win && !win.isDestroyed()) win.webContents.send("usage://snapshot", snap);
   }
 }
@@ -384,20 +338,13 @@ function setPollInterval(secs) {
 
 function broadcastInterval() {
   const secs = cfg.poll_interval_secs || 5;
-  for (const win of [overlay, flyout, chips]) {
+  for (const win of [flyout, chips]) {
     if (win && !win.isDestroyed()) win.webContents.send("usage://interval", secs);
   }
 }
 
 function buildMenu() {
   return Menu.buildFromTemplate([
-    {
-      label: overlay && overlay.isVisible() && !overlay.isMinimized() ? "Hide overlay" : "Open overlay",
-      click: () => {
-        if (overlay.isVisible() && !overlay.isMinimized()) hideOverlay();
-        else showOverlay(true);
-      },
-    },
     {
       label: cfg.chips_hidden ? "Show chips on taskbar" : "Hide chips",
       click: () => setChipsHidden(!cfg.chips_hidden),
@@ -414,9 +361,9 @@ function buildMenu() {
     },
     { type: "separator" },
     {
-      label: flyout && flyout.isVisible() ? "Hide flyout" : "Open flyout",
+      label: flyout && flyout.isVisible() && !flyout.isMinimized() ? "Hide flyout" : "Open flyout",
       click: () => {
-        if (flyout && flyout.isVisible()) {
+        if (flyout && flyout.isVisible() && !flyout.isMinimized()) {
           setFlyoutPinned(false);
           hideFlyout(true);
         } else {
@@ -502,67 +449,19 @@ function finishDrag() {
     }
     return;
   }
-
-  if (win === overlay) {
-    const p = clampToDisplay(x, y, w, h);
-    placingOverlay = true;
-    overlay.setPosition(p.x, p.y);
-    placingOverlay = false;
-    persistOverlayPosition();
-  }
 }
 
 function popupAppMenu() {
   buildMenu().popup();
 }
 
-function togglePin() {
-  overlayPinned = !overlayPinned;
-  cfg.overlay_pinned = overlayPinned;
-  config.save(cfg);
-  if (overlay && !overlay.isDestroyed()) {
-    overlay.setAlwaysOnTop(true, overlayPinned ? "pop-up-menu" : "floating");
-    overlay.webContents.send("usage://pinned", overlayPinned);
-  }
-}
-
 function createWindows() {
-  overlay = createWindow({
-    width: 400,
-    height: 620,
-    focusable: true,
-    hasShadow: false,
-    skipTaskbar: false,
-  });
-  overlay.loadFile(ui("overlay.html"));
-  overlay.setAlwaysOnTop(true, overlayPinned ? "pop-up-menu" : "floating");
-  overlay.on("moved", () => {
-    if (placingOverlay || dragState) return;
-    persistOverlayPosition();
-  });
-  overlay.on("minimize", () => {
-    cfg.overlay_visible = false;
-    saveSoon();
-  });
-  overlay.on("restore", () => {
-    cfg.overlay_visible = true;
-    overlay.setAlwaysOnTop(true, overlayPinned ? "pop-up-menu" : "floating");
-    saveSoon();
-  });
-  overlay.on("close", (e) => {
-    if (app.isQuitting) return;
-    e.preventDefault();
-    hideOverlay();
-  });
-  overlay.on("closed", () => {
-    overlay = null;
-  });
-
   flyout = createWindow({
     width: 320,
     height: 360,
     focusable: true,
     hasShadow: false,
+    skipTaskbar: false,
   });
   flyout.loadFile(ui("flyout.html"));
   flyout.setAlwaysOnTop(true, cfg.flyout_docked || cfg.flyout_pinned ? "pop-up-menu" : "floating");
@@ -570,6 +469,11 @@ function createWindows() {
   flyout.on("moved", () => {
     if (placingFlyout || dragState) return;
     if (!cfg.flyout_docked) persistFlyoutPosition();
+  });
+  flyout.on("close", (e) => {
+    if (app.isQuitting) return;
+    e.preventDefault();
+    hideFlyout(true);
   });
   flyout.on("closed", () => {
     flyout = null;
@@ -599,7 +503,6 @@ function createWindows() {
 
 function wireIpc() {
   ipcMain.on("usage://refresh", () => poll && poll.refresh());
-  ipcMain.on("usage://overlay-hide", () => hideOverlay());
   ipcMain.on("usage://drag-begin", (e, sx, sy) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win) return;
@@ -610,13 +513,12 @@ function wireIpc() {
     if (!dragState || dragState.win.isDestroyed()) return;
     const x = dragState.originX + (sx - dragState.sx);
     const y = dragState.originY + (sy - dragState.sy);
-    placingOverlay = placingFlyout = placingChips = true;
+    placingFlyout = placingChips = true;
     dragState.win.setPosition(Math.round(x), Math.round(y));
-    placingOverlay = placingFlyout = placingChips = false;
+    placingFlyout = placingChips = false;
   });
   ipcMain.on("usage://drag-end", () => finishDrag());
   ipcMain.on("usage://flyout-hide", () => hideFlyout(true));
-  ipcMain.on("usage://overlay-toggle-pin", togglePin);
   ipcMain.on("usage://flyout-toggle", () => {
     if (flyout.isVisible() && !flyoutStaysOpen()) hideFlyout(true);
     else showFlyout();
@@ -638,12 +540,6 @@ function wireIpc() {
   ipcMain.on("usage://open-usage", (_e, id) => {
     shell.openExternal(USAGE_URLS[id] || "https://grok.com");
   });
-  ipcMain.on("usage://overlay-resize", (_e, h, w) => {
-    if (!overlay) return;
-    const width = Math.max(300, Math.min(560, Math.round(w || 380)));
-    const height = Math.max(140, Math.min(980, Math.round(h)));
-    setSizeKeepPos(overlay, width, height);
-  });
   ipcMain.handle("usage://get-interval", () => cfg.poll_interval_secs || 5);
   ipcMain.on("usage://set-interval", (_e, secs) => setPollInterval(secs));
   ipcMain.on("usage://chips-resize", (_e, w, h) => {
@@ -662,31 +558,24 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => showOverlay(true));
+  app.on("second-instance", () => showFlyout());
   app.whenReady().then(() => {
     if (process.platform === "win32") {
       app.setAppUserModelId("local.usage-monitor");
     }
     app.setName("Usage Monitor");
     cfg = config.ensure();
-    overlayPinned = !!cfg.overlay_pinned;
     cfg.autostart = autostart.apply(cfg.autostart !== false);
     config.save(cfg);
 
     createWindows();
     wireIpc();
 
-    overlay.webContents.on("did-finish-load", () => {
-      overlay.webContents.send("usage://pinned", overlayPinned);
-      overlay.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
-      if (latest) overlay.webContents.send("usage://snapshot", latest);
-      if (cfg.overlay_visible) showOverlay(false);
-    });
     flyout.webContents.on("did-finish-load", () => {
       flyout.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
       sendFlyoutState();
       if (latest) flyout.webContents.send("usage://snapshot", latest);
-      if (flyoutStaysOpen()) showFlyout();
+      showFlyout();
     });
     chips.webContents.on("did-finish-load", () => {
       chips.webContents.send("usage://chips-docked", !!cfg.chips_docked);
@@ -703,7 +592,7 @@ if (!gotLock) {
       broadcast(snap);
       alerts.evaluate(snap, {
         notifyOnLimit: cfg.notify_on_limit_reached,
-        onClick: () => showOverlay(true),
+        onClick: () => showFlyout(),
       });
     });
 
