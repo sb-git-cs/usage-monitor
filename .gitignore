@@ -5,6 +5,7 @@ out/
 .DS_Store
 Thumbs.db
 mockups/
+scripts/enum-taskbar.ps1
 .env
 .idea/
 .vscode/
