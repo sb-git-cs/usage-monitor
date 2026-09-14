@@ -53,6 +53,39 @@ function statusOk(provider) {
   return s === "ok" || s === "stale";
 }
 
+function windowStepMs(kind) {
+  if (kind === "five_hour") return 5 * 60 * 60 * 1000;
+  if (kind === "weekly" || kind === "weekly_scoped") return 7 * 24 * 60 * 60 * 1000;
+  return 5 * 60 * 60 * 1000;
+}
+
+function applyLocalResets(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.providers)) {
+    return { snapshot, changed: false };
+  }
+  const now = Date.now();
+  let changed = false;
+  const providers = snapshot.providers.map((p) => {
+    const windows = (p.windows || []).map((w) => {
+      if (!w.resets_at) return w;
+      const t = Date.parse(w.resets_at);
+      if (!t || t > now) return w;
+      changed = true;
+      let next = t;
+      const step = windowStepMs(w.kind);
+      while (next <= now) next += step;
+      return {
+        ...w,
+        used_pct: w.used_pct == null ? null : 0,
+        remaining_pct: w.used_pct == null ? null : 100,
+        resets_at: new Date(next).toISOString(),
+      };
+    });
+    return { ...p, windows };
+  });
+  return { snapshot: { ...snapshot, providers }, changed };
+}
+
 module.exports = {
   ALERT_USED_PCT,
   PROVIDERS,
@@ -62,4 +95,5 @@ module.exports = {
   hottestWindow,
   isAlerting,
   statusOk,
+  applyLocalResets,
 };

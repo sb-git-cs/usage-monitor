@@ -79,6 +79,13 @@ window.usage.onSnapshot((s) => {
   render(s);
 });
 setInterval(() => {
+  if (!window.__last) return;
+  const next = applyLocalResets(window.__last);
+  if (next.changed) {
+    window.__last = next.snapshot;
+    render(window.__last);
+    return;
+  }
   document.querySelectorAll("[data-reset]").forEach((el) => {
     el.textContent = formatEta(el.dataset.reset);
   });

@@ -1,7 +1,7 @@
 const claude = require("./adapters/claude");
 const codex = require("./adapters/codex");
 const grok = require("./adapters/grok");
-const { PROVIDERS } = require("./models");
+const { PROVIDERS, applyLocalResets } = require("./models");
 const cache = require("./cache");
 
 const adapters = { claude, codex, grok };
@@ -57,7 +57,7 @@ async function pollOnce(cfg) {
         }
         const fresh = await withTimeout(adapters[id].fetchUsage(cfg), ADAPTER_TIMEOUT_MS, id);
         if (fresh && fresh._rateLimited) {
-          backoffUntil[id] = Date.now() + 15 * 60 * 1000;
+          backoffUntil[id] = Date.now() + 60 * 1000;
           delete fresh._rateLimited;
         } else if (fresh && fresh.status && fresh.status.state === "ok") {
           delete backoffUntil[id];
@@ -83,8 +83,9 @@ async function pollOnce(cfg) {
     poll_interval_secs: cfg.poll_interval_secs || 5,
     providers: results,
   };
-  cache.saveSnapshot(snapshot);
-  return snapshot;
+  const { snapshot: next } = applyLocalResets(snapshot);
+  cache.saveSnapshot(next);
+  return next;
 }
 
 function start(cfg, onSnapshot) {

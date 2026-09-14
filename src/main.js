@@ -3,6 +3,7 @@ const path = require("path");
 const config = require("./config");
 const poller = require("./poller");
 const alerts = require("./alerts");
+const { applyLocalResets } = require("./models");
 const taskbarLayout = require("./taskbarLayout");
 const autostart = require("./autostart");
 
@@ -603,12 +604,23 @@ if (!gotLock) {
     });
 
     poll = poller.start(cfg, (snap) => {
-      broadcast(snap);
-      alerts.evaluate(snap, {
+      const { snapshot } = applyLocalResets(snap);
+      latest = snapshot;
+      broadcast(snapshot);
+      alerts.evaluate(snapshot, {
         notifyOnLimit: cfg.notify_on_limit_reached,
         onClick: () => showFlyout(),
       });
     });
+
+    setInterval(() => {
+      if (!latest) return;
+      const { snapshot, changed } = applyLocalResets(latest);
+      if (!changed) return;
+      latest = snapshot;
+      broadcast(snapshot);
+      if (poll) poll.refresh();
+    }, 1000);
 
     setInterval(() => {
       if (dragState) return;

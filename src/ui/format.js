@@ -2,6 +2,34 @@ function pad(n) {
   return String(n).padStart(2, "0");
 }
 
+function applyLocalResets(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.providers)) return { snapshot, changed: false };
+  const now = Date.now();
+  let changed = false;
+  const providers = snapshot.providers.map((p) => {
+    const windows = (p.windows || []).map((w) => {
+      if (!w.resets_at) return w;
+      const t = Date.parse(w.resets_at);
+      if (!t || t > now) return w;
+      changed = true;
+      let next = t;
+      const step =
+        w.kind === "weekly" || w.kind === "weekly_scoped"
+          ? 7 * 24 * 60 * 60 * 1000
+          : 5 * 60 * 60 * 1000;
+      while (next <= now) next += step;
+      return {
+        ...w,
+        used_pct: w.used_pct == null ? null : 0,
+        remaining_pct: w.used_pct == null ? null : 100,
+        resets_at: new Date(next).toISOString(),
+      };
+    });
+    return { ...p, windows };
+  });
+  return { snapshot: { ...snapshot, providers }, changed };
+}
+
 function formatEta(iso) {
   if (!iso) return "";
   const t = Date.parse(iso);

@@ -48,5 +48,13 @@ window.usage.onSnapshot((s) => {
   window.__last = s;
   render(s);
 });
+setInterval(() => {
+  if (!window.__last) return;
+  const next = applyLocalResets(window.__last);
+  if (next.changed) {
+    window.__last = next.snapshot;
+    render(window.__last);
+  }
+}, 1000);
 window.usage.onChipsDocked(setDocked);
 window.usage.getChipsDocked().then(setDocked);
