@@ -123,7 +123,7 @@ function updateTrays(snap) {
           lines.push(w.label);
         } else {
           const bang = w.used_pct >= ALERT_USED_PCT ? "! " : "";
-          lines.push(`${bang}${w.label} ${Math.round(w.used_pct)}%`);
+          lines.push(`${bang}${w.label} ${Math.round(w.used_pct)}/100%`);
         }
       }
     } else if (p.status) {
@@ -225,7 +225,7 @@ function createWindows() {
   });
 
   flyout = createWindow({
-    width: 300,
+    width: 320,
     height: 360,
     focusable: true,
   });
@@ -236,7 +236,7 @@ function createWindows() {
   });
 
   chips = createWindow({
-    width: 168,
+    width: 230,
     height: 30,
     focusable: false,
   });

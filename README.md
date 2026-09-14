@@ -10,7 +10,7 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 
 | Surface | What it does |
 | --- | --- |
-| **Tray chips** (`C` / `X` / `G`) | Always visible next to the clock. Number is **% used** on the hottest window (5-hour for Claude/Codex, weekly for Grok). Red means under 20% remaining. |
+| **Tray chips** (`C` / `X` / `G`) | Always visible next to the clock. Shows **used/total %** (for example `82/100`) on the hottest window (5-hour for Claude/Codex, weekly for Grok). Red means under 20% remaining. |
 | **Flyout** | Left-click a chip. Compact bars for every window plus reset countdown. |
 | **Overlay** | Always-on-top HUD with larger meters. Pin it, drag it, close it (quit is tray-only). |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
@@ -60,7 +60,7 @@ The first launch:
 - Overlay **×** hides the HUD; it does not quit the app
 - Click a provider card to open that product’s official usage page
 
-Percentages are **used**, not remaining. A full 5-hour window reads `100%` in red.
+Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-hour window reads `100/100%` in red.
 
 ## Privacy
 

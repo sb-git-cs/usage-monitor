@@ -9,7 +9,7 @@ function render(snapshot) {
     let cls = "gray";
     let num = "—";
     if (win) {
-      num = String(Math.round(win.used_pct));
+      num = formatUsedTotal(win, true);
       cls = alerting(win) ? "red" : "green";
     }
     parts.push(`<div class="pct-icon ${cls}" data-id="${p.id}"><span class="who">${letter(p.id)}</span>${num}</div>`);

@@ -47,7 +47,7 @@ function evaluate(snapshot, { onClick, notifyOnLimit } = {}) {
       if (win.used_pct >= ALERT_USED_PCT && !prev.crossed80) {
         toasts.push({
           title: `Usage Monitor — ${provider.display_name}`,
-          body: `${win.label} ${Math.round(win.used_pct)}% used · remaining ${Math.round(win.remaining_pct)}%`,
+          body: `${win.label} ${Math.round(win.used_pct)}/100% used`,
         });
         prev.crossed80 = true;
         prev.until = win.resets_at;

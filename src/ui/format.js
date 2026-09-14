@@ -39,6 +39,12 @@ function alerting(win) {
   return win.used_pct != null && win.remaining_pct != null && win.remaining_pct < 20;
 }
 
+function formatUsedTotal(win, compact) {
+  if (win == null || win.used_pct == null) return compact ? "—" : "—/100%";
+  const used = Math.round(win.used_pct);
+  return compact ? `${used}/100` : `${used}/100%`;
+}
+
 function letter(id) {
   return id === "claude" ? "C" : id === "codex" ? "X" : "G";
 }

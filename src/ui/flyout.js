@@ -20,7 +20,7 @@ function render(snapshot) {
           continue;
         }
         const alert = alerting(w) ? " alert" : "";
-        const pct = w.used_pct == null ? "—" : `${Math.round(w.used_pct)}%`;
+        const pct = formatUsedTotal(w);
         const width = w.used_pct == null ? 0 : Math.min(100, w.used_pct);
         const color = alerting(w) ? "red" : "green";
         parts.push(`<div class="row${alert}">

@@ -26,10 +26,10 @@ function render(snapshot) {
           continue;
         }
         const alert = alerting(w);
-        const pct = w.used_pct == null ? "—" : `${Math.round(w.used_pct)}%`;
+        const pct = formatUsedTotal(w);
         const width = w.used_pct == null ? 0 : Math.min(100, w.used_pct);
         parts.push(`<div class="win-block">
-          <div class="win-label">${overlayLabel(w)}</div>
+          <div class="win-label">${overlayLabel(w)} <span class="win-frac">used/total</span></div>
           <div class="win-pct${alert ? " alert" : ""}">${pct}</div>
           <div class="meter overlay-meter"><div class="fill ${alert ? "red" : "green"}" style="width:${width}%"></div></div>
           <div class="win-reset">${overlayEta(w.resets_at)}</div>
