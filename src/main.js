@@ -10,6 +10,8 @@ const autostart = require("./autostart");
 let cfg;
 let flyout;
 let chips;
+let clickAway;
+let ignoreFlyoutBlur = false;
 let poll;
 let latest;
 let saveTimer = null;
@@ -216,7 +218,65 @@ function persistChipsPosition() {
 let placingFlyout = false;
 
 function flyoutStaysOpen() {
-  return !!(cfg && (cfg.flyout_docked || cfg.flyout_pinned));
+  return !!(cfg && cfg.flyout_docked);
+}
+
+function virtualScreen() {
+  const ds = screen.getAllDisplays();
+  let x = Infinity;
+  let y = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const d of ds) {
+    const b = d.bounds;
+    x = Math.min(x, b.x);
+    y = Math.min(y, b.y);
+    right = Math.max(right, b.x + b.width);
+    bottom = Math.max(bottom, b.y + b.height);
+  }
+  return { x, y, width: right - x, height: bottom - y };
+}
+
+function hideClickAway() {
+  if (clickAway && !clickAway.isDestroyed() && clickAway.isVisible()) clickAway.hide();
+}
+
+function showClickAway() {
+  if (!flyout || cfg.flyout_docked) {
+    hideClickAway();
+    return;
+  }
+  const area = virtualScreen();
+  if (!clickAway || clickAway.isDestroyed()) {
+    clickAway = new BrowserWindow({
+      ...area,
+      frame: false,
+      transparent: true,
+      skipTaskbar: true,
+      resizable: false,
+      focusable: true,
+      hasShadow: false,
+      show: false,
+      fullscreenable: false,
+      backgroundColor: "#00000000",
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    clickAway.setIgnoreMouseEvents(false);
+    clickAway.loadFile(ui("clickaway.html"));
+    clickAway.on("closed", () => {
+      clickAway = null;
+    });
+  } else {
+    clickAway.setBounds(area);
+  }
+  clickAway.setAlwaysOnTop(true, "floating");
+  clickAway.showInactive();
+  flyout.setAlwaysOnTop(true, "pop-up-menu");
 }
 
 function sendFlyoutState() {
@@ -310,15 +370,16 @@ function showFlyout(bounds) {
   if (!flyout) return;
   if (flyout.isMinimized()) flyout.restore();
   if (cfg.flyout_docked) placeFlyoutDocked();
-  else if (!flyout.isVisible() || !cfg.flyout_pinned) placeFlyoutNearTray(bounds);
+  else if (!flyout.isVisible()) placeFlyoutNearTray(bounds);
   flyout.show();
-  if (!flyoutStaysOpen()) flyout.focus();
-  else flyout.showInactive();
+  flyout.focus();
+  showClickAway();
 }
 
 function hideFlyout(force) {
   if (!flyout) return;
   if (!force && flyoutStaysOpen()) return;
+  hideClickAway();
   flyout.hide();
 }
 
@@ -364,13 +425,8 @@ function buildMenu() {
     {
       label: flyout && flyout.isVisible() && !flyout.isMinimized() ? "Hide flyout" : "Open flyout",
       click: () => {
-        if (flyout && flyout.isVisible() && !flyout.isMinimized()) {
-          setFlyoutPinned(false);
-          hideFlyout(true);
-        } else {
-          setFlyoutPinned(true);
-          showFlyout();
-        }
+        if (flyout && flyout.isVisible() && !flyout.isMinimized()) hideFlyout(true);
+        else showFlyout();
       },
     },
     {
@@ -453,7 +509,14 @@ function finishDrag() {
 }
 
 function popupAppMenu() {
-  buildMenu().popup();
+  ignoreFlyoutBlur = true;
+  buildMenu().popup({
+    callback: () => {
+      setTimeout(() => {
+        ignoreFlyoutBlur = false;
+      }, 200);
+    },
+  });
 }
 
 function createWindows() {
@@ -465,7 +528,14 @@ function createWindows() {
   });
   flyout.loadFile(ui("flyout.html"));
   flyout.setAlwaysOnTop(true, cfg.flyout_docked || cfg.flyout_pinned ? "pop-up-menu" : "floating");
-  flyout.on("blur", () => hideFlyout(false));
+  flyout.on("blur", () => {
+    if (ignoreFlyoutBlur || (cfg && cfg.flyout_docked)) return;
+    setTimeout(() => {
+      if (ignoreFlyoutBlur || (cfg && cfg.flyout_docked)) return;
+      if (flyout && flyout.isFocused()) return;
+      hideFlyout(true);
+    }, 180);
+  });
   flyout.on("moved", () => {
     if (placingFlyout || dragState) return;
     if (!cfg.flyout_docked) persistFlyoutPosition();
