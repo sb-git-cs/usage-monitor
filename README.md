@@ -39,10 +39,35 @@ You do not need all four. A missing login shows as gray with a sign-in hint.
 
 ## Install
 
+Clone the app, install the four coding CLIs if they are missing, then start Usage Monitor:
+
 ```powershell
 git clone https://github.com/sb-git-cs/usage-monitor.git
 cd usage-monitor
 npm install
+npm run setup
+```
+
+`npm run setup` runs `scripts/install.ps1`. That script:
+
+1. Installs **Claude Code**, **Codex**, **Antigravity** (`agy`, Gemini), and **Grok Build** using each product’s official Windows installer
+2. Skips any CLI already on your PATH
+3. Starts Usage Monitor (`npm start`)
+
+You can also double-click `scripts\install.cmd` or run `.\scripts\install.ps1` from the repo root.
+
+Sign in once per tool so the meters can read usage (a missing login shows as a gray chip):
+
+```powershell
+claude
+codex login
+agy
+grok
+```
+
+Usage Monitor only:
+
+```powershell
 npm start
 ```
 
@@ -88,7 +113,7 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 
 | Symptom | What to try |
 | --- | --- |
-| Gray `C` / `X` / `M` / `G` | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok login`) |
+| Gray `C` / `X` / `M` / `G` | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok`). If the CLI is missing, run `npm run setup`. |
 | No chips on the taskbar | Right-click flyout → **Show chips on taskbar**. They sit in an empty gap, not over the clock. |
 | Flyout missing | Right-click chips → **Open flyout** |
 | Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off and keeps the last good numbers |
