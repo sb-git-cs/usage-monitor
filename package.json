@@ -8,7 +8,11 @@
   "author": "Shivam Bajpai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/shivam-17/usage-monitor.git"
+    "url": "https://github.com/sb-git-cs/usage-monitor.git"
+  },
+  "homepage": "https://github.com/sb-git-cs/usage-monitor",
+  "bugs": {
+    "url": "https://github.com/sb-git-cs/usage-monitor/issues"
   },
   "scripts": {
     "start": "node scripts/start.js",

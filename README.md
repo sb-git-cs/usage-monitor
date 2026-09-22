@@ -16,7 +16,14 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 
 ![UI overview](docs/screenshots/overview.png)
 
-Grok has a **weekly** pool only. The app does not invent a 5-hour Grok bar. Gemini shows the **Gemini model** 5-hour and weekly pools from Antigravity / Gemini CLI.
+| Chip | Provider | Windows shown |
+| --- | --- | --- |
+| **C** | Claude Code | 5-hour and weekly |
+| **X** | Codex | 5-hour and weekly |
+| **M** | Gemini (Antigravity CLI / Gemini CLI) | Gemini model 5-hour and weekly when the API reports them |
+| **G** | Grok Build | Weekly only (no 5-hour bar) |
+
+Grok has a **weekly** pool only. Gemini shows the **Gemini model** pools from Antigravity (`agy`) or Gemini CLI; some plans report weekly only.
 
 ## Requirements
 
@@ -33,7 +40,7 @@ You do not need all four. A missing login shows as gray with a sign-in hint.
 ## Install
 
 ```powershell
-git clone https://github.com/shivam-17/usage-monitor.git
+git clone https://github.com/sb-git-cs/usage-monitor.git
 cd usage-monitor
 npm install
 npm start
@@ -43,9 +50,8 @@ npm start
 
 The first launch:
 
-- Puts **Usage Monitor** on the Windows taskbar (click it to show the flyout)
 - Snaps the compact **chips** widget onto the taskbar in an empty gap (always visible unless you hide it)
-- Registers **Start with Windows** (login item + Startup folder shortcut). Uncheck **Start with Windows** in the right-click menu to turn that off.
+- Registers **Start with Windows** (Startup folder shortcut). Uncheck **Start with Windows** in the right-click menu to turn that off.
 
 ## Start with Windows
 
@@ -67,7 +73,7 @@ To disable, right-click the flyout or chips and uncheck **Start with Windows**.
   - Quit
 - Drag flyout or chips **from the title bar / dotted grip** to move them anywhere. Positions are saved.
 - Flyout uses a **two-by-two card** layout. Snap to taskbar keeps chips on the bar and the flyout panel just above it.
-- Click a provider card to open that product’s official usage page
+- Click a provider card to open that product’s official usage page (Claude, Codex, [Antigravity](https://antigravity.google), Grok)
 
 Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-hour window reads `100/100%` in red.
 
@@ -84,8 +90,8 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 | --- | --- |
 | Gray `C` / `X` / `M` / `G` | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok login`) |
 | No chips on the taskbar | Right-click flyout → **Show chips on taskbar**. They sit in an empty gap, not over the clock. |
-| Flyout missing | Click **Usage Monitor** on the Windows taskbar, or right-click chips → **Open flyout** |
-| Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off for 15 minutes and keeps the last good numbers |
+| Flyout missing | Right-click chips → **Open flyout** |
+| Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off and keeps the last good numbers |
 | Does not start at logon | Run `npm run start:silent` once, leave **Start with Windows** checked. Confirm `Usage Monitor.vbs` exists in the Windows Startup folder. |
 | Extra Electron window / dies with the terminal | Use `npm start` (detached). Quit only from the right-click **Quit** menu. |
 | Quit | Right-click chips or flyout → **Quit**. Hiding the flyout only minimizes it. |
