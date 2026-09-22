@@ -45,6 +45,7 @@ let dragState = null;
 const USAGE_URLS = {
   claude: "https://claude.ai/settings/usage",
   codex: "https://chatgpt.com/codex/settings/usage",
+  gemini: "https://antigravity.google",
   grok: "https://grok.com",
 };
 
@@ -457,8 +458,8 @@ function popupAppMenu() {
 
 function createWindows() {
   flyout = createWindow({
-    width: 320,
-    height: 360,
+    width: 580,
+    height: 280,
     focusable: true,
     hasShadow: false,
   });
@@ -479,7 +480,7 @@ function createWindows() {
   });
 
   chips = createWindow({
-    width: 260,
+    width: 340,
     height: 28,
     focusable: true,
     hasShadow: false,
@@ -530,7 +531,7 @@ function wireIpc() {
   }));
   ipcMain.on("usage://flyout-resize", (_e, h, w) => {
     if (!flyout) return;
-    const width = Math.max(360, Math.min(760, Math.round(w || 520)));
+    const width = Math.max(560, Math.min(860, Math.round(w || 580)));
     const height = Math.max(140, Math.min(860, Math.round(h)));
     setSizeKeepPos(flyout, width, height);
     if (cfg.flyout_docked && !dragState) placeFlyoutDocked();

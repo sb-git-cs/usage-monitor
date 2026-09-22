@@ -16,7 +16,9 @@ function applyLocalResets(snapshot) {
       const step =
         w.kind === "weekly" || w.kind === "weekly_scoped"
           ? 7 * 24 * 60 * 60 * 1000
-          : 5 * 60 * 60 * 1000;
+          : w.kind === "daily"
+            ? 24 * 60 * 60 * 1000
+            : 5 * 60 * 60 * 1000;
       while (next <= now) next += step;
       return {
         ...w,
@@ -53,6 +55,7 @@ function formatEta(iso) {
 function flyoutLabel(win) {
   if (win.kind === "five_hour") return "5h";
   if (win.kind === "weekly") return "Wk";
+  if (win.kind === "daily") return "Day";
   if (win.kind === "credits") return "Credits";
   return win.label;
 }
@@ -68,7 +71,10 @@ function formatUsedTotal(win, compact) {
 }
 
 function letter(id) {
-  return id === "claude" ? "C" : id === "codex" ? "X" : "G";
+  if (id === "claude") return "C";
+  if (id === "codex") return "X";
+  if (id === "gemini") return "M";
+  return "G";
 }
 
 function bindIntervalSelect(el) {

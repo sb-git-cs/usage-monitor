@@ -1,13 +1,14 @@
 const claude = require("./adapters/claude");
 const codex = require("./adapters/codex");
+const gemini = require("./adapters/gemini");
 const grok = require("./adapters/grok");
 const { PROVIDERS, applyLocalResets } = require("./models");
 const cache = require("./cache");
 
-const adapters = { claude, codex, grok };
+const adapters = { claude, codex, gemini, grok };
 const backoffUntil = {};
-const ADAPTER_TIMEOUT_MS = 9000;
-const POLL_WATCHDOG_MS = 16000;
+const ADAPTER_TIMEOUT_MS = 12000;
+const POLL_WATCHDOG_MS = 18000;
 
 function withTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {

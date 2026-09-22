@@ -3,6 +3,7 @@ const ALERT_USED_PCT = 80;
 const PROVIDERS = [
   { id: "claude", displayName: "Claude Code" },
   { id: "codex", displayName: "Codex" },
+  { id: "gemini", displayName: "Gemini" },
   { id: "grok", displayName: "Grok Build" },
 ];
 
@@ -55,6 +56,7 @@ function statusOk(provider) {
 
 function windowStepMs(kind) {
   if (kind === "five_hour") return 5 * 60 * 60 * 1000;
+  if (kind === "daily") return 24 * 60 * 60 * 1000;
   if (kind === "weekly" || kind === "weekly_scoped") return 7 * 24 * 60 * 60 * 1000;
   return 5 * 60 * 60 * 1000;
 }

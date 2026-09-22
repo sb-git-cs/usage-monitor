@@ -23,7 +23,7 @@ window.usage.getFlyoutState().then(applyFlyoutState);
 
 function fitFlyout() {
   root.style.width = "max-content";
-  const w = Math.ceil(Math.max(root.scrollWidth, root.offsetWidth, 520));
+  const w = Math.ceil(Math.max(root.scrollWidth, root.offsetWidth, 580));
   const h = Math.ceil(Math.max(root.scrollHeight, root.offsetHeight));
   window.usage.resizeFlyout(h + 4, w + 4);
 }

@@ -9,6 +9,7 @@
   --amber: #f59e0b;
   --claude: #e07a5f;
   --codex: #60a5fa;
+  --gemini: #7c9cff;
   --grok: #d6d3d1;
   --bar-track: #1f2937;
   font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
@@ -37,15 +38,16 @@ html.fit, html.fit body {
   flex-direction: column;
 }
 #body {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   width: 100%;
 }
 .flyout {
   width: max-content;
-  min-width: 520px;
+  min-width: 580px;
   border-radius: 12px;
-  padding: 10px 14px 14px;
+  padding: 10px 12px 12px;
   background: rgba(17, 24, 39, 0.42);
   border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: none;
@@ -71,7 +73,7 @@ html.fit, html.fit body {
   display: flex; align-items: center; justify-content: space-between;
   color: #e5e7eb; font-size: 12px; font-weight: 600;
 }
-.flyout .head { margin-bottom: 8px; padding: 2px 2px 8px; border-bottom: 1px solid #1f2937; cursor: grab; }
+.flyout .head { margin-bottom: 8px; padding: 2px 2px 8px; border-bottom: 1px solid rgba(31, 41, 55, 0.9); cursor: grab; }
 .overlay-chrome {
   min-height: 28px; display: flex; align-items: center; justify-content: space-between;
   gap: 8px; padding: 4px 10px; color: #d1d5db; font-size: 12px; font-weight: 600;
@@ -96,7 +98,7 @@ html.fit, html.fit body {
   height: 22px;
 }
 .flyout .interval { font-size: 11px; }
-.provider { margin-top: 8px; cursor: pointer; }
+.provider { cursor: pointer; }
 .overlay .provider {
   margin: 6px 12px; padding: 8px 12px 10px;
   min-width: 276px;
@@ -108,16 +110,24 @@ html.fit, html.fit body {
 .p-plan { font-size: 11px; color: var(--muted); }
 .accent-claude { box-shadow: inset 2px 0 0 var(--claude); }
 .accent-codex { box-shadow: inset 2px 0 0 var(--codex); }
+.accent-gemini { box-shadow: inset 2px 0 0 var(--gemini); }
 .accent-grok { box-shadow: inset 2px 0 0 var(--grok); }
-.flyout .provider { padding-left: 8px; }
+.flyout .provider {
+  margin: 0;
+  padding: 8px 10px 9px 12px;
+  min-width: 268px;
+  background: rgba(31, 41, 55, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
 .metrics {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .row {
   display: grid;
-  grid-template-columns: 28px minmax(48px, 1fr) max-content max-content;
+  grid-template-columns: 28px minmax(40px, 1fr) max-content max-content;
   gap: 6px;
   align-items: center;
   font-size: 11px;
@@ -151,7 +161,7 @@ html.fit, html.fit body {
 }
 .win-pct.alert { color: #f87171; }
 .win-reset { font-size: 11px; color: var(--muted); }
-.credits { margin-top: 8px; font-size: 12px; color: #e5e7eb; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.credits { margin-top: 6px; font-size: 11px; color: #e5e7eb; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .footnote { margin-top: 6px; font-size: 11px; color: var(--dim); }
 .hint { font-size: 11px; color: var(--muted); padding: 4px 0 2px; }
 .badge { font-size: 10px; color: var(--amber); margin-left: 6px; }
@@ -168,16 +178,16 @@ html.fit, html.fit body {
 }
 .chips.docked {
   padding: 2px 5px 2px 3px;
-  gap: 4px;
+  gap: 3px;
   background: rgba(17, 24, 39, 0.62);
   border-color: rgba(255, 255, 255, 0.16);
   border-radius: 6px;
 }
-.chips.docked #root { gap: 4px; }
+.chips.docked #root { gap: 3px; }
 .chips.docked .pct-icon {
   height: 22px;
   min-width: max-content;
-  padding: 0 6px;
+  padding: 0 5px;
   font-size: 11px;
   border-radius: 5px;
   gap: 3px;
@@ -211,7 +221,11 @@ html.fit, html.fit body {
   font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer;
   white-space: nowrap; flex: 0 0 auto;
 }
-.pct-icon .who { font-weight: 650; opacity: 0.8; font-size: 10px; }
+.pct-icon .who { font-weight: 650; opacity: 0.9; font-size: 10px; }
+.pct-icon[data-id="claude"] .who { color: var(--claude); }
+.pct-icon[data-id="codex"] .who { color: var(--codex); }
+.pct-icon[data-id="gemini"] .who { color: var(--gemini); }
+.pct-icon[data-id="grok"] .who { color: var(--grok); }
 .pct-icon.red { color: #fecaca; border-color: #ef4444; }
 .pct-icon.green { color: #bbf7d0; border-color: #16a34a; }
 .pct-icon.gray { color: #9ca3af; border-color: #6b7280; }

@@ -21,7 +21,7 @@ function render(snapshot) {
       num = formatUsedTotal(win, true);
       cls = alerting(win) ? "red" : "green";
     }
-    parts.push(`<div class="pct-icon ${cls}" data-id="${p.id}"><span class="who">${letter(p.id)}</span>${num}</div>`);
+    parts.push(`<div class="pct-icon ${cls}" data-id="${p.id}" title="${p.display_name}"><span class="who">${letter(p.id)}</span>${num}</div>`);
   }
   root.innerHTML = parts.join("");
   requestAnimationFrame(() => {

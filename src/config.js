@@ -23,6 +23,7 @@ const DEFAULTS = {
   notify_on_limit_reached: true,
   adapters: {
     claude: { refresh_tokens: true },
+    gemini: { refresh_tokens: true },
     grok: { refresh_tokens: true },
   },
 };
