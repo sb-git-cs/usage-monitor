@@ -11,17 +11,17 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 | Surface | What it does |
 | --- | --- |
 | **Flyout** | Two-by-two provider cards (5-hour / weekly, `used/total %`). **Open flyout** / **Hide flyout**. **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks the panel just above the taskbar. |
-| **Chips** | Small `C 82/100` strip **on** the taskbar (`C` Claude, `X` Codex, `M` Gemini, `G` Grok). **Snap chips to taskbar** / **Unsnap chips from taskbar**. |
+| **Chips** | Small strip **on** the taskbar with each company’s mark (Anthropic, OpenAI, Gemini, xAI) plus `82/100`. **Snap chips to taskbar** / **Unsnap chips from taskbar**. |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
 
 ![UI overview](docs/screenshots/overview.png)
 
-| Chip | Provider | Windows shown |
+| Mark | Provider | Windows shown |
 | --- | --- | --- |
-| **C** | Claude Code | 5-hour and weekly |
-| **X** | Codex | 5-hour and weekly |
-| **M** | Gemini (Antigravity CLI / Gemini CLI) | Gemini model 5-hour and weekly when the API reports them |
-| **G** | Grok Build | Weekly only (no 5-hour bar) |
+| Anthropic | Claude Code | 5-hour and weekly |
+| OpenAI | Codex | 5-hour and weekly |
+| Gemini | Gemini (Antigravity CLI / Gemini CLI) | Gemini model 5-hour and weekly when the API reports them |
+| xAI | Grok Build | Weekly only (no 5-hour bar) |
 
 Grok has a **weekly** pool only. Gemini shows the **Gemini model** pools from Antigravity (`agy`) or Gemini CLI; some plans report weekly only.
 
@@ -113,7 +113,7 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 
 | Symptom | What to try |
 | --- | --- |
-| Gray `C` / `X` / `M` / `G` | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok`). If the CLI is missing, run `npm run setup`. |
+| Gray company mark | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok`). If the CLI is missing, run `npm run setup`. |
 | No chips on the taskbar | Right-click flyout → **Show chips on taskbar**. They sit in an empty gap, not over the clock. |
 | Flyout missing | Right-click chips → **Open flyout** |
 | Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off and keeps the last good numbers |

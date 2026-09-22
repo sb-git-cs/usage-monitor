@@ -33,7 +33,7 @@ function render(snapshot) {
   for (const p of snapshot.providers || []) {
     const hint = statusText(p);
     parts.push(`<section class="provider accent-${p.id}" data-id="${p.id}">
-      <div class="p-head"><span class="p-name">${p.display_name}</span><span class="p-plan">${p.plan || ""}${p.status && p.status.state === "stale" ? '<span class="badge">stale</span>' : ""}</span></div>`);
+      <div class="p-head"><span class="p-name">${mark(p.id)}<span>${p.display_name}</span></span><span class="p-plan">${p.plan || ""}${p.status && p.status.state === "stale" ? '<span class="badge">stale</span>' : ""}</span></div>`);
     if (hint && !(p.windows && p.windows.length)) {
       parts.push(`<div class="hint">${hint}</div>`);
     } else {
