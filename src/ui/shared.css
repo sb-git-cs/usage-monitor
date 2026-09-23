@@ -180,6 +180,11 @@ html.fit, html.fit body {
   border-color: rgba(255, 255, 255, 0.16);
   border-radius: 6px;
 }
+.chips.popped {
+  padding: 3px 6px 3px 4px;
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+}
 .chips.docked #root { gap: 3px; }
 .chips.docked .pct-icon {
   height: 22px;
@@ -234,3 +239,12 @@ html.fit, html.fit body {
 .pct-icon.red { color: #fecaca; border-color: #ef4444; }
 .pct-icon.green { color: #bbf7d0; border-color: #16a34a; }
 .pct-icon.gray { color: #9ca3af; border-color: #6b7280; }
+.loading-chip {
+  color: #e5e7eb;
+  letter-spacing: 0.04em;
+  font-weight: 650;
+  animation: loading-pulse 1.2s ease-in-out infinite;
+}
+@keyframes loading-pulse {
+  50% { opacity: 0.4; }
+}

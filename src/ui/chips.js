@@ -10,6 +10,14 @@ function setDocked(docked) {
   if (window.__last) render(window.__last);
 }
 
+function setPopped(popped) {
+  const next = !!popped;
+  if (bar.classList.contains("popped") === next) return;
+  bar.classList.toggle("popped", next);
+  lastKey = "";
+  if (window.__last) render(window.__last);
+}
+
 bindDrag(bar, "button, .pct-icon");
 
 let lastKey = "";
@@ -28,7 +36,24 @@ function chipKey(snapshot) {
   return docked + "|" + parts.join("|");
 }
 
+function fitBar() {
+  bar.style.width = "max-content";
+  const w = Math.ceil(Math.max(bar.scrollWidth, bar.offsetWidth));
+  const h = Math.ceil(Math.max(bar.scrollHeight, bar.offsetHeight, 24));
+  window.usage.resizeChips(w + 4, h + 4);
+}
+
+function showLoading() {
+  lastKey = "loading";
+  root.innerHTML = `<div class="pct-icon gray loading-chip" title="Loading">loading…</div>`;
+  requestAnimationFrame(fitBar);
+}
+
 function render(snapshot) {
+  if (!snapshot || !(snapshot.providers || []).length) {
+    showLoading();
+    return;
+  }
   const key = chipKey(snapshot);
   if (key === lastKey) return;
   lastKey = key;
@@ -46,12 +71,7 @@ function render(snapshot) {
     parts.push(`<div class="pct-icon ${cls}" data-id="${p.id}" title="${p.display_name}"><span class="who">${mark(p.id)}</span>${num}</div>`);
   }
   root.innerHTML = parts.join("");
-  requestAnimationFrame(() => {
-    bar.style.width = "max-content";
-    const w = Math.ceil(Math.max(bar.scrollWidth, bar.offsetWidth));
-    const h = Math.ceil(Math.max(bar.scrollHeight, bar.offsetHeight, 24));
-    window.usage.resizeChips(w + 4, h + 4);
-  });
+  requestAnimationFrame(fitBar);
   root.querySelectorAll(".pct-icon").forEach((el) => {
     el.addEventListener("click", () => window.usage.toggleFlyout());
     el.addEventListener("contextmenu", (e) => {
@@ -70,6 +90,8 @@ window.usage.onSnapshot((s) => {
   window.__last = s;
   render(s);
 });
+window.usage.onLoading(() => showLoading());
+requestAnimationFrame(fitBar);
 setInterval(() => {
   if (!window.__last) return;
   const next = applyLocalResets(window.__last);
@@ -79,4 +101,5 @@ setInterval(() => {
   }
 }, 1000);
 window.usage.onChipsDocked(setDocked);
+window.usage.onChipsPopped(setPopped);
 window.usage.getChipsDocked().then(setDocked);

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, screen } = require("electron");
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, shell, screen } = require("electron");
 const path = require("path");
 const config = require("./config");
 const poller = require("./poller");
@@ -12,6 +12,8 @@ let cfg;
 let flyout;
 let chips;
 let clickAway;
+let tray;
+let chipsPopped = false;
 let ignoreFlyoutBlur = false;
 let poll;
 let latest;
@@ -127,14 +129,40 @@ function applyDockedPos(win, pos) {
   placingFlyout = false;
 }
 
+function setChipsPopped(popped) {
+  const next = !!popped;
+  if (chipsPopped === next) return;
+  chipsPopped = next;
+  if (chips && !chips.isDestroyed()) chips.webContents.send("usage://chips-popped", chipsPopped);
+}
+
+function popChipsAboveTaskbar(w, h, extras) {
+  const along = cfg.chips_dock_x != null ? cfg.chips_dock_x : chips.getPosition()[0];
+  const pos = taskbarLayout.anchorAboveTaskbar(w, h, extras, along);
+  if (!pos || !pos.ok) return false;
+  cfg.chips_dock_x = pos.x;
+  cfg.chips_dock_y = pos.y;
+  applyDockedPos(chips, pos);
+  setChipsPopped(true);
+  keepWidgetOnTop(chips, true);
+  if (!chips.isVisible() && !cfg.chips_hidden) chips.showInactive();
+  return true;
+}
+
 function placeChipsDocked(opts = {}) {
   if (!chips || chips.isDestroyed()) return;
   const [w, h] = chips.getSize();
   const [x, y] = chips.getPosition();
   const extras = otherDockedRects("chips");
+  const room = taskbarLayout.dockRoom(w, h, extras);
+  if (!room.fits) {
+    popChipsAboveTaskbar(w, h, extras);
+    return;
+  }
   if (!opts.force && taskbarLayout.isWellDocked(x, y, w, h, extras)) {
     cfg.chips_dock_x = x;
     cfg.chips_dock_y = y;
+    setChipsPopped(false);
     return;
   }
   let pos;
@@ -146,11 +174,16 @@ function placeChipsDocked(opts = {}) {
     cfg.chips_dock_x = pos.x;
     cfg.chips_dock_y = pos.y;
     applyDockedPos(chips, pos);
+    setChipsPopped(false);
+    keepWidgetOnTop(chips, true);
+    return;
   }
+  popChipsAboveTaskbar(w, h, extras);
 }
 
 function placeChipsFloating() {
   if (!chips) return;
+  setChipsPopped(false);
   const [w, h] = chips.getSize();
   let x = cfg.chips_x;
   let y = cfg.chips_y;
@@ -177,6 +210,10 @@ function placeChips() {
   else placeChipsFloating();
 }
 
+function sendChipsLoading() {
+  if (chips && !chips.isDestroyed()) chips.webContents.send("usage://loading");
+}
+
 function keepWidgetOnTop(win, docked) {
   if (!win || win.isDestroyed()) return;
   const level = docked ? "screen-saver" : "pop-up-menu";
@@ -187,6 +224,59 @@ function keepWidgetOnTop(win, docked) {
     /* ignore */
   }
   if (!win.isVisible()) win.showInactive();
+}
+
+function restoreVisibility() {
+  if (cfg) {
+    cfg.chips_hidden = false;
+    config.save(cfg);
+  }
+  if (!chips || chips.isDestroyed()) return;
+  sendChipsLoading();
+  placeChips();
+  chips.setOpacity(1);
+  chips.showInactive();
+  keepWidgetOnTop(chips, cfg && cfg.chips_docked);
+  try {
+    chips.setOpacity(0.99);
+    chips.setOpacity(1);
+  } catch {
+    /* ignore */
+  }
+  if (latest) {
+    setTimeout(() => {
+      if (chips && !chips.isDestroyed() && latest) chips.webContents.send("usage://snapshot", latest);
+    }, 120);
+  }
+}
+
+function recoverChipsIfNeeded() {
+  if (!chips || chips.isDestroyed() || !cfg || cfg.chips_hidden || dragState) return;
+  let broken = false;
+  try {
+    if (!chips.isVisible()) broken = true;
+    if (chips.getOpacity() < 0.2) broken = true;
+    if (chips.webContents.isCrashed()) broken = true;
+  } catch {
+    broken = true;
+  }
+  if (!broken) return;
+  restoreVisibility();
+}
+
+function createTray() {
+  if (tray && !tray.isDestroyed()) return;
+  let icon = nativeImage.createFromPath(ui("tray-32.png"));
+  if (icon.isEmpty()) icon = nativeImage.createFromPath(ui("tray-16.png"));
+  if (icon.isEmpty()) return;
+  tray = new Tray(icon);
+  tray.setToolTip("Usage Monitor — click to show chips");
+  tray.on("click", () => restoreVisibility());
+  tray.on("double-click", () => {
+    restoreVisibility();
+    showFlyout();
+  });
+  tray.on("right-click", () => popupAppMenu());
 }
 
 function setChipsHidden(hidden) {
@@ -426,6 +516,7 @@ function broadcastInterval() {
 
 function buildMenu() {
   return Menu.buildFromTemplate([
+    { label: "Show chips", click: () => restoreVisibility() },
     {
       label: cfg.chips_hidden ? "Show chips on taskbar" : "Hide chips",
       click: () => setChipsHidden(!cfg.chips_hidden),
@@ -563,13 +654,18 @@ function scheduleStartupUpdateCheck() {
 
 function popupAppMenu() {
   ignoreFlyoutBlur = true;
-  buildMenu().popup({
-    callback: () => {
-      setTimeout(() => {
-        ignoreFlyoutBlur = false;
-      }, 200);
-    },
-  });
+  const menu = buildMenu();
+  const done = () => {
+    setTimeout(() => {
+      ignoreFlyoutBlur = false;
+    }, 200);
+  };
+  if (tray && !tray.isDestroyed()) {
+    tray.popUpContextMenu(menu);
+    done();
+    return;
+  }
+  menu.popup({ callback: done });
 }
 
 function createWindows() {
@@ -710,6 +806,7 @@ if (!gotLock) {
     config.save(cfg);
 
     createWindows();
+    createTray();
     wireIpc();
     scheduleStartupUpdateCheck();
 
@@ -721,12 +818,14 @@ if (!gotLock) {
     });
     chips.webContents.on("did-finish-load", () => {
       chips.webContents.send("usage://chips-docked", !!cfg.chips_docked);
+      chips.webContents.send("usage://chips-popped", chipsPopped);
       if (latest) chips.webContents.send("usage://snapshot", latest);
     });
     const revive = (win) => {
       if (!win || win.isDestroyed()) return;
       win.webContents.on("render-process-gone", () => {
         try {
+          if (win === chips) sendChipsLoading();
           win.webContents.reload();
         } catch {
           /* ignore */
@@ -746,6 +845,7 @@ if (!gotLock) {
       }, 300);
     });
 
+    if (!latest) sendChipsLoading();
     poll = poller.start(cfg, (snap) => {
       const { snapshot } = applyLocalResets(snap);
       latest = snapshot;
@@ -767,7 +867,9 @@ if (!gotLock) {
 
     setInterval(() => {
       if (dragState) return;
+      recoverChipsIfNeeded();
       if (chips && !cfg.chips_hidden && !chips.isDestroyed()) {
+        if (cfg.chips_docked) placeChipsDocked();
         keepWidgetOnTop(chips, cfg.chips_docked);
       }
       if (flyout && cfg.flyout_docked && flyout.isVisible() && !flyout.isDestroyed()) {
@@ -784,4 +886,5 @@ app.on("window-all-closed", (e) => {
 app.on("before-quit", () => {
   app.isQuitting = true;
   if (poll) poll.stop();
+  if (tray && !tray.isDestroyed()) tray.destroy();
 });

@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("usage", {
   onSnapshot: (cb) => ipcRenderer.on("usage://snapshot", (_e, snap) => cb(snap)),
+  onLoading: (cb) => ipcRenderer.on("usage://loading", () => cb()),
   refresh: () => ipcRenderer.send("usage://refresh"),
   hideFlyout: () => ipcRenderer.send("usage://flyout-hide"),
   toggleFlyout: () => ipcRenderer.send("usage://flyout-toggle"),
@@ -14,6 +15,7 @@ contextBridge.exposeInMainWorld("usage", {
   resizeChips: (w, h) => ipcRenderer.send("usage://chips-resize", w, h),
   getChipsDocked: () => ipcRenderer.invoke("usage://get-chips-docked"),
   onChipsDocked: (cb) => ipcRenderer.on("usage://chips-docked", (_e, docked) => cb(docked)),
+  onChipsPopped: (cb) => ipcRenderer.on("usage://chips-popped", (_e, popped) => cb(popped)),
   setFlyoutHit: (hit) => ipcRenderer.send("usage://flyout-hit", hit),
   resizeFlyout: (h, w) => ipcRenderer.send("usage://flyout-resize", h, w),
   toggleFlyoutPin: () => ipcRenderer.send("usage://flyout-toggle-pin"),

@@ -11,7 +11,8 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 | Surface | What it does |
 | --- | --- |
 | **Flyout** | Two-by-two provider cards (5-hour / weekly, `used/total %`). **Open flyout** / **Hide flyout**. Click outside the panel to close it. **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks the panel just above the taskbar. |
-| **Chips** | Small strip **on** the taskbar with each company’s mark (Anthropic, OpenAI, Gemini, xAI) plus `82/100`. **Snap chips to taskbar** keeps them in an empty gap on the bar; they stay in that slot instead of jumping after a refresh. |
+| **Chips** | Small strip **on** the taskbar with each company’s mark (Anthropic, OpenAI, Gemini, xAI) plus `82/100`. **Snap chips to taskbar** keeps them in an empty gap on the bar. If the bar has no gap (or too little space), the strip **pops out just above the taskbar**. If the overlay hits a paint/layout problem, the strip shows **loading…** instead of going blank, then the meters return. |
+| **Tray icon** | A Usage Monitor icon in the notification area (near the clock; open **^** if it is hidden). **Click** it to show the chips again. **Right-click** for the same menu as the chips. **Double-click** opens the flyout. |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
 
 ![UI overview](docs/screenshots/overview.png)
@@ -38,6 +39,29 @@ Grok has a **weekly** pool only. Gemini shows the **Gemini model** pools from An
 You do not need all four. A missing login shows as gray with a sign-in hint.
 
 ## Install
+
+### Portable app (no `npm start`)
+
+Build outputs land in `dist\`:
+
+| File | What it is |
+| --- | --- |
+| `UsageMonitor-portable-1.0.0.exe` | Single-file portable. Double-click to run. |
+| `Usage Monitor-1.0.0-win.zip` | Unpacked folder. Extract and run `Usage Monitor.exe`. Best if you want **Start with Windows**. |
+| `UsageMonitor-Setup-1.0.0.exe` | Installer (Start Menu + optional desktop shortcut). |
+
+From this repo:
+
+```powershell
+npm install
+npm run dist
+```
+
+Then run `dist\UsageMonitor-portable-1.0.0.exe`, or `dist\win-unpacked\Usage Monitor.exe`.
+
+Sign in to the CLIs once (`claude`, `codex login`, `agy`, `grok`) so the meters can read usage. A packaged copy still uses those same local logins — it does not replace the CLIs.
+
+### From source
 
 Clone the app, install the four coding CLIs if they are missing, then start Usage Monitor:
 
@@ -89,7 +113,9 @@ With **Check for updates at startup** enabled (default), a boot/sign-in launch a
 ## Use
 
 - **Left-click** chips → flyout. Click anywhere outside the flyout to close it (unless the flyout is snapped to the taskbar).
-- **Right-click** flyout or chips → menu
+- **Notification-area icon** (near the clock) → show chips if they vanished. Right-click that icon for the menu. Double-click for the flyout.
+- **Right-click** flyout, chips, or the tray icon → menu
+  - **Show chips** — bring the meters back if they went invisible
   - Hide / show chips
   - Refresh now
   - **Refresh every** — 5, 15, 30, or 60 seconds (default **5s**)
@@ -101,7 +127,7 @@ With **Check for updates at startup** enabled (default), a boot/sign-in launch a
   - **Snap chips to taskbar** / **Unsnap chips from taskbar**
   - Quit
 - Drag flyout or chips **from the title bar / dotted grip** to move them anywhere. Positions are saved.
-- Flyout uses a **two-by-two card** layout. Snap to taskbar keeps chips on the bar and the flyout panel just above it. Snapped chips keep their gap on the bar across refreshes.
+- Flyout uses a **two-by-two card** layout. Snap to taskbar keeps chips on the bar and the flyout panel just above it. Snapped chips keep their gap on the bar across refreshes. If that gap disappears, chips pop out above the bar automatically. If the overlay fails to paint, chips show **loading…** until data is back.
 - Click a provider card to open that product’s official usage page (Claude, Codex, [Antigravity](https://antigravity.google), Grok)
 
 Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-hour window reads `100/100%` in red.
@@ -121,12 +147,12 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 | Gray company mark | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok`). If the CLI is missing, run `npm run setup`. |
 | No chips on the taskbar | Right-click flyout → **Show chips on taskbar**. They sit in an empty gap, not over the clock. |
 | Chips jump or leave a gap on the taskbar | Right-click → **Snap chips to taskbar**, then drag the dotted grip to the gap you want. They stay there instead of re-snapping on every refresh. |
-| Chips vanish while the app is still running | Windows was treating the taskbar overlay as covered. Restart once with this build; docked chips stay painted above the bar. |
+| Chips vanish while the app is still running | The strip should show **loading…** and recover on its own. If it does not, click the Usage Monitor icon near the clock (open **^** if you do not see it), or right-click → **Show chips**. A full taskbar pops chips out above the bar instead of hiding them. |
 | Flyout missing | Right-click chips → **Open flyout**. Click outside the flyout to close it. |
 | Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off and keeps the last good numbers |
 | Does not start at logon | Run `npm run start:silent` once, leave **Start with Windows** checked. Confirm `Usage Monitor.vbs` exists in the Windows Startup folder. |
 | Update check does nothing | Needs a `git clone` of this repo and `git` on PATH. Use **Check for updates now** to see the error. Local uncommitted changes can block `git pull`. |
-| Extra Electron window / dies with the terminal | Use `npm start` (detached). Quit only from the right-click **Quit** menu. |
+| Extra Electron window / dies with the terminal | Use the portable `.exe`, the installer, or `npm start` (detached). Quit only from the right-click **Quit** menu. |
 | Quit | Right-click chips or flyout → **Quit**. Hiding the flyout only minimizes it. |
 
 ## License

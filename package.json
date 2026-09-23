@@ -19,7 +19,8 @@
     "start:silent": "node scripts/start.js",
     "start:fg": "electron .",
     "setup": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1",
-    "dist": "electron-builder --win nsis"
+    "icon": "node scripts/make-ico.js",
+    "dist": "node scripts/make-ico.js && electron-builder --win --x64 --publish never"
   },
   "devDependencies": {
     "electron": "^37.2.0",
@@ -28,13 +29,54 @@
   "build": {
     "appId": "local.usage-monitor",
     "productName": "Usage Monitor",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "scripts/taskbar-layout.ps1",
+        "to": "taskbar-layout.ps1"
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
     "win": {
-      "target": "nsis"
+      "icon": "src/ui/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Usage Monitor",
+      "artifactName": "UsageMonitor-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "UsageMonitor-portable-${version}.exe"
     }
   }
 }

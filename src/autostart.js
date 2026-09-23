@@ -30,12 +30,22 @@ function oldShortcutPath() {
 
 function writeShortcut() {
   const exe = electronExe();
-  const root = appRoot();
+  let cwd = appRoot();
+  let cmd = `"${exe}" "${cwd}"`;
+  try {
+    const { app } = require("electron");
+    if (app.isPackaged) {
+      cwd = path.dirname(exe);
+      cmd = `"${exe}"`;
+    }
+  } catch {
+    /* unpackaged */
+  }
   fs.mkdirSync(startupDir(), { recursive: true });
   const vbs = [
     'Set sh = CreateObject("Wscript.Shell")',
-    `sh.CurrentDirectory = ${vbsStr(root)}`,
-    `sh.Run ${vbsStr(`"${exe}" "${root}"`)}, 0, False`,
+    `sh.CurrentDirectory = ${vbsStr(cwd)}`,
+    `sh.Run ${vbsStr(cmd)}, 0, False`,
     "",
   ].join("\r\n");
   fs.writeFileSync(shortcutPath(), vbs, "utf8");

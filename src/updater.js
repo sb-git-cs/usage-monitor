@@ -121,6 +121,23 @@ async function promptAndUpdate(parent, info) {
 }
 
 async function run({ parent, promptIfNone } = {}) {
+  if (app.isPackaged) {
+    if (!promptIfNone) return { available: false, skipped: true };
+    const { response } = await box(parent, {
+      type: "question",
+      title: "Usage Monitor",
+      message: "Open GitHub to download the latest portable build?",
+      buttons: ["Yes", "No"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response === 0) {
+      const { shell } = require("electron");
+      await shell.openExternal("https://github.com/sb-git-cs/usage-monitor/releases");
+    }
+    return { available: false, skipped: true };
+  }
   let info;
   try {
     info = await check();

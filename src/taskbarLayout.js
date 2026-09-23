@@ -1,7 +1,15 @@
 const { execFile } = require("child_process");
 const path = require("path");
 
-const SCRIPT = path.join(__dirname, "..", "scripts", "taskbar-layout.ps1");
+function layoutScript() {
+  try {
+    const { app } = require("electron");
+    if (app.isPackaged) return path.join(process.resourcesPath, "taskbar-layout.ps1");
+  } catch {
+    /* unpackaged */
+  }
+  return path.join(__dirname, "..", "scripts", "taskbar-layout.ps1");
+}
 const PAD = 6;
 let cache = { at: 0, data: null };
 let refreshing = false;
@@ -36,7 +44,7 @@ function refreshAsync() {
   refreshing = true;
   execFile(
     "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT],
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", layoutScript()],
     { encoding: "utf8", timeout: 4000, windowsHide: true },
     (err, stdout) => {
       refreshing = false;
@@ -109,6 +117,20 @@ function overlapsOccupied(x, y, w, h, extras) {
   const self = { x, y, w, h };
   const occupied = [...(layout.occupied || []), ...extraOccupied(extras)];
   return occupied.some((o) => rectsOverlap(self, o, 8));
+}
+
+function dockRoom(w, h, extras) {
+  const layout = loadLayout();
+  const tray = layout && layout.tray;
+  if (!tray) return { fits: false, maxGap: 0 };
+  const { horizontal } = axisOf(tray);
+  const occupied = [...(layout.occupied || []), ...extraOccupied(extras)];
+  const needed = (horizontal ? w : h) + PAD * 2 + 16;
+  let maxGap = 0;
+  for (const [a, b] of intervalsOnAxis(tray, occupied, horizontal)) {
+    maxGap = Math.max(maxGap, b - a);
+  }
+  return { fits: maxGap >= needed, maxGap, needed };
 }
 
 function isWellDocked(x, y, w, h, extras) {
@@ -239,4 +261,5 @@ module.exports = {
   anchorAboveTaskbar,
   isWellDocked,
   overlapsOccupied,
+  dockRoom,
 };
