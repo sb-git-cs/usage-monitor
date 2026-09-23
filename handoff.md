@@ -8,14 +8,14 @@ Audit and fix defects, bugs and usage miscalculations; harden the Windows app an
 
 | Engineer | Assignment | Status | Evidence |
 | --- | --- | --- | --- |
-| Codex | Code audit, surgical fixes, regression tests and build verification | Implementation complete; release acceptance pending | `review.md`, `test/`, `scripts/ui-smoke.js`; verification below |
+| Codex | Code audit, surgical fixes, regression tests and build verification; correct chip window selection | Implementation complete; release acceptance pending | `review.md`, `test/`, `scripts/ui-smoke.js`; verification below |
 | Owner / Fable | Live-account and interactive desktop acceptance; signed distribution | Pending | Checklist below |
 
 ## Verification
 
-- `npm test`: 29 tests passed, no failures. Tests use synthetic credentials and provider responses.
+- `npm test`: 30 tests passed, no failures. Tests use synthetic credentials and provider responses, including five-hour versus weekly chip selection.
 - `npm run test:ui`: both real Electron offscreen render tests passed, including CSP, escaped hostile text, warning thresholds, preload isolation and pointer hit-testing.
-- `npm run test:ui -- --packaged`: both render tests passed using the HTML/scripts/preload from the built app.asar.
+- `npm run test:ui -- --packaged`: both render tests passed using the HTML/scripts/preload from the rebuilt app.asar, including five-hour chip selection.
 - Final online `npm audit --json --cache .npm-cache`: zero vulnerabilities with Electron 44.4.5.
 - Final `npm run dist`: completed successfully for installer, portable executable and ZIP.
 - `node --check`: all 29 JavaScript files checked successfully.
@@ -32,7 +32,7 @@ Audit and fix defects, bugs and usage miscalculations; harden the Windows app an
 - `dist/Usage Monitor-1.0.0-win.zip`
 - `dist/win-unpacked/Usage Monitor.exe`
 
-The build is unsigned: Authenticode inspection reported `NotSigned`. The builder's signing log does not establish that a signing certificate was used. No release was published. The user requested that all source changes be committed and pushed to `origin/main`.
+The build is unsigned: Authenticode inspection reported `NotSigned`. The builder's signing log does not establish that a signing certificate was used. No release was published. The chip selection correction is being committed and pushed to `origin/main`; local build artifacts were rebuilt with the correction.
 
 ## Release acceptance still needed
 

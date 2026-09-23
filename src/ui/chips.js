@@ -25,11 +25,11 @@ let lastKey = "";
 function chipKey(snapshot) {
   const docked = bar.classList.contains("docked") ? "1" : "0";
   const parts = (snapshot.providers || []).map((p) => {
-    const win = UsageModels.hottestWindow(p);
+    const win = UsageModels.currentWindow(p);
     const num = win ? formatUsedTotal(win, true) : "—";
     const cls = win ? (alerting(win) ? "red" : "green") : "gray";
     const state = (p.status && p.status.state) || "";
-    return `${escapeHtml(p.id)}:${cls}:${num}:${state}`;
+    return `${escapeHtml(p.id)}:${win?.kind || ""}:${win?.label || ""}:${cls}:${num}:${state}`;
   });
   return docked + "|" + parts.join("|");
 }
@@ -57,7 +57,7 @@ function render(snapshot) {
   lastKey = key;
   const parts = [];
   for (const p of snapshot.providers || []) {
-    const win = UsageModels.hottestWindow(p);
+    const win = UsageModels.currentWindow(p);
     let cls = "gray";
     let num = "—";
     if (win) {
@@ -65,7 +65,7 @@ function render(snapshot) {
       cls = alerting(win) ? "red" : "green";
     }
     const stale = p.status?.state === "stale";
-    parts.push(`<div class="pct-icon ${cls}${stale ? " stale" : ""}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.display_name)}${stale ? " (stale)" : ""}"><span class="who">${mark(p.id)}</span>${num}</div>`);
+    parts.push(`<div class="pct-icon ${cls}${stale ? " stale" : ""}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.display_name)}${win ? ` - ${escapeHtml(win.label)}` : ""}${stale ? " (stale)" : ""}"><span class="who">${mark(p.id)}</span>${num}</div>`);
   }
   root.innerHTML = parts.join("");
   requestAnimationFrame(fitBar);

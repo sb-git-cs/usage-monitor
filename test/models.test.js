@@ -32,10 +32,20 @@ test("expired windows become unknown without inventing reset dates or mutating i
   assert.equal(models.applyLocalResets(result.snapshot).changed, false);
 });
 
-test("chips choose the most constrained pool even when five-hour usage is low", () => {
+test("chips show five-hour usage before a higher weekly reading", () => {
+  const current = { kind: "five_hour", used_pct: 5 };
   const weekly = { kind: "weekly", used_pct: 100 };
-  assert.equal(models.hottestWindow({ windows: [{ kind: "five_hour", used_pct: 5 }, weekly] }), weekly);
-  assert.equal(models.hottestWindow({ windows: [{ used_pct: NaN }] }), null);
+  assert.equal(models.currentWindow({ windows: [current, weekly] }), current);
+  assert.equal(models.currentWindow({ windows: [weekly, current] }), current);
+  assert.equal(models.currentWindow({ windows: [{ kind: "five_hour", used_pct: null }, weekly] }), weekly);
+  assert.equal(models.currentWindow({ windows: [{ used_pct: NaN }] }), null);
+});
+
+test("daily usage is the fallback before weekly when no five-hour window exists", () => {
+  const daily = { kind: "daily", used_pct: 20 };
+  const weekly = { kind: "weekly", used_pct: 80 };
+  assert.equal(models.currentWindow({ windows: [weekly, daily] }), daily);
+  assert.equal(models.currentWindow({ windows: [weekly] }), weekly);
 });
 
 test("browser formatting shares reset logic, escapes HTML and warns at exactly 80%", () => {
