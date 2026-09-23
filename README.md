@@ -10,8 +10,8 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 
 | Surface | What it does |
 | --- | --- |
-| **Flyout** | Two-by-two provider cards (5-hour / weekly, `used/total %`). **Open flyout** / **Hide flyout**. **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks the panel just above the taskbar. |
-| **Chips** | Small strip **on** the taskbar with each company’s mark (Anthropic, OpenAI, Gemini, xAI) plus `82/100`. **Snap chips to taskbar** / **Unsnap chips from taskbar**. |
+| **Flyout** | Two-by-two provider cards (5-hour / weekly, `used/total %`). **Open flyout** / **Hide flyout**. Click outside the panel to close it. **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks the panel just above the taskbar. |
+| **Chips** | Small strip **on** the taskbar with each company’s mark (Anthropic, OpenAI, Gemini, xAI) plus `82/100`. **Snap chips to taskbar** keeps them in an empty gap on the bar; they stay in that slot instead of jumping after a refresh. |
 | **Toast** | Silent red Windows notification the first time a bar crosses 80% used. |
 
 ![UI overview](docs/screenshots/overview.png)
@@ -86,7 +86,7 @@ To disable, right-click the flyout or chips and uncheck **Start with Windows**.
 
 ## Use
 
-- **Left-click** chips → flyout
+- **Left-click** chips → flyout. Click anywhere outside the flyout to close it (unless the flyout is snapped to the taskbar).
 - **Right-click** flyout or chips → menu
   - Hide / show chips
   - Refresh now
@@ -97,7 +97,7 @@ To disable, right-click the flyout or chips and uncheck **Start with Windows**.
   - **Snap chips to taskbar** / **Unsnap chips from taskbar**
   - Quit
 - Drag flyout or chips **from the title bar / dotted grip** to move them anywhere. Positions are saved.
-- Flyout uses a **two-by-two card** layout. Snap to taskbar keeps chips on the bar and the flyout panel just above it.
+- Flyout uses a **two-by-two card** layout. Snap to taskbar keeps chips on the bar and the flyout panel just above it. Snapped chips keep their gap on the bar across refreshes.
 - Click a provider card to open that product’s official usage page (Claude, Codex, [Antigravity](https://antigravity.google), Grok)
 
 Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-hour window reads `100/100%` in red.
@@ -115,7 +115,8 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 | --- | --- |
 | Gray company mark | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok`). If the CLI is missing, run `npm run setup`. |
 | No chips on the taskbar | Right-click flyout → **Show chips on taskbar**. They sit in an empty gap, not over the clock. |
-| Flyout missing | Right-click chips → **Open flyout** |
+| Chips jump or leave a gap on the taskbar | Right-click → **Snap chips to taskbar**, then drag the dotted grip to the gap you want. They stay there instead of re-snapping on every refresh. |
+| Flyout missing | Right-click chips → **Open flyout**. Click outside the flyout to close it. |
 | Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off and keeps the last good numbers |
 | Does not start at logon | Run `npm run start:silent` once, leave **Start with Windows** checked. Confirm `Usage Monitor.vbs` exists in the Windows Startup folder. |
 | Extra Electron window / dies with the terminal | Use `npm start` (detached). Quit only from the right-click **Quit** menu. |

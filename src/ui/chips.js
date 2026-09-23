@@ -3,13 +3,35 @@ const bar = document.getElementById("bar");
 const grip = document.getElementById("grip");
 
 function setDocked(docked) {
-  bar.classList.toggle("docked", !!docked);
+  const next = !!docked;
+  if (bar.classList.contains("docked") === next && window.__last) return;
+  bar.classList.toggle("docked", next);
+  lastKey = "";
   if (window.__last) render(window.__last);
 }
 
 bindDrag(bar, "button, .pct-icon");
 
+let lastKey = "";
+
+function chipKey(snapshot) {
+  const docked = bar.classList.contains("docked") ? "1" : "0";
+  const parts = (snapshot.providers || []).map((p) => {
+    const hot = (p.windows || []).filter((w) => w.used_pct != null);
+    const five = hot.find((w) => w.kind === "five_hour");
+    const win = five || hot.reduce((a, b) => (!a || b.used_pct > a.used_pct ? b : a), null);
+    const num = win ? formatUsedTotal(win, true) : "—";
+    const cls = win ? (alerting(win) ? "red" : "green") : "gray";
+    const state = (p.status && p.status.state) || "";
+    return `${p.id}:${cls}:${num}:${state}`;
+  });
+  return docked + "|" + parts.join("|");
+}
+
 function render(snapshot) {
+  const key = chipKey(snapshot);
+  if (key === lastKey) return;
+  lastKey = key;
   const parts = [];
   for (const p of snapshot.providers || []) {
     const hot = (p.windows || []).filter((w) => w.used_pct != null);

@@ -115,6 +115,8 @@ function otherDockedRects(except) {
 
 function applyDockedPos(win, pos) {
   if (!win || !pos || !pos.ok) return;
+  const [x, y] = win.getPosition();
+  if (Math.abs(x - pos.x) < 2 && Math.abs(y - pos.y) < 2) return;
   placingChips = true;
   placingFlyout = true;
   win.setPosition(pos.x, pos.y);
@@ -122,10 +124,16 @@ function applyDockedPos(win, pos) {
   placingFlyout = false;
 }
 
-function placeChipsDocked() {
-  if (!chips) return;
+function placeChipsDocked(opts = {}) {
+  if (!chips || chips.isDestroyed()) return;
   const [w, h] = chips.getSize();
+  const [x, y] = chips.getPosition();
   const extras = otherDockedRects("chips");
+  if (!opts.force && taskbarLayout.isWellDocked(x, y, w, h, extras)) {
+    cfg.chips_dock_x = x;
+    cfg.chips_dock_y = y;
+    return;
+  }
   let pos;
   if (cfg.chips_dock_x != null) {
     pos = taskbarLayout.snapDocked(cfg.chips_dock_x, cfg.chips_dock_y || 0, w, h, extras);
@@ -168,7 +176,8 @@ function placeChips() {
 
 function keepWidgetOnTop(win, docked) {
   if (!win || win.isDestroyed()) return;
-  win.setAlwaysOnTop(true, docked ? "screen-saver" : "pop-up-menu");
+  const level = docked ? "screen-saver" : "pop-up-menu";
+  if (!win.isAlwaysOnTop()) win.setAlwaysOnTop(true, level);
   if (!win.isVisible()) win.showInactive();
   win.moveTop();
 }
@@ -618,8 +627,18 @@ function wireIpc() {
     const height = Math.max(24, Math.min(48, Math.round(h)));
     const [cw, ch] = chips.getSize();
     if (Math.abs(cw - width) < 2 && Math.abs(ch - height) < 2) return;
+    const [cx, cy] = chips.getPosition();
     setSizeKeepPos(chips, width, height);
-    if (cfg.chips_docked && !cfg.chips_hidden && !dragState) placeChipsDocked();
+    if (cfg.chips_docked && !cfg.chips_hidden && !dragState) {
+      const layout = taskbarLayout.loadLayout();
+      const tray = layout && layout.tray;
+      const horizontal = !tray || tray.w >= tray.h;
+      placingChips = true;
+      if (horizontal) chips.setPosition(cx + cw - width, cy);
+      else chips.setPosition(cx, cy + ch - height);
+      placingChips = false;
+      placeChipsDocked();
+    }
   });
   ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
 }
@@ -668,10 +687,14 @@ if (!gotLock) {
     revive(flyout);
     revive(chips);
 
+    let metricsTimer = null;
     screen.on("display-metrics-changed", () => {
-      taskbarLayout.invalidate();
-      if (cfg.chips_docked) placeChipsDocked();
-      if (cfg.flyout_docked) placeFlyoutDocked();
+      clearTimeout(metricsTimer);
+      metricsTimer = setTimeout(() => {
+        taskbarLayout.invalidate();
+        if (cfg.chips_docked) placeChipsDocked();
+        if (cfg.flyout_docked) placeFlyoutDocked();
+      }, 300);
     });
 
     poll = poller.start(cfg, (snap) => {
@@ -695,13 +718,14 @@ if (!gotLock) {
 
     setInterval(() => {
       if (dragState) return;
-      if (chips && !cfg.chips_hidden && chips.isVisible()) {
-        chips.setAlwaysOnTop(true, cfg.chips_docked ? "screen-saver" : "pop-up-menu");
+      if (chips && !cfg.chips_hidden && !chips.isDestroyed() && cfg.chips_docked) {
+        keepWidgetOnTop(chips, true);
       }
-      if (flyout && cfg.flyout_docked && flyout.isVisible()) {
-        flyout.setAlwaysOnTop(true, "pop-up-menu");
+      if (flyout && cfg.flyout_docked && flyout.isVisible() && !flyout.isDestroyed()) {
+        if (!flyout.isAlwaysOnTop()) flyout.setAlwaysOnTop(true, "pop-up-menu");
+        flyout.moveTop();
       }
-    }, 15000);
+    }, 4000);
   });
 }
 

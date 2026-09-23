@@ -96,6 +96,36 @@ function extraOccupied(extras) {
   return (extras || []).filter(Boolean);
 }
 
+function rectsOverlap(a, b, min) {
+  const ix = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const iy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return ix > min && iy > min;
+}
+
+function overlapsOccupied(x, y, w, h, extras) {
+  const layout = loadLayout();
+  const tray = layout && layout.tray;
+  if (!tray) return false;
+  const self = { x, y, w, h };
+  const occupied = [...(layout.occupied || []), ...extraOccupied(extras)];
+  return occupied.some((o) => rectsOverlap(self, o, 8));
+}
+
+function isWellDocked(x, y, w, h, extras) {
+  const layout = loadLayout();
+  const tray = layout && layout.tray;
+  if (!tray) return false;
+  const { horizontal } = axisOf(tray);
+  if (horizontal) {
+    if (y + h < tray.y - 6 || y > tray.y + tray.h + 6) return false;
+    if (x + w < tray.x + 4 || x > tray.x + tray.w - 4) return false;
+  } else {
+    if (x + w < tray.x - 6 || x > tray.x + tray.w + 6) return false;
+    if (y + h < tray.y + 4 || y > tray.y + tray.h - 4) return false;
+  }
+  return !overlapsOccupied(x, y, w, h, extras);
+}
+
 function snapDocked(x, y, w, h, extras) {
   const layout = loadLayout();
   const tray = layout && layout.tray;
@@ -201,4 +231,12 @@ function anchorAboveTaskbar(w, h, extras, preferredAlong) {
   return { x: Math.round(x), y: Math.round(y), ok: true, offTaskbar: false };
 }
 
-module.exports = { loadLayout, invalidate, snapDocked, defaultDocked, anchorAboveTaskbar };
+module.exports = {
+  loadLayout,
+  invalidate,
+  snapDocked,
+  defaultDocked,
+  anchorAboveTaskbar,
+  isWellDocked,
+  overlapsOccupied,
+};
