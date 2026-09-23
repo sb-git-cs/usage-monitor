@@ -15,6 +15,8 @@
     "url": "https://github.com/sb-git-cs/usage-monitor/issues"
   },
   "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:ui": "electron scripts/ui-smoke.js",
     "start": "node scripts/start.js",
     "start:silent": "node scripts/start.js",
     "start:fg": "electron .",
@@ -22,8 +24,9 @@
     "icon": "node scripts/make-ico.js",
     "dist": "node scripts/make-ico.js && electron-builder --win --x64 --publish never"
   },
+  "engines": { "node": ">=22.12.0" },
   "devDependencies": {
-    "electron": "^37.2.0",
+    "electron": "44.4.5",
     "electron-builder": "^26.0.12"
   },
   "build": {

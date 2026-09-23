@@ -25,13 +25,11 @@ let lastKey = "";
 function chipKey(snapshot) {
   const docked = bar.classList.contains("docked") ? "1" : "0";
   const parts = (snapshot.providers || []).map((p) => {
-    const hot = (p.windows || []).filter((w) => w.used_pct != null);
-    const five = hot.find((w) => w.kind === "five_hour");
-    const win = five || hot.reduce((a, b) => (!a || b.used_pct > a.used_pct ? b : a), null);
+    const win = UsageModels.hottestWindow(p);
     const num = win ? formatUsedTotal(win, true) : "—";
     const cls = win ? (alerting(win) ? "red" : "green") : "gray";
     const state = (p.status && p.status.state) || "";
-    return `${p.id}:${cls}:${num}:${state}`;
+    return `${escapeHtml(p.id)}:${cls}:${num}:${state}`;
   });
   return docked + "|" + parts.join("|");
 }
@@ -59,16 +57,15 @@ function render(snapshot) {
   lastKey = key;
   const parts = [];
   for (const p of snapshot.providers || []) {
-    const hot = (p.windows || []).filter((w) => w.used_pct != null);
-    const five = hot.find((w) => w.kind === "five_hour");
-    const win = five || hot.reduce((a, b) => (!a || b.used_pct > a.used_pct ? b : a), null);
+    const win = UsageModels.hottestWindow(p);
     let cls = "gray";
     let num = "—";
     if (win) {
       num = formatUsedTotal(win, true);
       cls = alerting(win) ? "red" : "green";
     }
-    parts.push(`<div class="pct-icon ${cls}" data-id="${p.id}" title="${p.display_name}"><span class="who">${mark(p.id)}</span>${num}</div>`);
+    const stale = p.status?.state === "stale";
+    parts.push(`<div class="pct-icon ${cls}${stale ? " stale" : ""}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.display_name)}${stale ? " (stale)" : ""}"><span class="who">${mark(p.id)}</span>${num}</div>`);
   }
   root.innerHTML = parts.join("");
   requestAnimationFrame(fitBar);

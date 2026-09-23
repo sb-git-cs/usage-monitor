@@ -15,7 +15,7 @@ function isGitCheckout() {
   }
 }
 
-function run(cmd, args, timeoutMs) {
+function runCommand(cmd, args, timeoutMs) {
   return new Promise((resolve, reject) => {
     execFile(
       cmd,
@@ -40,7 +40,7 @@ function run(cmd, args, timeoutMs) {
 }
 
 function git(args, timeoutMs) {
-  return run("git", args, timeoutMs);
+  return runCommand("git", args, timeoutMs);
 }
 
 async function remoteRef() {
@@ -59,6 +59,9 @@ async function check() {
   const local = await git(["rev-parse", "HEAD"]);
   const remote = await git(["rev-parse", await remoteRef()]);
   if (!remote || local === remote) return { available: false, local, remote };
+  const ahead = Number(await git(["rev-list", "--count", `${local}..${remote}`]));
+  if (!ahead) return { available: false, local, remote };
+  await git(["merge-base", "--is-ancestor", local, remote]);
   let summary = "";
   try {
     summary = await git(["log", "--oneline", `${local}..${remote}`]);
@@ -74,9 +77,10 @@ async function check() {
 }
 
 async function apply() {
+  if (await git(["status", "--porcelain"])) throw new Error("Commit or stash local changes before updating.");
   await git(["pull", "--ff-only"], 60000);
   const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-  await run(npmCmd, ["install"], 180000);
+  await runCommand(npmCmd, ["ci"], 180000);
 }
 
 function relaunch() {
@@ -120,7 +124,7 @@ async function promptAndUpdate(parent, info) {
   return { updated: true };
 }
 
-async function run({ parent, promptIfNone } = {}) {
+async function runUpdate({ parent, promptIfNone } = {}) {
   if (app.isPackaged) {
     if (!promptIfNone) return { available: false, skipped: true };
     const { response } = await box(parent, {
@@ -176,6 +180,12 @@ async function run({ parent, promptIfNone } = {}) {
     return info;
   }
   return promptAndUpdate(parent, info);
+}
+
+let running = null;
+function run(options) {
+  if (!running) running = runUpdate(options).finally(() => { running = null; });
+  return running;
 }
 
 module.exports = { check, apply, run, isGitCheckout };

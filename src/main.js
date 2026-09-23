@@ -216,6 +216,7 @@ function sendChipsLoading() {
 
 function keepWidgetOnTop(win, docked) {
   if (!win || win.isDestroyed()) return;
+  if (win === chips && cfg?.chips_hidden) return;
   const level = docked ? "screen-saver" : "pop-up-menu";
   win.setAlwaysOnTop(true, level, 1);
   try {
@@ -252,16 +253,23 @@ function restoreVisibility() {
 
 function recoverChipsIfNeeded() {
   if (!chips || chips.isDestroyed() || !cfg || cfg.chips_hidden || dragState) return;
-  let broken = false;
+  let crashed = false;
+  let hidden = false;
   try {
-    if (!chips.isVisible()) broken = true;
-    if (chips.getOpacity() < 0.2) broken = true;
-    if (chips.webContents.isCrashed()) broken = true;
+    crashed = chips.webContents.isCrashed();
+    hidden = !chips.isVisible() || chips.getOpacity() < 0.2;
   } catch {
-    broken = true;
+    crashed = true;
   }
-  if (!broken) return;
-  restoreVisibility();
+  if (crashed) {
+    restoreVisibility();
+    return;
+  }
+  if (hidden) {
+    chips.setOpacity(1);
+    chips.showInactive();
+  }
+  keepWidgetOnTop(chips, cfg.chips_docked);
 }
 
 function createTray() {
@@ -327,20 +335,26 @@ function flyoutStaysOpen() {
   return !!(cfg && cfg.flyout_docked);
 }
 
-function virtualScreen() {
-  const ds = screen.getAllDisplays();
+function unionRects(rects) {
   let x = Infinity;
   let y = Infinity;
   let right = -Infinity;
   let bottom = -Infinity;
-  for (const d of ds) {
-    const b = d.bounds;
+  for (const b of rects) {
     x = Math.min(x, b.x);
     y = Math.min(y, b.y);
     right = Math.max(right, b.x + b.width);
     bottom = Math.max(bottom, b.y + b.height);
   }
   return { x, y, width: right - x, height: bottom - y };
+}
+
+function virtualScreen() {
+  return unionRects(screen.getAllDisplays().map((d) => d.bounds));
+}
+
+function virtualWorkArea() {
+  return unionRects(screen.getAllDisplays().map((d) => d.workArea));
 }
 
 function hideClickAway() {
@@ -352,7 +366,7 @@ function showClickAway() {
     hideClickAway();
     return;
   }
-  const area = virtualScreen();
+  const area = virtualWorkArea();
   if (!clickAway || clickAway.isDestroyed()) {
     clickAway = new BrowserWindow({
       ...area,
@@ -718,18 +732,34 @@ function createWindows() {
   chips.on("closed", () => {
     chips = null;
   });
+  if (process.platform === "win32") {
+    const pin = () => {
+      setTimeout(() => {
+        if (dragState || !cfg || cfg.chips_hidden) return;
+        keepWidgetOnTop(chips, cfg.chips_docked);
+      }, 30);
+    };
+    try {
+      chips.hookWindowMessage(0x0006, pin);
+      chips.hookWindowMessage(0x001c, pin);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 function wireIpc() {
   ipcMain.on("usage://refresh", () => poll && poll.refresh());
   ipcMain.on("usage://drag-begin", (e, sx, sy) => {
+    if (!Number.isFinite(sx) || !Number.isFinite(sy)) return;
     const win = BrowserWindow.fromWebContents(e.sender);
-    if (!win) return;
+    if (!win || (win !== chips && win !== flyout)) return;
     const [x, y] = win.getPosition();
     dragState = { win, originX: x, originY: y, sx, sy };
   });
   ipcMain.on("usage://drag-to", (e, sx, sy) => {
     if (!dragState || dragState.win.isDestroyed()) return;
+    if (!Number.isFinite(sx) || !Number.isFinite(sy) || e.sender !== dragState.win.webContents) return;
     const x = dragState.originX + (sx - dragState.sx);
     const y = dragState.originY + (sy - dragState.sy);
     placingFlyout = placingChips = true;
@@ -739,6 +769,7 @@ function wireIpc() {
   ipcMain.on("usage://drag-end", () => finishDrag());
   ipcMain.on("usage://flyout-hide", () => hideFlyout(true));
   ipcMain.on("usage://flyout-toggle", () => {
+    if (!flyout || flyout.isDestroyed()) return;
     if (flyout.isVisible() && !flyoutStaysOpen()) hideFlyout(true);
     else showFlyout();
   });
@@ -749,7 +780,7 @@ function wireIpc() {
     pinned: !!(cfg && cfg.flyout_pinned),
   }));
   ipcMain.on("usage://flyout-resize", (_e, h, w) => {
-    if (!flyout) return;
+    if (!flyout || !Number.isFinite(h) || !Number.isFinite(w)) return;
     const width = Math.max(560, Math.min(860, Math.round(w || 580)));
     const height = Math.max(140, Math.min(860, Math.round(h)));
     setSizeKeepPos(flyout, width, height);
@@ -757,12 +788,12 @@ function wireIpc() {
   });
   ipcMain.on("usage://tray-menu", () => popupAppMenu());
   ipcMain.on("usage://open-usage", (_e, id) => {
-    shell.openExternal(USAGE_URLS[id] || "https://grok.com");
+    if (Object.hasOwn(USAGE_URLS, id)) shell.openExternal(USAGE_URLS[id]).catch((err) => console.error("open usage failed", err.message));
   });
   ipcMain.handle("usage://get-interval", () => cfg.poll_interval_secs || 5);
   ipcMain.on("usage://set-interval", (_e, secs) => setPollInterval(secs));
   ipcMain.on("usage://chips-resize", (_e, w, h) => {
-    if (!chips || chips.isDestroyed()) return;
+    if (!chips || chips.isDestroyed() || !Number.isFinite(w) || !Number.isFinite(h)) return;
     const width = Math.max(96, Math.min(720, Math.round(w)));
     const height = Math.max(24, Math.min(48, Math.round(h)));
     const [cw, ch] = chips.getSize();
@@ -784,6 +815,11 @@ function wireIpc() {
 }
 
 app.setName("Usage Monitor");
+app.on("web-contents-created", (_event, contents) => {
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.on("will-navigate", (event) => event.preventDefault());
+  contents.on("will-attach-webview", (event) => event.preventDefault());
+});
 process.on("SIGHUP", () => {});
 process.on("SIGINT", () => {});
 if (process.platform === "win32") {
@@ -868,12 +904,11 @@ if (!gotLock) {
     setInterval(() => {
       if (dragState) return;
       recoverChipsIfNeeded();
-      if (chips && !cfg.chips_hidden && !chips.isDestroyed()) {
-        if (cfg.chips_docked) placeChipsDocked();
-        keepWidgetOnTop(chips, cfg.chips_docked);
-      }
-      if (flyout && cfg.flyout_docked && flyout.isVisible() && !flyout.isDestroyed()) {
-        flyout.setAlwaysOnTop(true, "pop-up-menu", 1);
+    }, 800);
+    setInterval(() => {
+      if (dragState) return;
+      if (chips && !cfg.chips_hidden && !chips.isDestroyed() && cfg.chips_docked) {
+        placeChipsDocked();
       }
     }, 8000);
   });
@@ -885,6 +920,10 @@ app.on("window-all-closed", (e) => {
 
 app.on("before-quit", () => {
   app.isQuitting = true;
+  clearTimeout(saveTimer);
+  if (cfg) {
+    try { config.save(cfg); } catch (err) { console.error("config write failed", err.message); }
+  }
   if (poll) poll.stop();
   if (tray && !tray.isDestroyed()) tray.destroy();
 });

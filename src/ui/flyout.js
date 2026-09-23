@@ -32,27 +32,27 @@ function render(snapshot) {
   const parts = [];
   for (const p of snapshot.providers || []) {
     const hint = statusText(p);
-    parts.push(`<section class="provider accent-${p.id}" data-id="${p.id}">
-      <div class="p-head"><span class="p-name">${mark(p.id)}<span>${p.display_name}</span></span><span class="p-plan">${p.plan || ""}${p.status && p.status.state === "stale" ? '<span class="badge">stale</span>' : ""}</span></div>`);
+    parts.push(`<section class="provider accent-${escapeHtml(p.id)}" data-id="${escapeHtml(p.id)}">
+      <div class="p-head"><span class="p-name">${mark(p.id)}<span>${escapeHtml(p.display_name)}</span></span><span class="p-plan">${escapeHtml(p.plan || "")}${p.status && p.status.state === "stale" ? '<span class="badge">stale</span>' : ""}</span></div>`);
     if (hint && !(p.windows && p.windows.length)) {
-      parts.push(`<div class="hint">${hint}</div>`);
+      parts.push(`<div class="hint">${escapeHtml(hint)}</div>`);
     } else {
       const extras = [];
       parts.push(`<div class="metrics">`);
       for (const w of p.windows || []) {
         if (w.kind === "credits" && w.used_pct == null) {
-          extras.push(`<div class="credits">${w.label}</div>`);
+          extras.push(`<div class="credits">${escapeHtml(w.label)}</div>`);
           continue;
         }
         const alert = alerting(w) ? " alert" : "";
         const pct = formatUsedTotal(w);
-        const width = w.used_pct == null ? 0 : Math.min(100, w.used_pct);
+        const width = w.used_pct == null ? 0 : Math.max(0, Math.min(100, w.used_pct));
         const color = alerting(w) ? "red" : "green";
         parts.push(`<div class="row${alert}">
-          <span class="row-label">${flyoutLabel(w)}</span>
-          <div class="meter"><div class="fill ${color}" style="width:${width}%"></div></div>
+          <span class="row-label" title="${escapeHtml(flyoutLabel(w))}">${escapeHtml(flyoutLabel(w))}</span>
+          <div class="meter"><div class="fill ${color}" data-width="${width}"></div></div>
           <span class="pct">${pct}</span>
-          <span class="eta" data-reset="${w.resets_at || ""}">${formatEta(w.resets_at)}</span>
+          <span class="eta" data-reset="${escapeHtml(w.resets_at || "")}">${formatEta(w.resets_at)}</span>
         </div>`);
       }
       parts.push(`</div>`);
@@ -61,6 +61,9 @@ function render(snapshot) {
     parts.push("</section>");
   }
   body.innerHTML = parts.join("");
+  body.querySelectorAll(".fill[data-width]").forEach((el) => {
+    el.style.width = `${Number(el.dataset.width) || 0}%`;
+  });
   body.querySelectorAll(".provider").forEach((el) => {
     el.addEventListener("click", () => window.usage.openUsage(el.dataset.id));
   });

@@ -8,7 +8,7 @@ function keyFor(provider, win) {
     const t = Date.parse(win.resets_at);
     resets = Number.isNaN(t) ? String(win.resets_at) : String(Math.floor(t / 60000));
   }
-  const label = win.kind === "weekly_scoped" ? win.label : "";
+  const label = win.label || "";
   return `${provider.id}|${win.kind}|${label}|${resets}`;
 }
 
@@ -16,6 +16,7 @@ function prune(fired) {
   const now = Date.now();
   const next = {};
   for (const [k, v] of Object.entries(fired)) {
+    if (!v || typeof v !== "object") continue;
     if (v.until && Date.parse(v.until) > now) next[k] = v;
     else if (!v.until) next[k] = v;
   }
@@ -40,11 +41,13 @@ function evaluate(snapshot, { onClick, notifyOnLimit } = {}) {
   const toasts = [];
 
   for (const provider of snapshot.providers || []) {
+    if (provider.status?.state !== "ok") continue;
     for (const win of provider.windows || []) {
-      if (win.used_pct == null) continue;
+      if (!Number.isFinite(win.used_pct)) continue;
+      if (win.resets_at && Date.parse(win.resets_at) <= Date.now()) continue;
       const key = keyFor(provider, win);
       const prev = state.fired[key] || { crossed80: false, crossed100: false };
-      if (win.used_pct >= ALERT_USED_PCT && !prev.crossed80) {
+      if (win.used_pct >= ALERT_USED_PCT && !prev.crossed80 && !(notifyOnLimit && win.used_pct >= 100)) {
         toasts.push({
           title: `Usage Monitor — ${provider.display_name}`,
           body: `${win.label} ${Math.round(win.used_pct)}/100% used`,
@@ -58,6 +61,7 @@ function evaluate(snapshot, { onClick, notifyOnLimit } = {}) {
           body: `${win.label} limit reached`,
         });
         prev.crossed100 = true;
+        prev.crossed80 = true;
         prev.until = win.resets_at;
       }
       if (win.used_pct < ALERT_USED_PCT) {
@@ -68,7 +72,7 @@ function evaluate(snapshot, { onClick, notifyOnLimit } = {}) {
     }
   }
 
-  cache.saveAlertState(state);
+  try { cache.saveAlertState(state); } catch (err) { console.error("alert cache write failed", err.message); }
   for (const t of toasts) {
     const n = notify(t.title, t.body);
     if (n && onClick) n.on("click", onClick);

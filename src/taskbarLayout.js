@@ -51,12 +51,21 @@ function refreshAsync() {
       if (err || !stdout) return;
       try {
         const parsed = JSON.parse(String(stdout).trim());
-        if (parsed && parsed.tray) cache = { at: Date.now(), data: parsed };
+        if (parsed && parsed.tray) cache = { at: Date.now(), data: toDipLayout(parsed) };
       } catch {
         /* keep previous */
       }
     }
   );
+}
+
+function toDipLayout(layout) {
+  const { screen } = require("electron");
+  const convert = (r) => {
+    const rect = screen.screenToDipRect(null, { x: r.x, y: r.y, width: r.w, height: r.h });
+    return { ...r, x: rect.x, y: rect.y, w: rect.width, h: rect.height };
+  };
+  return { ...layout, tray: convert(layout.tray), occupied: (layout.occupied || []).map(convert) };
 }
 
 function loadLayout() {
@@ -72,10 +81,12 @@ function invalidate() {
 
 function axisOf(tray) {
   if (!tray) return { edge: "bottom", horizontal: true };
+  const { screen } = require("electron");
+  const { bounds } = screen.getDisplayMatching({ x: tray.x, y: tray.y, width: tray.w, height: tray.h });
   if (tray.w >= tray.h) {
-    return { edge: tray.y > 200 ? "bottom" : "top", horizontal: true };
+    return { edge: tray.y + tray.h / 2 >= bounds.y + bounds.height / 2 ? "bottom" : "top", horizontal: true };
   }
-  return { edge: tray.x > 200 ? "right" : "left", horizontal: false };
+  return { edge: tray.x + tray.w / 2 >= bounds.x + bounds.width / 2 ? "right" : "left", horizontal: false };
 }
 
 function intervalsOnAxis(tray, occupied, horizontal) {
@@ -124,6 +135,7 @@ function dockRoom(w, h, extras) {
   const tray = layout && layout.tray;
   if (!tray) return { fits: false, maxGap: 0 };
   const { horizontal } = axisOf(tray);
+  if ((horizontal ? h > tray.h : w > tray.w)) return { fits: false, maxGap: 0 };
   const occupied = [...(layout.occupied || []), ...extraOccupied(extras)];
   const needed = (horizontal ? w : h) + PAD * 2 + 16;
   let maxGap = 0;
@@ -138,13 +150,7 @@ function isWellDocked(x, y, w, h, extras) {
   const tray = layout && layout.tray;
   if (!tray) return false;
   const { horizontal } = axisOf(tray);
-  if (horizontal) {
-    if (y + h < tray.y - 6 || y > tray.y + tray.h + 6) return false;
-    if (x + w < tray.x + 4 || x > tray.x + tray.w - 4) return false;
-  } else {
-    if (x + w < tray.x - 6 || x > tray.x + tray.w + 6) return false;
-    if (y + h < tray.y + 4 || y > tray.y + tray.h - 4) return false;
-  }
+  if (x < tray.x || y < tray.y || x + w > tray.x + tray.w || y + h > tray.y + tray.h) return false;
   return !overlapsOccupied(x, y, w, h, extras);
 }
 

@@ -9,4 +9,5 @@ scripts/enum-taskbar.ps1
 .env
 .idea/
 .vscode/
-
+.npm-cache/
+.qa/

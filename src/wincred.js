@@ -1,7 +1,4 @@
 const { spawn } = require("child_process");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
 
 const SCRIPT = `
 $ErrorActionPreference = 'Stop'
@@ -51,25 +48,12 @@ if ([string]::IsNullOrEmpty($raw)) { exit 2 }
 [Console]::Out.Write($raw)
 `;
 
-function scriptFile() {
-  const file = path.join(os.tmpdir(), "usage-monitor-wincred.ps1");
-  fs.writeFileSync(file, SCRIPT, "utf8");
-  return file;
-}
-
 function readGenericCredential(target, timeoutMs = 12000) {
   if (process.platform !== "win32") return Promise.resolve(null);
   return new Promise((resolve) => {
-    let file;
-    try {
-      file = scriptFile();
-    } catch {
-      resolve(null);
-      return;
-    }
     const child = spawn(
       "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file],
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(SCRIPT, "utf16le").toString("base64")],
       {
         windowsHide: true,
         env: { ...process.env, USAGE_MONITOR_CRED_TARGET: String(target) },

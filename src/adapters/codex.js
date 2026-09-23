@@ -22,17 +22,17 @@ function classifyWindow(usedPct, seconds, resetAt, resetAfter, fallbackLabel) {
     kind = "weekly";
     label = "Weekly";
   } else if (seconds >= 82800 && seconds <= 90000) {
-    kind = "weekly_scoped";
+    kind = "daily";
     label = "Daily";
   } else if (!label) {
     const h = Math.round(seconds / 3600);
     label = h >= 24 ? `${Math.round(h / 24)}d` : `${h}h`;
   }
-  const resetsAt = resetAt
-    ? new Date(resetAt * 1000).toISOString()
-    : resetAfter != null
-      ? new Date(Date.now() + resetAfter * 1000).toISOString()
-      : null;
+  if (fallbackLabel && fallbackLabel !== "5h" && fallbackLabel !== "Weekly") label = `${fallbackLabel} ${label === fallbackLabel ? "" : label}`.trim();
+  const epoch = resetAt != null ? Number(resetAt) * 1000
+    : resetAfter != null ? Date.now() + Number(resetAfter) * 1000 : NaN;
+  const date = new Date(epoch);
+  const resetsAt = Number.isFinite(date.getTime()) ? date.toISOString() : null;
   return windowOf({ kind, label, usedPct, resetsAt });
 }
 
@@ -65,7 +65,8 @@ function mapWham(body) {
       )
     );
   }
-  for (const extra of body.additional_rate_limits || []) {
+  for (const extra of Array.isArray(body.additional_rate_limits) ? body.additional_rate_limits : []) {
+    if (!extra) continue;
     const w = extra.primary_window;
     if (!w) continue;
     const used = w.used_percent != null ? w.used_percent : null;
@@ -90,7 +91,7 @@ function mapWham(body) {
       resets_at: null,
     });
   }
-  const plan = body.plan_type
+  const plan = typeof body.plan_type === "string" && body.plan_type
     ? body.plan_type.charAt(0).toUpperCase() + body.plan_type.slice(1)
     : null;
   return {
@@ -129,13 +130,13 @@ async function fetchUsage() {
     });
   }
 
-  if (auth.api_key && !(auth.tokens && auth.tokens.access_token)) {
+  if ((auth?.api_key || auth?.OPENAI_API_KEY) && !(auth.tokens && auth.tokens.access_token)) {
     return emptyProvider("codex", "Codex", {
       state: "unknown",
       message: "Codex is signed in with an API key — subscription windows are unavailable",
     });
   }
-  const tokens = auth.tokens || {};
+  const tokens = auth?.tokens || {};
   if (!tokens.access_token) {
     return emptyProvider("codex", "Codex", {
       state: "logged_out",

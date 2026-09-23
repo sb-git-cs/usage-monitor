@@ -7,19 +7,27 @@ const PROVIDERS = [
   { id: "grok", displayName: "Grok Build" },
 ];
 
+function percentage(value) {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, n) : null;
+}
+
 function remainingPct(used) {
-  if (used == null || Number.isNaN(used)) return null;
-  return Math.max(0, 100 - used);
+  const value = percentage(used);
+  return value == null ? null : Math.max(0, 100 - value);
 }
 
 function windowOf({ kind, label, usedPct, resetsAt }) {
-  const used = usedPct == null ? null : Number(usedPct);
+  const used = percentage(usedPct);
+  const reset = Date.parse(resetsAt);
   return {
     kind,
     label,
     used_pct: used,
     remaining_pct: remainingPct(used),
-    resets_at: resetsAt || null,
+    resets_at: Number.isFinite(reset) ? new Date(reset).toISOString() : null,
   };
 }
 
@@ -36,10 +44,8 @@ function emptyProvider(id, displayName, status) {
 }
 
 function hottestWindow(provider) {
-  const numeric = (provider.windows || []).filter((w) => w.used_pct != null);
+  const numeric = (provider.windows || []).filter((w) => Number.isFinite(w.used_pct));
   if (!numeric.length) return null;
-  const five = numeric.find((w) => w.kind === "five_hour");
-  if (five) return five;
   return numeric.reduce((a, b) => (a.used_pct >= b.used_pct ? a : b));
 }
 
@@ -54,13 +60,6 @@ function statusOk(provider) {
   return s === "ok" || s === "stale";
 }
 
-function windowStepMs(kind) {
-  if (kind === "five_hour") return 5 * 60 * 60 * 1000;
-  if (kind === "daily") return 24 * 60 * 60 * 1000;
-  if (kind === "weekly" || kind === "weekly_scoped") return 7 * 24 * 60 * 60 * 1000;
-  return 5 * 60 * 60 * 1000;
-}
-
 function applyLocalResets(snapshot) {
   if (!snapshot || !Array.isArray(snapshot.providers)) {
     return { snapshot, changed: false };
@@ -68,34 +67,35 @@ function applyLocalResets(snapshot) {
   const now = Date.now();
   let changed = false;
   const providers = snapshot.providers.map((p) => {
+    let expired = false;
     const windows = (p.windows || []).map((w) => {
       if (!w.resets_at) return w;
       const t = Date.parse(w.resets_at);
-      if (!t || t > now) return w;
+      if (!Number.isFinite(t) || t > now) return w;
       changed = true;
-      let next = t;
-      const step = windowStepMs(w.kind);
-      while (next <= now) next += step;
+      expired = true;
       return {
         ...w,
-        used_pct: w.used_pct == null ? null : 0,
-        remaining_pct: w.used_pct == null ? null : 100,
-        resets_at: new Date(next).toISOString(),
+        used_pct: null,
+        remaining_pct: null,
+        resets_at: null,
       };
     });
-    return { ...p, windows };
+    return { ...p, windows, ...(expired ? { status: { ...p.status, state: "stale" } } : {}) };
   });
   return { snapshot: { ...snapshot, providers }, changed };
 }
 
-module.exports = {
+const UsageModels = {
   ALERT_USED_PCT,
   PROVIDERS,
   windowOf,
   remainingPct,
+  percentage,
   emptyProvider,
   hottestWindow,
   isAlerting,
   statusOk,
   applyLocalResets,
 };
+if (typeof module !== "undefined") module.exports = UsageModels;
