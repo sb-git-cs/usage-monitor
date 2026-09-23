@@ -43,10 +43,12 @@ function emptyProvider(id, displayName, status) {
   };
 }
 
-function hottestWindow(provider) {
+function currentWindow(provider) {
   const numeric = (provider.windows || []).filter((w) => Number.isFinite(w.used_pct));
   if (!numeric.length) return null;
-  return numeric.reduce((a, b) => (a.used_pct >= b.used_pct ? a : b));
+  const windows = numeric.filter((w) => w.kind === "five_hour");
+  if (!windows.length) windows.push(...numeric.filter((w) => w.kind === "daily"));
+  return (windows.length ? windows : numeric).reduce((a, b) => (a.used_pct >= b.used_pct ? a : b));
 }
 
 function isAlerting(provider) {
@@ -93,7 +95,7 @@ const UsageModels = {
   remainingPct,
   percentage,
   emptyProvider,
-  hottestWindow,
+  currentWindow,
   isAlerting,
   statusOk,
   applyLocalResets,

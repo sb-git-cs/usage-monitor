@@ -20,7 +20,7 @@ Reviewed 2026-09-23. Severity reflects the original defect; every finding below 
 
 - **Malformed values produced false percentages and invalid reset dates.** Rejects blanks, booleans, objects and nonfinite percentages; keeps missing usage unknown, bounds remaining allowance, preserves reported overage, and tolerates malformed reset timestamps. Evidence: `src/models.js:10`, `src/adapters/codex.js:32`, `src/adapters/claude.js:85`.
 
-- **Low five-hour usage hid an exhausted weekly quota.** Chips now display the highest used percentage across available pools. Cached readings have a dashed border and stale tooltip. Evidence: `src/models.js:46`, `src/ui/chips.js:28`.
+- **Weekly usage replaced the current short window in chips.** Chips now prefer a valid five-hour reading, then daily, and use other quotas when neither is available. The tooltip identifies the selected window. Cached readings retain a dashed border and stale tooltip. Evidence: `src/models.js:46`, `src/ui/chips.js:28`.
 
 - **Alert colors, model identities and notifications disagreed.** Warnings include exactly 80%, model labels participate in notification identity, stale/expired readings do not notify, and a first observation at 100% produces one limit toast. Evidence: `src/ui/format.js:44`, `src/alerts.js:11`, `src/alerts.js:44`.
 

@@ -65,8 +65,9 @@ async function check(file) {
       assert.equal(result.reds, 2);
     } else {
       assert.equal(result.chips, 4);
-      assert.match(result.text, /90\/100/);
-      assert.equal(result.reds, 2);
+      assert.match(result.text, /25\/100/);
+      assert.doesNotMatch(result.text, /90\/100/);
+      assert.equal(result.reds, 1);
     }
     const deadline = Date.now() + 5000;
     while (!renderedFrame && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));

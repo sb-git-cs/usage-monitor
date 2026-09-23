@@ -132,7 +132,7 @@ With **Check for updates at startup** enabled (default), a boot/sign-in launch a
 
 Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-hour window reads `100/100%` in red.
 
-Chips show the most heavily used available quota, so an exhausted weekly pool cannot be hidden by a low 5-hour reading. Warnings begin at 80%. Cached readings are marked stale (dashed chip borders); after a reported reset time passes, usage becomes unknown until the provider confirms the new reading. The app never assumes a reset means zero usage or invents the next reset date.
+Chips show the current short window: 5-hour usage first, then daily usage when available. If neither is reported, they show another available quota such as weekly. Hover over a chip to see which window it shows. Warnings begin at 80%. Cached readings are marked stale (dashed chip borders); after a reported reset time passes, usage becomes unknown until the provider confirms the new reading. The app never assumes a reset means zero usage or invents the next reset date.
 
 ## Development checks
 
