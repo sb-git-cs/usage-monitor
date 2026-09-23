@@ -6,6 +6,7 @@ const alerts = require("./alerts");
 const { applyLocalResets } = require("./models");
 const taskbarLayout = require("./taskbarLayout");
 const autostart = require("./autostart");
+const updater = require("./updater");
 
 let cfg;
 let flyout;
@@ -66,11 +67,13 @@ function createWindow(opts) {
     alwaysOnTop: true,
     fullscreenable: false,
     backgroundColor: "#00000000",
+    roundedCorners: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
     },
     ...opts,
   });
@@ -177,9 +180,13 @@ function placeChips() {
 function keepWidgetOnTop(win, docked) {
   if (!win || win.isDestroyed()) return;
   const level = docked ? "screen-saver" : "pop-up-menu";
-  if (!win.isAlwaysOnTop()) win.setAlwaysOnTop(true, level);
+  win.setAlwaysOnTop(true, level, 1);
+  try {
+    win.webContents.setBackgroundThrottling(false);
+  } catch {
+    /* ignore */
+  }
   if (!win.isVisible()) win.showInactive();
-  win.moveTop();
 }
 
 function setChipsHidden(hidden) {
@@ -285,7 +292,8 @@ function showClickAway() {
   }
   clickAway.setAlwaysOnTop(true, "floating");
   clickAway.showInactive();
-  flyout.setAlwaysOnTop(true, "pop-up-menu");
+  flyout.setAlwaysOnTop(true, "pop-up-menu", 1);
+  keepWidgetOnTop(chips, cfg.chips_docked);
 }
 
 function sendFlyoutState() {
@@ -383,6 +391,7 @@ function showFlyout(bounds) {
   flyout.show();
   flyout.focus();
   showClickAway();
+  if (chips && !cfg.chips_hidden) keepWidgetOnTop(chips, cfg.chips_docked);
 }
 
 function hideFlyout(force) {
@@ -390,6 +399,7 @@ function hideFlyout(force) {
   if (!force && flyoutStaysOpen()) return;
   hideClickAway();
   flyout.hide();
+  if (chips && !cfg.chips_hidden) keepWidgetOnTop(chips, cfg.chips_docked);
 }
 
 function broadcast(snap) {
@@ -447,6 +457,16 @@ function buildMenu() {
         config.save(cfg);
       },
     },
+    {
+      label: "Check for updates at startup",
+      type: "checkbox",
+      checked: cfg.check_updates_on_startup !== false,
+      click: (item) => {
+        cfg.check_updates_on_startup = item.checked;
+        config.save(cfg);
+      },
+    },
+    { label: "Check for updates now", click: () => runUpdateCheck(true) },
     {
       label: cfg.flyout_docked ? "Unsnap flyout from taskbar" : "Snap flyout to taskbar",
       click: () => {
@@ -517,6 +537,30 @@ function finishDrag() {
   }
 }
 
+async function runUpdateCheck(promptIfNone) {
+  ignoreFlyoutBlur = true;
+  try {
+    const parent = flyout && !flyout.isDestroyed() && flyout.isVisible() ? flyout : null;
+    return await updater.run({ parent, promptIfNone: !!promptIfNone });
+  } finally {
+    setTimeout(() => {
+      ignoreFlyoutBlur = false;
+    }, 300);
+  }
+}
+
+function scheduleStartupUpdateCheck() {
+  if (!cfg || cfg.check_updates_on_startup === false) return;
+  const tryCheck = (attempt) => {
+    runUpdateCheck(false).then((result) => {
+      if (result && result.error && attempt < 1) {
+        setTimeout(() => tryCheck(attempt + 1), 20000);
+      }
+    });
+  };
+  setTimeout(() => tryCheck(0), 5000);
+}
+
 function popupAppMenu() {
   ignoreFlyoutBlur = true;
   buildMenu().popup({
@@ -561,11 +605,11 @@ function createWindows() {
   chips = createWindow({
     width: 340,
     height: 28,
-    focusable: true,
+    focusable: false,
     hasShadow: false,
   });
   chips.loadFile(ui("chips.html"));
-  chips.setAlwaysOnTop(true, cfg.chips_docked ? "pop-up-menu" : "floating");
+  chips.setAlwaysOnTop(true, cfg.chips_docked ? "screen-saver" : "pop-up-menu", 1);
   chips.once("ready-to-show", () => {
     if (cfg.chips_hidden) return;
     placeChips();
@@ -648,6 +692,10 @@ process.on("SIGHUP", () => {});
 process.on("SIGINT", () => {});
 if (process.platform === "win32") {
   app.setAppUserModelId("Shivam.UsageMonitor");
+  app.commandLine.appendSwitch("wm-window-animations-disabled");
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -663,6 +711,7 @@ if (!gotLock) {
 
     createWindows();
     wireIpc();
+    scheduleStartupUpdateCheck();
 
     flyout.webContents.on("did-finish-load", () => {
       flyout.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
@@ -718,14 +767,13 @@ if (!gotLock) {
 
     setInterval(() => {
       if (dragState) return;
-      if (chips && !cfg.chips_hidden && !chips.isDestroyed() && cfg.chips_docked) {
-        keepWidgetOnTop(chips, true);
+      if (chips && !cfg.chips_hidden && !chips.isDestroyed()) {
+        keepWidgetOnTop(chips, cfg.chips_docked);
       }
       if (flyout && cfg.flyout_docked && flyout.isVisible() && !flyout.isDestroyed()) {
-        if (!flyout.isAlwaysOnTop()) flyout.setAlwaysOnTop(true, "pop-up-menu");
-        flyout.moveTop();
+        flyout.setAlwaysOnTop(true, "pop-up-menu", 1);
       }
-    }, 4000);
+    }, 8000);
   });
 }
 

@@ -84,6 +84,8 @@ After the first launch, the app starts at sign-in via a hidden **`Usage Monitor.
 
 To disable, right-click the flyout or chips and uncheck **Start with Windows**.
 
+With **Check for updates at startup** enabled (default), a boot/sign-in launch also fetches `origin` from GitHub. If `main` is ahead of your copy, a Yes/No dialog appears before the meters keep running. **No** skips until the next start. The check needs Git on PATH and a clone of [sb-git-cs/usage-monitor](https://github.com/sb-git-cs/usage-monitor).
+
 ## Use
 
 - **Left-click** chips → flyout. Click anywhere outside the flyout to close it (unless the flyout is snapped to the taskbar).
@@ -93,6 +95,8 @@ To disable, right-click the flyout or chips and uncheck **Start with Windows**.
   - **Refresh every** — 5, 15, 30, or 60 seconds (default **5s**)
   - **Open flyout** / **Hide flyout** (hide minimizes to the taskbar; the app stays there)
   - **Start with Windows** (on by default after first launch)
+  - **Check for updates at startup** (on by default). At sign-in — and whenever the app starts — it looks at GitHub. If a newer version is there, it asks **Yes / No**. Yes runs `git pull` and `npm install`, then restarts Usage Monitor.
+  - **Check for updates now**
   - **Snap flyout to taskbar** / **Unsnap flyout from taskbar**
   - **Snap chips to taskbar** / **Unsnap chips from taskbar**
   - Quit
@@ -107,6 +111,7 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 - Runs only on your PC
 - Reads `%USERPROFILE%\.claude`, `.codex`, `.gemini`, and `.grok` credentials the CLIs already wrote (Gemini also uses the Windows Credential Manager entry `gemini:antigravity`)
 - Polls each provider’s usage endpoint; never sends prompts, files, or chat history
+- If **Check for updates at startup** is on, it runs `git fetch` against this GitHub repo (no extra personal data)
 - Logs and cache stay under `%APPDATA%\UsageMonitor` and `%LOCALAPPDATA%\UsageMonitor`
 
 ## Troubleshooting
@@ -116,9 +121,11 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 | Gray company mark | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok`). If the CLI is missing, run `npm run setup`. |
 | No chips on the taskbar | Right-click flyout → **Show chips on taskbar**. They sit in an empty gap, not over the clock. |
 | Chips jump or leave a gap on the taskbar | Right-click → **Snap chips to taskbar**, then drag the dotted grip to the gap you want. They stay there instead of re-snapping on every refresh. |
+| Chips vanish while the app is still running | Windows was treating the taskbar overlay as covered. Restart once with this build; docked chips stay painted above the bar. |
 | Flyout missing | Right-click chips → **Open flyout**. Click outside the flyout to close it. |
 | Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off and keeps the last good numbers |
 | Does not start at logon | Run `npm run start:silent` once, leave **Start with Windows** checked. Confirm `Usage Monitor.vbs` exists in the Windows Startup folder. |
+| Update check does nothing | Needs a `git clone` of this repo and `git` on PATH. Use **Check for updates now** to see the error. Local uncommitted changes can block `git pull`. |
 | Extra Electron window / dies with the terminal | Use `npm start` (detached). Quit only from the right-click **Quit** menu. |
 | Quit | Right-click chips or flyout → **Quit**. Hiding the flyout only minimizes it. |
 

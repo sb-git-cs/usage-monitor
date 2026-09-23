@@ -6,7 +6,7 @@ const ALLOWED_INTERVALS = [5, 15, 30, 60];
 
 const DEFAULTS = {
   poll_interval_secs: 5,
-  config_version: 4,
+  config_version: 5,
   chips_docked: true,
   chips_hidden: false,
   chips_x: null,
@@ -20,6 +20,7 @@ const DEFAULTS = {
   flyout_dock_x: null,
   flyout_dock_y: null,
   autostart: true,
+  check_updates_on_startup: true,
   notify_on_limit_reached: true,
   adapters: {
     claude: { refresh_tokens: true },
@@ -65,6 +66,11 @@ function ensure() {
     cfg.chips_docked = true;
     cfg.chips_hidden = false;
     cfg.config_version = 4;
+    dirty = true;
+  }
+  if (fileVersion < 5) {
+    cfg.check_updates_on_startup = true;
+    cfg.config_version = 5;
     dirty = true;
   }
   if (!ALLOWED_INTERVALS.includes(Number(cfg.poll_interval_secs))) {
