@@ -2,6 +2,7 @@ Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public class TaskbarLayout {
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string n);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr p, IntPtr c, string cls, string name);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -16,6 +17,8 @@ function Rect($hwnd) {
   return @{ x = $r.L; y = $r.T; w = ($r.R - $r.L); h = ($r.B - $r.T) }
 }
 
+# GetWindowRect must return physical pixels; Electron converts them to DIP.
+[void][TaskbarLayout]::SetThreadDpiAwarenessContext([IntPtr]::new(-4))
 $trayHwnd = [TaskbarLayout]::FindWindow("Shell_TrayWnd", $null)
 $tray = Rect $trayHwnd
 $occupied = @()

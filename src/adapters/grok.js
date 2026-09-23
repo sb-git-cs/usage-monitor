@@ -59,7 +59,7 @@ async function refreshGrok(entry, credsPath, mtimeMs, topKey) {
     if (stat.mtimeMs !== mtimeMs) return res.json.access_token;
     const json = JSON.parse(fs.readFileSync(credsPath, "utf8"));
     const current = json[topKey];
-    if (!current) return res.json.access_token;
+    if (!current || current.key !== entry.key) return res.json.access_token;
     current.key = res.json.access_token;
     if (res.json.refresh_token) current.refresh_token = res.json.refresh_token;
     if (res.json.expires_in) {
@@ -78,7 +78,7 @@ function weeklyPct(cfg) {
   if (cfg.creditUsagePercent != null) return Number(cfg.creditUsagePercent);
   const used = cfg.used && cfg.used.val;
   const limit = cfg.monthlyLimit && cfg.monthlyLimit.val;
-  if (used != null && limit) return (Number(used) / Number(limit)) * 100;
+  if (used != null && Number(limit) > 0) return (Number(used) / Number(limit)) * 100;
   return null;
 }
 
@@ -88,7 +88,8 @@ function mapBilling(body) {
   const pct = weeklyPct(cfg);
   const end = (cfg.currentPeriod && cfg.currentPeriod.end) || cfg.billingPeriodEnd || null;
   if (pct != null) {
-    windows.push(windowOf({ kind: "weekly", label: "Weekly", usedPct: pct, resetsAt: end }));
+    const weekly = cfg.creditUsagePercent != null;
+    windows.push(windowOf({ kind: weekly ? "weekly" : "monthly", label: weekly ? "Weekly" : "Monthly", usedPct: pct, resetsAt: end }));
   }
   const prepaid = cfg.prepaidBalance && cfg.prepaidBalance.val;
   const cap = cfg.onDemandCap && cfg.onDemandCap.val;
@@ -111,8 +112,8 @@ function mapBilling(body) {
       resets_at: null,
     });
   }
-  const footnotes = (cfg.productUsage || [])
-    .filter((p) => p.usagePercent != null)
+  const footnotes = (Array.isArray(cfg.productUsage) ? cfg.productUsage : [])
+    .filter((p) => p && typeof p.product === "string" && p.usagePercent != null)
     .map((p) => `${p.product.replace(/^Grok/, "")} ${p.usagePercent}% of pool`);
   return {
     id: "grok",
@@ -153,8 +154,8 @@ async function fetchUsage(cfg) {
       hint: "Run: grok login",
     });
   }
-  const topKey = Object.keys(json).find((k) => json[k] && json[k].key);
   const entry = pickEntry(json);
+  const topKey = Object.keys(json || {}).find((k) => json[k] === entry);
   if (!entry) {
     return emptyProvider("grok", "Grok Build", {
       state: "unknown",
@@ -163,12 +164,13 @@ async function fetchUsage(cfg) {
   }
 
   let token = entry.key;
+  let refreshed = false;
   const refreshEnabled = cfg?.adapters?.grok?.refresh_tokens !== false;
   const expMs = Date.parse(entry.expires_at || "") || jwtExpMs(token);
   if (refreshEnabled && expMs && expMs - Date.now() < 60_000) {
     try {
       const next = await refreshGrok(entry, grokAuth(), mtimeMs, topKey);
-      if (next) token = next;
+      if (next) { token = next; refreshed = true; }
     } catch {
       /* continue */
     }
@@ -181,7 +183,7 @@ async function fetchUsage(cfg) {
     "User-Agent": "grok-cli/1.0",
   };
   let res = await getJson(BILLING_URL, headers);
-  if ((res.status === 401 || res.status === 403) && refreshEnabled) {
+  if ((res.status === 401 || res.status === 403) && refreshEnabled && !refreshed) {
     try {
       const next = await refreshGrok(entry, grokAuth(), mtimeMs, topKey);
       if (next) {

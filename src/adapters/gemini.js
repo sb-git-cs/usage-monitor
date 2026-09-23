@@ -81,7 +81,7 @@ function expiryEpoch(value) {
     return value > 1e12 ? value / 1000 : value;
   }
   const n = Number(value);
-  if (!Number.isNaN(n) && n > 1e11) return n > 1e12 ? n / 1000 : n;
+  if (Number.isFinite(n)) return n > 1e12 ? n / 1000 : n;
   const t = Date.parse(value);
   return Number.isNaN(t) ? null : t / 1000;
 }
@@ -217,8 +217,10 @@ function classifyBucket(bucket) {
 }
 
 function usedFromFraction(remaining) {
+  if (typeof remaining !== "number" && typeof remaining !== "string") return null;
+  if (typeof remaining === "string" && !remaining.trim()) return null;
   const frac = Number(remaining);
-  if (Number.isNaN(frac)) return null;
+  if (!Number.isFinite(frac)) return null;
   return Math.max(0, Math.min(100, (1 - frac) * 100));
 }
 
@@ -229,22 +231,23 @@ function isGeminiGroup(group) {
 
 function mapSummary(data) {
   const groups = Array.isArray(data.groups) ? data.groups : [];
-  const gemini = groups.find(isGeminiGroup) || groups[0];
-  if (!gemini) return [];
+  const selected = groups.filter((g) => g && isGeminiGroup(g));
   const windows = [];
-  for (const bucket of gemini.buckets || []) {
-    if (!bucket || bucket.remainingFraction == null) continue;
-    const used = usedFromFraction(bucket.remainingFraction);
-    if (used == null) continue;
-    const cls = classifyBucket(bucket);
-    windows.push(
-      windowOf({
-        kind: cls.kind,
-        label: cls.label,
-        usedPct: used,
-        resetsAt: bucket.resetTime || null,
-      })
-    );
+  for (const group of selected) {
+    for (const bucket of Array.isArray(group.buckets) ? group.buckets : []) {
+      if (!bucket || bucket.remainingFraction == null) continue;
+      const used = usedFromFraction(bucket.remainingFraction);
+      if (used == null) continue;
+      const cls = classifyBucket(bucket);
+      windows.push(
+        windowOf({
+          kind: cls.kind,
+          label: selected.length > 1 ? `${group.displayName || group.name || group.groupId} ${cls.label}` : cls.label,
+          usedPct: used,
+          resetsAt: bucket.resetTime || null,
+        })
+      );
+    }
   }
   return windows;
 }
@@ -288,7 +291,7 @@ function mapModels(data) {
   const iterable = Array.isArray(raw)
     ? raw
     : raw && typeof raw === "object"
-      ? Object.values(raw)
+      ? Object.entries(raw).map(([id, model]) => ({ ...model, model: model?.model || id }))
       : [];
   for (const model of iterable) {
     if (!model || typeof model !== "object") continue;
@@ -299,15 +302,15 @@ function mapModels(data) {
     list.push({
       used,
       name: model.displayName || model.label || model.model || model.name,
+      id: model.model || model.name || "",
       resetTime: quota.resetTime || null,
     });
   }
   list.sort((a, b) => b.used - a.used);
-  const geminiOnly = list.filter((m) => /gemini/i.test(String(m.name)));
-  const pick = (geminiOnly.length ? geminiOnly : list).slice(0, 2);
+  const pick = list.filter((m) => /gemini/i.test(`${m.name} ${m.id}`)).slice(0, 2);
   return pick.map((m) =>
     windowOf({
-      kind: /hour|5h/i.test(String(m.name)) ? "five_hour" : "weekly",
+      kind: "quota",
       label: shortModel(m.name),
       usedPct: m.used,
       resetsAt: m.resetTime,
@@ -328,6 +331,7 @@ async function fetchFromHost(host, token, loadBody) {
   const quotaBody = project ? { project } : {};
 
   const summary = await assistPost(host, token, "retrieveUserQuotaSummary", quotaBody);
+  if (summary.status === 429) return { failed: true, status: 429 };
   if (summary.status === 401 || summary.status === 403) return { authFailed: true };
   if (summary.status === 200 && summary.json) {
     const windows = mapSummary(summary.json);
@@ -335,6 +339,7 @@ async function fetchFromHost(host, token, loadBody) {
   }
 
   const quota = await assistPost(host, token, "retrieveUserQuota", quotaBody);
+  if (quota.status === 429) return { failed: true, status: 429 };
   if (quota.status === 401 || quota.status === 403) return { authFailed: true };
   if (quota.status === 200 && quota.json) {
     const windows = mapQuotaBuckets(quota.json);
@@ -342,13 +347,14 @@ async function fetchFromHost(host, token, loadBody) {
   }
 
   const models = await assistPost(host, token, "fetchAvailableModels", quotaBody);
+  if (models.status === 429) return { failed: true, status: 429 };
   if (models.status === 401 || models.status === 403) return { authFailed: true };
   if (models.status === 200 && models.json) {
     const windows = mapModels(models.json);
     if (windows.length) return { ok: true, plan, windows };
   }
 
-  return { failed: true, status: summary.status || quota.status || models.status, plan };
+  return { failed: true, status: [models, quota, summary].find((r) => r.status !== 200)?.status, plan };
 }
 
 async function fetchUsage(cfg) {
@@ -388,7 +394,9 @@ async function fetchUsage(cfg) {
   let lastFail = null;
 
   for (const host of API_HOSTS) {
-    let result = await fetchFromHost(host, token, loadBody);
+    let result;
+    try { result = await fetchFromHost(host, token, loadBody); }
+    catch { lastFail = { failed: true }; continue; }
     if (result.authFailed && refreshEnabled && creds.refresh_token) {
       const next = await refreshAccess(creds);
       if (next && next.access_token) {
@@ -415,6 +423,7 @@ async function fetchUsage(cfg) {
       };
     }
     lastFail = result;
+    if (result.status === 429) break;
   }
 
   if (lastFail && lastFail.status === 429) {

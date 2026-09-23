@@ -82,7 +82,7 @@ function mapUsage(body, oauth) {
       windowOf({
         kind: "five_hour",
         label: "5h",
-        usedPct: body.five_hour.utilization ?? 0,
+        usedPct: body.five_hour.utilization,
         resetsAt: body.five_hour.resets_at,
       })
     );
@@ -92,13 +92,13 @@ function mapUsage(body, oauth) {
       windowOf({
         kind: "weekly",
         label: "Weekly",
-        usedPct: body.seven_day.utilization ?? 0,
+        usedPct: body.seven_day.utilization,
         resetsAt: body.seven_day.resets_at,
       })
     );
   }
-  for (const lim of body.limits || []) {
-    if (lim.kind === "weekly_scoped" && lim.scope && lim.scope.model && lim.scope.model.display_name) {
+  for (const lim of Array.isArray(body.limits) ? body.limits : []) {
+    if (lim && lim.kind === "weekly_scoped" && lim.scope && lim.scope.model && lim.scope.model.display_name) {
       const name = lim.scope.model.display_name;
       windows.push(
         windowOf({
@@ -166,11 +166,13 @@ async function fetchUsage(cfg) {
   }
 
   const refreshEnabled = cfg?.adapters?.claude?.refresh_tokens !== false;
+  let refreshed = false;
   const exp = Number(creds.oauth.expiresAt || 0);
   if (refreshEnabled && exp && exp - Date.now() < 60_000 && creds.oauth.refreshToken) {
     try {
       const r = await refresh(creds.oauth);
-      if (r.status === 200 && r.json) {
+      if (r.status === 200 && r.json?.access_token) {
+        refreshed = true;
         casWriteTokens(creds, r.json);
         creds = readCreds();
       } else if (r.status === 400 || r.status === 401) {
@@ -184,18 +186,20 @@ async function fetchUsage(cfg) {
     }
   }
 
-  const res = await getJson(USAGE_URL, usageHeaders(creds.oauth.accessToken));
-  if (res.status === 401 && refreshEnabled && creds.oauth.refreshToken) {
+  let res = await getJson(USAGE_URL, usageHeaders(creds.oauth.accessToken));
+  if (res.status === 401 && refreshEnabled && !refreshed && creds.oauth.refreshToken) {
     try {
       const r = await refresh(creds.oauth);
-      if (r.status === 200 && r.json && casWriteTokens(creds, r.json)) {
+      if (r.status === 200 && r.json?.access_token) {
+        casWriteTokens(creds, r.json);
         creds = readCreds();
-        const retry = await getJson(USAGE_URL, usageHeaders(creds.oauth.accessToken));
-        if (retry.status === 200 && retry.json) return mapUsage(retry.json, creds.oauth);
+        res = await getJson(USAGE_URL, usageHeaders(creds.oauth.accessToken));
       }
     } catch {
       /* fall through */
     }
+  }
+  if (res.status === 401 || res.status === 403) {
     return emptyProvider("claude", "Claude Code", {
       state: "logged_out",
       hint: "Run: claude auth login",

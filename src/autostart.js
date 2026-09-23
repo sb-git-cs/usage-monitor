@@ -35,8 +35,9 @@ function writeShortcut() {
   try {
     const { app } = require("electron");
     if (app.isPackaged) {
-      cwd = path.dirname(exe);
-      cmd = `"${exe}"`;
+      const launchExe = process.env.PORTABLE_EXECUTABLE_FILE || exe;
+      cwd = path.dirname(launchExe);
+      cmd = `"${launchExe}"`;
     }
   } catch {
     /* unpackaged */
@@ -87,7 +88,7 @@ function apply(enabled) {
   } catch (err) {
     console.error("startup shortcut failed", err.message);
   }
-  return !!enabled;
+  return isEnabled();
 }
 
 function isEnabled() {

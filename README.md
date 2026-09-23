@@ -22,14 +22,14 @@ It reuses the logins those CLIs already stored on disk. No API keys. Nothing is 
 | Anthropic | Claude Code | 5-hour and weekly |
 | OpenAI | Codex | 5-hour and weekly |
 | Gemini | Gemini (Antigravity CLI / Gemini CLI) | Gemini model 5-hour and weekly when the API reports them |
-| xAI | Grok Build | Weekly only (no 5-hour bar) |
+| xAI | Grok Build | Weekly; monthly billing fallback when reported (no 5-hour bar) |
 
-Grok has a **weekly** pool only. Gemini shows the **Gemini model** pools from Antigravity (`agy`) or Gemini CLI; some plans report weekly only.
+Grok's subscription percentage is shown as **weekly**; if the API only reports monthly billing usage and a monthly limit, that fallback is labeled **Monthly**. Gemini shows only Gemini model pools from Antigravity (`agy`) or Gemini CLI, retaining model labels when the period is unspecified.
 
 ## Requirements
 
 - Windows 10/11
-- [Node.js](https://nodejs.org/) 20 or newer
+- [Node.js](https://nodejs.org/) 22.12 or newer (source installs/builds only)
 - Signed in to the tools you want metered:
   - [Claude Code](https://code.claude.com/) (`claude`)
   - [Codex](https://github.com/openai/codex) (`codex`)
@@ -121,7 +121,7 @@ With **Check for updates at startup** enabled (default), a boot/sign-in launch a
   - **Refresh every** — 5, 15, 30, or 60 seconds (default **5s**)
   - **Open flyout** / **Hide flyout** (hide minimizes to the taskbar; the app stays there)
   - **Start with Windows** (on by default after first launch)
-  - **Check for updates at startup** (on by default). At sign-in — and whenever the app starts — it looks at GitHub. If a newer version is there, it asks **Yes / No**. Yes runs `git pull` and `npm install`, then restarts Usage Monitor.
+  - **Check for updates at startup** (on by default). At sign-in — and whenever the app starts — it looks at GitHub. If a newer version is there, it asks **Yes / No**. Yes runs `git pull --ff-only` and `npm ci`, then restarts Usage Monitor.
   - **Check for updates now**
   - **Snap flyout to taskbar** / **Unsnap flyout from taskbar**
   - **Snap chips to taskbar** / **Unsnap chips from taskbar**
@@ -131,6 +131,20 @@ With **Check for updates at startup** enabled (default), a boot/sign-in launch a
 - Click a provider card to open that product’s official usage page (Claude, Codex, [Antigravity](https://antigravity.google), Grok)
 
 Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-hour window reads `100/100%` in red.
+
+Chips show the most heavily used available quota, so an exhausted weekly pool cannot be hidden by a low 5-hour reading. Warnings begin at 80%. Cached readings are marked stale (dashed chip borders); after a reported reset time passes, usage becomes unknown until the provider confirms the new reading. The app never assumes a reset means zero usage or invents the next reset date.
+
+## Development checks
+
+```powershell
+npm ci
+npm test
+npm run test:ui
+npm audit --audit-level=high
+npm run dist
+```
+
+The tests use synthetic credentials and responses. The UI smoke test uses hidden offscreen Electron windows and saves images under `.qa/`; it does not enable autostart or read your CLI logins. Windows CI runs tests, the dependency audit, and an unpacked build. See `review.md` for the defect list and `handoff.md` for release verification and remaining acceptance checks.
 
 ## Privacy
 
@@ -147,7 +161,7 @@ Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-ho
 | Gray company mark | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok`). If the CLI is missing, run `npm run setup`. |
 | No chips on the taskbar | Right-click flyout → **Show chips on taskbar**. They sit in an empty gap, not over the clock. |
 | Chips jump or leave a gap on the taskbar | Right-click → **Snap chips to taskbar**, then drag the dotted grip to the gap you want. They stay there instead of re-snapping on every refresh. |
-| Chips vanish while the app is still running | The strip should show **loading…** and recover on its own. If it does not, click the Usage Monitor icon near the clock (open **^** if you do not see it), or right-click → **Show chips**. A full taskbar pops chips out above the bar instead of hiding them. |
+| Chips vanish while the app is still running | The strip should show **loading…** and recover on its own. Clicking the taskbar around the chips should not hide them. If they still go missing, click the Usage Monitor icon near the clock (open **^** if you do not see it), or right-click → **Show chips**. A full taskbar pops chips out above the bar instead of hiding them. |
 | Flyout missing | Right-click chips → **Open flyout**. Click outside the flyout to close it. |
 | Claude stuck / stale | The usage API rate-limits aggressive polling. The app backs off and keeps the last good numbers |
 | Does not start at logon | Run `npm run start:silent` once, leave **Start with Windows** checked. Confirm `Usage Monitor.vbs` exists in the Windows Startup folder. |

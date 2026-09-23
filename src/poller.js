@@ -7,12 +7,13 @@ const cache = require("./cache");
 
 const adapters = { claude, codex, gemini, grok };
 const backoffUntil = {};
+const pending = {};
+let activePoll = null;
 const ADAPTER_TIMEOUT_MS = 12000;
-const POLL_WATCHDOG_MS = 18000;
 
 function withTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`${label || "op"} timeout`)), ms);
+    const t = setTimeout(() => reject(Object.assign(new Error(`${label || "op"} timeout`), { code: "POLL_TIMEOUT" })), ms);
     promise.then(
       (v) => {
         clearTimeout(t);
@@ -41,7 +42,7 @@ function mergeWithCache(fresh, cached) {
   return fresh;
 }
 
-async function pollOnce(cfg) {
+async function collect(cfg) {
   const previous = cache.loadSnapshot();
   const prevById = {};
   for (const p of (previous && previous.providers) || []) prevById[p.id] = p;
@@ -51,12 +52,16 @@ async function pollOnce(cfg) {
       try {
         if (backoffUntil[id] && Date.now() < backoffUntil[id]) {
           const cached = prevById[id];
-          if (cached) {
+          if (cached && cached.windows.length) {
             const age = Math.max(0, (Date.now() - Date.parse(cached.fetched_at || 0)) / 1000);
             return { ...cached, status: { state: "stale", age_secs: Math.round(age) }, source: "cache" };
           }
+          if (cached) return cached;
         }
-        const fresh = await withTimeout(adapters[id].fetchUsage(cfg), ADAPTER_TIMEOUT_MS, id);
+        // Keep timed-out work until consumed; token refreshes must never overlap.
+        if (!pending[id]) pending[id] = Promise.resolve().then(() => adapters[id].fetchUsage(cfg));
+        const fresh = await withTimeout(pending[id], ADAPTER_TIMEOUT_MS, id);
+        delete pending[id];
         if (fresh && fresh._rateLimited) {
           backoffUntil[id] = Date.now() + 60 * 1000;
           delete fresh._rateLimited;
@@ -65,6 +70,7 @@ async function pollOnce(cfg) {
         }
         return mergeWithCache(fresh, prevById[id]);
       } catch (err) {
+        if (err.code !== "POLL_TIMEOUT") delete pending[id];
         const failed = {
           id,
           display_name: adapters[id].displayName,
@@ -85,26 +91,26 @@ async function pollOnce(cfg) {
     providers: results,
   };
   const { snapshot: next } = applyLocalResets(snapshot);
-  cache.saveSnapshot(next);
+  try { cache.saveSnapshot(next); } catch (err) { console.error("cache write failed", err.message); }
   return next;
+}
+
+function pollOnce(cfg) {
+  if (!activePoll) activePoll = collect(cfg).finally(() => { activePoll = null; });
+  return activePoll;
 }
 
 function start(cfg, onSnapshot) {
   let timer = null;
   let inflight = false;
-  let inflightAt = 0;
   let stopped = false;
 
   async function tick() {
     if (stopped) return;
-    if (inflight) {
-      if (Date.now() - inflightAt < POLL_WATCHDOG_MS) return;
-      inflight = false;
-    }
+    if (inflight) return;
     inflight = true;
-    inflightAt = Date.now();
     try {
-      const snap = await withTimeout(pollOnce(cfg), POLL_WATCHDOG_MS, "poll");
+      const snap = await pollOnce(cfg);
       if (!stopped) onSnapshot(snap);
     } catch (err) {
       console.error("poll failed", err.message);
@@ -119,7 +125,9 @@ function start(cfg, onSnapshot) {
   }
 
   const cached = cache.loadSnapshot();
-  if (cached) onSnapshot(cached);
+  if (cached) onSnapshot(applyLocalResets({ ...cached, providers: cached.providers.map((p) =>
+    p.windows.length ? { ...p, status: { state: "stale" }, source: "cache" } : p
+  ) }).snapshot);
   tick();
   arm();
   return {

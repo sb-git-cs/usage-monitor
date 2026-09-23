@@ -1,5 +1,4 @@
 const fs = require("fs");
-const path = require("path");
 const { configDir, configPath } = require("./paths");
 
 const ALLOWED_INTERVALS = [5, 15, 30, 60];
@@ -38,24 +37,40 @@ function readFile() {
 }
 
 function load() {
-  const parsed = readFile();
-  if (!parsed) return { ...DEFAULTS };
-  return { ...DEFAULTS, ...parsed, adapters: { ...DEFAULTS.adapters, ...(parsed.adapters || {}) } };
+  return normalize(readFile());
+}
+
+function normalize(parsed) {
+  const raw = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  const cfg = { ...DEFAULTS, ...raw, adapters: {} };
+  for (const [key, value] of Object.entries(DEFAULTS)) {
+    if (typeof value === "boolean" && typeof cfg[key] !== "boolean") cfg[key] = value;
+    if (value === null && !Number.isFinite(cfg[key])) cfg[key] = null;
+  }
+  for (const id of Object.keys(DEFAULTS.adapters)) {
+    cfg.adapters[id] = { refresh_tokens: raw.adapters?.[id]?.refresh_tokens !== false };
+  }
+  cfg.poll_interval_secs = ALLOWED_INTERVALS.includes(Number(cfg.poll_interval_secs)) ? Number(cfg.poll_interval_secs) : 5;
+  return cfg;
 }
 
 function save(cfg) {
-  fs.mkdirSync(configDir(), { recursive: true });
-  const tmp = configPath() + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { encoding: "utf8" });
-  fs.renameSync(tmp, configPath());
+  try {
+    fs.mkdirSync(configDir(), { recursive: true });
+    const tmp = configPath() + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { encoding: "utf8" });
+    fs.renameSync(tmp, configPath());
+    return true;
+  } catch (err) {
+    console.error("config write failed", err.message);
+    return false;
+  }
 }
 
 function ensure() {
   const raw = readFile();
-  const cfg = raw
-    ? { ...DEFAULTS, ...raw, adapters: { ...DEFAULTS.adapters, ...(raw.adapters || {}) } }
-    : { ...DEFAULTS };
-  let dirty = !raw;
+  const cfg = normalize(raw);
+  let dirty = JSON.stringify(raw) !== JSON.stringify(cfg);
   const fileVersion = raw && raw.config_version ? Number(raw.config_version) : 0;
   if (fileVersion < 3) {
     cfg.poll_interval_secs = 5;

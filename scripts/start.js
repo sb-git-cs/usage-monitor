@@ -24,4 +24,8 @@ const child = spawn(exe, [root], {
   windowsHide: true,
   env,
 });
+child.on("error", (err) => {
+  console.error("Could not start Usage Monitor:", err.message);
+  process.exitCode = 1;
+});
 child.unref();
