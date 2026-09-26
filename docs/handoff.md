@@ -2,14 +2,14 @@
 
 ## Objective
 
-Audit and fix defects, bugs and usage miscalculations; harden the Windows app and produce tested distributable builds. The supplied global instructions define Fable as orchestrator and Codex as reviewer/implementer. No project AGENTS.md or prior handoff.md existed at the start of this task.
+Audit and fix defects, bugs and usage miscalculations; harden the Windows app and produce tested distributable builds.
 
 ## Assignments
 
-| Engineer | Assignment | Status | Evidence |
+| Owner | Assignment | Status | Evidence |
 | --- | --- | --- | --- |
-| Codex | Code audit, surgical fixes, regression tests and build verification; correct chip window selection | Implementation complete; release acceptance pending | `docs/review.md`, `test/`, `scripts/ui-smoke.js`; verification below |
-| Owner / Fable | Live-account and interactive desktop acceptance; signed distribution | Pending | Checklist below |
+| Development | Code audit, surgical fixes, regression tests and build verification; correct chip window selection | Implementation complete; release acceptance pending | `docs/review.md`, `test/`, `scripts/ui-smoke.js`; verification below |
+| Maintainer | Live-account and interactive desktop acceptance; signed distribution | Pending | Checklist below |
 
 ## Verification
 

@@ -16,7 +16,7 @@ test("Gemini converts remaining fractions precisely and rejects invalid readings
 test("Gemini never displays a different provider's quota and retains keyed model IDs", () => {
   assert.deepEqual(gemini.mapSummary({ groups: [{ displayName: "Claude", buckets: [{ remainingFraction: 0 }] }] }), []);
   const windows = gemini.mapModels({ models: {
-    "claude-opus": { quotaInfo: { remainingFraction: 0 } },
+    "other-provider-model": { quotaInfo: { remainingFraction: 0 } },
     "gemini-pro": { displayName: "Pro", quotaInfo: { remainingFraction: 0.25 } },
   } });
   assert.equal(windows.length, 1);
