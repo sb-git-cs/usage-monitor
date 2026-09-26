@@ -1,15 +1,55 @@
 name: Release
 # Push a tag like v1.0.0 (matching package.json "version") to build installers for
-# Windows, macOS and Linux and publish them as a GitHub release. Run it by hand from
-# the Actions tab to build the installers without publishing.
+# Windows, macOS and Linux and publish them as a GitHub release. Or run it by hand
+# from the Actions tab: with "publish" ticked it creates the v<version> tag and the
+# release from the chosen branch; unticked it only builds the installers.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Create the v<package.json version> tag and publish the release
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      publish: ${{ steps.tag.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Work out the release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "$tag" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $tag"
+              exit 1
+            fi
+            publish=true
+          elif [ "$PUBLISH_INPUT" = "true" ]; then
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --silent 2>/dev/null; then
+              echo "::error::Tag $tag already exists. Bump version in package.json first."
+              exit 1
+            fi
+            publish=true
+          else
+            publish=false
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Release tag $tag, publish: $publish"
+
   build:
+    needs: prepare
     strategy:
       fail-fast: true
       matrix:
@@ -27,15 +67,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Tag matches package.json version
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: |
-          version="v$(node -p "require('./package.json').version")"
-          if [ "$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"
-            exit 1
-          fi
       - run: npm ci
       - run: npm test
       - name: Build installers
@@ -54,8 +85,8 @@ jobs:
             dist/*.tar.gz
 
   release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -68,6 +99,8 @@ jobs:
       - run: ls -la installers
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: installers/*
           generate_release_notes: true
           fail_on_unmatched_files: true

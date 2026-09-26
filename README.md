@@ -127,7 +127,7 @@ npm run dist        # or dist:mac / dist:linux
 
 Builds are unsigned. On macOS, open the app with right-click → **Open** the first time.
 
-To publish a release, bump `version` in `package.json`, then push a matching tag (`git tag v1.0.1 && git push origin v1.0.1`). The **Release** workflow tests, builds all three platforms and attaches the installers to a GitHub release.
+To publish a release, bump `version` in `package.json` and commit, then either push a matching tag (`git tag v1.0.1 && git push origin v1.0.1`) or open **Actions → Release → Run workflow** and tick **publish**. The workflow tests, builds all three platforms, creates the tag if needed and attaches the installers to a GitHub release.
 
 Sign in to the CLIs once (`claude`, `codex login`, `agy`, `grok`) so the meters can read usage. A packaged copy still uses those same local logins; it does not replace the CLIs.
 
