@@ -106,3 +106,48 @@ test("Grok monthly billing fallback is not mislabeled as a weekly quota", () => 
   assert.equal(result.windows[0].used_pct, 25);
   assert.equal(adapter.mapBilling({ used: { val: 25 }, monthlyLimit: { val: "0" } }).windows.length, 0);
 });
+
+test("Grok omitted proto3 weekly percent is 0% while the period is live", () => {
+  const adapter = load("src/adapters/grok.js", {}, ["mapBilling"]);
+  const result = adapter.mapBilling({
+    currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "2020-01-01T00:00:00Z", end: "2099-01-01T00:00:00Z" },
+    isUnifiedBillingUser: true,
+  });
+  assert.equal(result.windows[0].kind, "weekly");
+  assert.equal(result.windows[0].used_pct, 0);
+  assert.equal(result.windows[0].resets_at, "2099-01-01T00:00:00.000Z");
+});
+
+test("Grok uses productUsage when creditUsagePercent is absent", () => {
+  const adapter = load("src/adapters/grok.js", {}, ["mapBilling"]);
+  const result = adapter.mapBilling({
+    currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end: "2099-01-01T00:00:00Z" },
+    productUsage: [{ product: "GrokBuild", usagePercent: 8 }, { product: "GrokChat", usagePercent: 2 }],
+  });
+  assert.equal(result.windows[0].kind, "weekly");
+  assert.equal(result.windows[0].used_pct, 10);
+});
+
+test("Grok parses credit_usage_percent from a grok.com gRPC-web frame", () => {
+  const adapter = load("src/adapters/grok.js", {}, ["parseCreditsGrpcWeb"]);
+  const frame = Buffer.from("00000000070a050d00000842", "hex");
+  assert.equal(adapter.parseCreditsGrpcWeb(frame).creditUsagePercent, 34);
+});
+
+test("Grok fills omitted REST usage from grok.com credits gRPC", async () => {
+  const accounts = { current: { key: "tok", create_time: "2025-01-01" } };
+  const grpc = Buffer.from("00000000070a050d00000842", "hex");
+  const adapter = load("src/adapters/grok.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify(accounts), writeFileSync() {}, renameSync() {} },
+    "../paths": { ...noPaths, grokAuth: () => "fake", fileExists: () => true },
+    "../http": {
+      getJson: async () => ({ status: 200, json: { config: { currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "2020-01-01T00:00:00Z", end: "2099-01-01T00:00:00Z" } } } }),
+      postForm: async () => ({ status: 404 }),
+      request: async () => ({ status: 200, buffer: grpc, headers: {} }),
+    },
+  });
+  const result = await adapter.fetchUsage({});
+  assert.equal(result.status.state, "ok");
+  assert.equal(result.windows[0].kind, "weekly");
+  assert.equal(result.windows[0].used_pct, 34);
+});
