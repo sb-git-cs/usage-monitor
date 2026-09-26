@@ -41,6 +41,23 @@ The build is unsigned: Authenticode inspection reported `NotSigned`. The builder
 3. Verify source, installed and portable startup at Windows sign-in. The portable shortcut now points at the original executable, not its temporary extraction directory.
 4. Supply the owner's signing certificate for signed public distribution, then verify the resulting signature and clean-machine install/uninstall.
 
+## Network usage monitor (2026-09-26)
+
+Per-app network monitoring was added to the app (window, engine, SQLite records, caps, blocking, connection logs), together with cross-platform fixes (config/data folders, login items, tray menu on Linux, taskbar features limited to Windows, Claude Keychain login on macOS).
+
+Verified on Windows 11 (this machine):
+
+- `npm test`: 65 tests passed (34 existing plus 31 new for the parsers, records store, engine, live summary, settings, helper protocol and taskbar ownership).
+- `npm run test:ui` and `npm run test:ui -- --packaged`: flyout, chips and the network window render under CSP with escaping, sorting, chart, pause and focus checks.
+- `npx electron-builder --win --x64 --dir`: the build ships `resources/net-helper` (helper source and setup script).
+- Live helper run: installed through the one-time UAC prompt, captured per-app traffic including a 10 MB curl download attributed to curl, captured DNS answers, and blocked then unblocked a copy of curl through Windows Firewall (no rules left behind). The packaged app connected to the installed helper with matching versions.
+
+Not run locally (no macOS or Linux machine was available): the macOS `nettop` and Linux `ss` providers are covered by unit tests against real-format output, and CI now runs a live capture probe (`scripts/probe-capture.js`), the UI test and an unpacked build on macOS and Linux runners. Those CI jobs have not run yet; push to trigger them.
+
+Chips and flyout: the chips strip shows live network speed and, docked on the Windows taskbar, fills its height (2px inset) and is owned by the taskbar window so it stays visible while the Start menu or Quick Settings is open (verified live; ownership is re-applied by the periodic taskbar probe and the strip is recreated if Windows destroys it, e.g. on an Explorer restart, which was not exercised). The flyout shows a network card and rests flush on the taskbar top. `docs/screenshots` are regenerated with `npm run screenshots`.
+
+Acceptance still needed for this feature: the CI matrix passing on macOS and Linux; a manual look at the network window on macOS and a Linux desktop (tray menu, icons, login item); and signed macOS/Windows builds for public release.
+
 ## Working tree notes
 
 The working tree already contained edits to README.md, src/main.js, src/ui/clickaway.html and src/ui/shared.css. Those edits were retained. The flyout pointer-events regression in the edited CSS was fixed after reproducing it in Electron. Generated screenshots and test profiles are in ignored `.qa/`; local npm cache and dist outputs are also ignored.

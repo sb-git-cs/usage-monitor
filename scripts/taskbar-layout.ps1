@@ -1,3 +1,4 @@
+param([string]$Hwnd = "", [int]$Own = 0, [int]$AppPid = 0)
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -6,6 +7,9 @@ public class TaskbarLayout {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string n);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr p, IntPtr c, string cls, string name);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int index);
+  [DllImport("user32.dll", EntryPoint="SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   public struct RECT { public int L; public int T; public int R; public int B; }
 }
 "@
@@ -32,8 +36,23 @@ if ($trayHwnd -ne [IntPtr]::Zero) {
   }
 }
 
+# Owning the chips by the taskbar keeps them visible when Windows raises the taskbar above
+# other windows (Start menu, Quick Settings). Only a window of the calling process is touched.
+$ownerApplied = $false
+if ($Hwnd -match '^\d+$') {
+  $chips = [IntPtr]::new([Int64]$Hwnd)
+  $windowPid = [uint32]0
+  [void][TaskbarLayout]::GetWindowThreadProcessId($chips, [ref]$windowPid)
+  if ($AppPid -gt 0 -and $windowPid -eq $AppPid) {
+    $target = if ($Own -eq 1) { $trayHwnd } else { [IntPtr]::Zero }
+    if ([TaskbarLayout]::GetWindowLongPtr($chips, -8) -ne $target) { [void][TaskbarLayout]::SetWindowLongPtr($chips, -8, $target) }
+    $ownerApplied = ([TaskbarLayout]::GetWindowLongPtr($chips, -8) -eq $target)
+  }
+}
+
 $result = @{
   tray = $tray
   occupied = $occupied
+  ownerApplied = $ownerApplied
 }
 $result | ConvertTo-Json -Compress -Depth 4

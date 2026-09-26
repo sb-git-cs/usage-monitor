@@ -13,6 +13,10 @@ function layoutScript() {
 const PAD = 6;
 let cache = { at: 0, data: null };
 let refreshing = false;
+let rerun = false;
+// Which window (chips) should be owned by the taskbar; the probe script applies it on every run,
+// which also re-attaches the chips after Explorer restarts and replaces the taskbar.
+const owner = { hwnd: null, own: false, applied: null };
 
 function fallbackFromScreen() {
   try {
@@ -40,23 +44,39 @@ function fallbackFromScreen() {
 }
 
 function refreshAsync() {
-  if (refreshing) return;
+  // Only Windows has a taskbar to probe; elsewhere the screen work area is used.
+  if (process.platform !== "win32") return;
+  if (refreshing) {
+    rerun = true;
+    return;
+  }
   refreshing = true;
-  execFile(
-    "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", layoutScript()],
-    { encoding: "utf8", timeout: 4000, windowsHide: true },
-    (err, stdout) => {
-      refreshing = false;
-      if (err || !stdout) return;
+  const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", layoutScript()];
+  const want = owner.hwnd ? `${owner.hwnd}:${owner.own ? 1 : 0}` : null;
+  if (want) args.push("-Hwnd", owner.hwnd, "-Own", owner.own ? "1" : "0", "-AppPid", String(process.pid));
+  execFile("powershell.exe", args, { encoding: "utf8", timeout: 6000, windowsHide: true }, (err, stdout) => {
+    refreshing = false;
+    if (!err && stdout) {
       try {
         const parsed = JSON.parse(String(stdout).trim());
         if (parsed && parsed.tray) cache = { at: Date.now(), data: toDipLayout(parsed) };
+        if (want && parsed && parsed.ownerApplied) owner.applied = want;
       } catch {
         /* keep previous */
       }
     }
-  );
+    if (rerun) {
+      rerun = false;
+      refreshAsync();
+    }
+  });
+}
+
+function setChipsOwner(hwnd, own) {
+  if (process.platform !== "win32" || !hwnd || !/^\d+$/.test(String(hwnd))) return;
+  owner.hwnd = String(hwnd);
+  owner.own = !!own;
+  if (owner.applied !== `${owner.hwnd}:${owner.own ? 1 : 0}`) refreshAsync();
 }
 
 function toDipLayout(layout) {
@@ -265,6 +285,7 @@ module.exports = {
   snapDocked,
   defaultDocked,
   anchorAboveTaskbar,
+  setChipsOwner,
   isWellDocked,
   overlapsOccupied,
   dockRoom,

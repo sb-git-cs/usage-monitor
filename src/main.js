@@ -7,6 +7,11 @@ const { applyLocalResets } = require("./models");
 const taskbarLayout = require("./taskbarLayout");
 const autostart = require("./autostart");
 const updater = require("./updater");
+const netUsage = require("./net");
+const { formatRateShort } = require("./net/format");
+
+const IS_WINDOWS = process.platform === "win32";
+const LOGIN_LABEL = IS_WINDOWS ? "Start with Windows" : process.platform === "darwin" ? "Open at login" : "Start at login";
 
 let cfg;
 let flyout;
@@ -22,6 +27,15 @@ let saveTimer = null;
 function saveSoon() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => config.save(cfg), 200);
+}
+
+// Keeps a window inside the work area, so the taskbar never covers part of it.
+function clampToWorkArea(x, y, w, h) {
+  const wa = screen.getDisplayNearestPoint({ x: Math.round(x || 0), y: Math.round(y || 0) }).workArea;
+  return {
+    x: Math.round(Math.min(Math.max(x, wa.x), wa.x + wa.width - w)),
+    y: Math.round(Math.min(Math.max(y, wa.y), wa.y + wa.height - h)),
+  };
 }
 
 function clampToDisplay(x, y, w, h) {
@@ -121,12 +135,45 @@ function otherDockedRects(except) {
 function applyDockedPos(win, pos) {
   if (!win || !pos || !pos.ok) return;
   const [x, y] = win.getPosition();
-  if (Math.abs(x - pos.x) < 2 && Math.abs(y - pos.y) < 2) return;
+  // Snapped positions are whole pixels, so an exact match cannot jitter; a 1px miss shows on the taskbar.
+  if (x === pos.x && y === pos.y) return;
   placingChips = true;
   placingFlyout = true;
   win.setPosition(pos.x, pos.y);
   placingChips = false;
   placingFlyout = false;
+}
+
+// Docked on a horizontal taskbar, the strip fills the taskbar with 2px spare above and below (0 = natural size).
+let chipsFill = 0;
+
+function taskbarFillHeight() {
+  const layout = taskbarLayout.loadLayout();
+  const tray = layout && layout.tray;
+  if (!tray || tray.w < tray.h) return 0;
+  return Math.max(24, Math.min(120, Math.floor(tray.h) - 4));
+}
+
+// Native window handle of the chips as a decimal string, for the taskbar helper script.
+function chipsHandle() {
+  try {
+    if (!chips || chips.isDestroyed()) return null;
+    const buf = chips.getNativeWindowHandle();
+    return (buf.length >= 8 ? buf.readBigUInt64LE(0) : BigInt(buf.readUInt32LE(0))).toString();
+  } catch {
+    return null;
+  }
+}
+
+function setChipsFill(height) {
+  const next = Number.isFinite(height) && height > 0 ? Math.round(height) : 0;
+  // While docked in the taskbar the strip is owned by it, so it stays visible when Windows
+  // raises the taskbar above other windows (Start menu, Quick Settings). Floating or popped-out
+  // chips must not be owned, or they would cover the Start menu.
+  if (taskbarLayout.setChipsOwner) taskbarLayout.setChipsOwner(chipsHandle(), next > 0);
+  if (next === chipsFill) return;
+  chipsFill = next;
+  if (chips && !chips.isDestroyed()) chips.webContents.send("usage://chips-fill", chipsFill);
 }
 
 function setChipsPopped(popped) {
@@ -140,6 +187,7 @@ function popChipsAboveTaskbar(w, h, extras) {
   const along = cfg.chips_dock_x != null ? cfg.chips_dock_x : chips.getPosition()[0];
   const pos = taskbarLayout.anchorAboveTaskbar(w, h, extras, along);
   if (!pos || !pos.ok) return false;
+  setChipsFill(0);
   cfg.chips_dock_x = pos.x;
   cfg.chips_dock_y = pos.y;
   applyDockedPos(chips, pos);
@@ -163,6 +211,7 @@ function placeChipsDocked(opts = {}) {
     cfg.chips_dock_x = x;
     cfg.chips_dock_y = y;
     setChipsPopped(false);
+    setChipsFill(taskbarFillHeight());
     return;
   }
   let pos;
@@ -175,6 +224,7 @@ function placeChipsDocked(opts = {}) {
     cfg.chips_dock_y = pos.y;
     applyDockedPos(chips, pos);
     setChipsPopped(false);
+    setChipsFill(taskbarFillHeight());
     keepWidgetOnTop(chips, true);
     return;
   }
@@ -184,6 +234,7 @@ function placeChipsDocked(opts = {}) {
 function placeChipsFloating() {
   if (!chips) return;
   setChipsPopped(false);
+  setChipsFill(0);
   const [w, h] = chips.getSize();
   let x = cfg.chips_x;
   let y = cfg.chips_y;
@@ -277,6 +328,8 @@ function createTray() {
   let icon = nativeImage.createFromPath(ui("tray-32.png"));
   if (icon.isEmpty()) icon = nativeImage.createFromPath(ui("tray-16.png"));
   if (icon.isEmpty()) return;
+  // The macOS menu bar expects a 16pt icon; a 32px image would render twice as large.
+  if (process.platform === "darwin") icon = icon.resize({ width: 16, height: 16, quality: "best" });
   tray = new Tray(icon);
   tray.setToolTip("Usage Monitor — click to show chips");
   tray.on("click", () => restoreVisibility());
@@ -285,6 +338,19 @@ function createTray() {
     showFlyout();
   });
   tray.on("right-click", () => popupAppMenu());
+  refreshTrayMenu();
+}
+
+// Linux AppIndicator trays do not report clicks; they only show an attached menu.
+// It is replaced only when its labels change, because replacing it closes an open menu.
+let trayMenuKey = "";
+function refreshTrayMenu() {
+  if (process.platform !== "linux" || !tray || tray.isDestroyed() || !cfg) return;
+  const flyoutOpen = !!(flyout && !flyout.isDestroyed() && flyout.isVisible() && !flyout.isMinimized());
+  const key = [cfg.chips_hidden, cfg.chips_show_network, cfg.poll_interval_secs, cfg.autostart, cfg.check_updates_on_startup, flyoutOpen].join("|");
+  if (key === trayMenuKey) return;
+  trayMenuKey = key;
+  tray.setContextMenu(buildMenu());
 }
 
 function setChipsHidden(hidden) {
@@ -313,6 +379,7 @@ function setChipsDocked(docked, opts = {}) {
   if (cfg.chips_docked) placeChipsDocked();
   else if (!opts.keepPos) placeChipsFloating();
   else if (chips) {
+    setChipsFill(0);
     const [w, h] = chips.getSize();
     const p = clampToDisplay(cfg.chips_x, cfg.chips_y, w, h);
     placingChips = true;
@@ -405,6 +472,7 @@ function sendFlyoutState() {
   flyout.webContents.send("usage://flyout-state", {
     docked: !!cfg.flyout_docked,
     pinned: !!cfg.flyout_pinned,
+    canDock: IS_WINDOWS,
   });
 }
 
@@ -435,12 +503,13 @@ function placeFlyoutNearTray(bounds) {
     y = cfg.flyout_y;
   } else if (bounds && bounds.x != null) {
     x = Math.round(bounds.x + bounds.width / 2 - w / 2);
-    y = Math.round(bounds.y - h - 8);
+    y = Math.round(bounds.y - h);
   } else {
+    // Bottom edge flush with the top of the taskbar.
     x = wa.x + wa.width - w - 16;
-    y = wa.y + wa.height - h - 8;
+    y = wa.y + wa.height - h;
   }
-  const p = clampToDisplay(x, y, w, h);
+  const p = clampToWorkArea(x, y, w, h);
   placingFlyout = true;
   flyout.setPosition(p.x, p.y);
   placingFlyout = false;
@@ -472,7 +541,7 @@ function setFlyoutDocked(docked, opts = {}) {
     if (!flyout.isVisible()) flyout.showInactive();
   } else if (opts.keepPos && flyout) {
     const [w, h] = flyout.getSize();
-    const p = clampToDisplay(cfg.flyout_x, cfg.flyout_y, w, h);
+    const p = clampToWorkArea(cfg.flyout_x, cfg.flyout_y, w, h);
     placingFlyout = true;
     flyout.setPosition(p.x, p.y);
     placingFlyout = false;
@@ -494,6 +563,7 @@ function showFlyout(bounds) {
   else if (!flyout.isVisible()) placeFlyoutNearTray(bounds);
   flyout.show();
   flyout.focus();
+  broadcastNet();
   showClickAway();
   if (chips && !cfg.chips_hidden) keepWidgetOnTop(chips, cfg.chips_docked);
 }
@@ -528,12 +598,52 @@ function broadcastInterval() {
   }
 }
 
+// Live network speed for the chips (always) and the flyout (only while it is open).
+const TRAY_TIP = "Usage Monitor — click to show chips";
+let lastTrayTip = TRAY_TIP;
+function broadcastNet() {
+  if (!cfg) return;
+  const flyoutOpen = !!(flyout && !flyout.isDestroyed() && flyout.isVisible());
+  const chipsOn = !!(chips && !chips.isDestroyed() && !cfg.chips_hidden);
+  let summary = null;
+  try {
+    summary = netUsage.summary({ hour: flyoutOpen });
+  } catch (err) {
+    console.error("network summary failed", err.message);
+  }
+  if (chipsOn) chips.webContents.send("usage://net", cfg.chips_show_network !== false ? summary : null);
+  if (flyoutOpen) flyout.webContents.send("usage://net", summary);
+  if (tray && !tray.isDestroyed()) {
+    const tip =
+      summary && summary.state === "running"
+        ? `Usage Monitor — ↓ ${formatRateShort(summary.rx_rate)}  ↑ ${formatRateShort(summary.tx_rate)}`
+        : TRAY_TIP;
+    if (tip !== lastTrayTip) {
+      lastTrayTip = tip;
+      tray.setToolTip(tip);
+    }
+  }
+}
+
 function buildMenu() {
   return Menu.buildFromTemplate([
+    { label: "Network usage…", click: () => netUsage.openWindow() },
+    { type: "separator" },
     { label: "Show chips", click: () => restoreVisibility() },
     {
       label: cfg.chips_hidden ? "Show chips on taskbar" : "Hide chips",
       click: () => setChipsHidden(!cfg.chips_hidden),
+    },
+    {
+      label: "Show network speed on chips",
+      type: "checkbox",
+      checked: cfg.chips_show_network !== false,
+      click: (item) => {
+        cfg.chips_show_network = item.checked;
+        config.save(cfg);
+        broadcastNet();
+        refreshTrayMenu();
+      },
     },
     { label: "Refresh now", click: () => poll && poll.refresh() },
     {
@@ -554,12 +664,13 @@ function buildMenu() {
       },
     },
     {
-      label: "Start with Windows",
+      label: LOGIN_LABEL,
       type: "checkbox",
       checked: !!cfg.autostart,
       click: (item) => {
         cfg.autostart = autostart.apply(item.checked);
         config.save(cfg);
+        refreshTrayMenu();
       },
     },
     {
@@ -572,6 +683,15 @@ function buildMenu() {
       },
     },
     { label: "Check for updates now", click: () => runUpdateCheck(true) },
+    ...(IS_WINDOWS ? taskbarMenuItems() : []),
+    { type: "separator" },
+    { label: "Quit", click: () => app.quit() },
+  ]);
+}
+
+// Taskbar snapping is specific to the Windows taskbar.
+function taskbarMenuItems() {
+  return [
     {
       label: cfg.flyout_docked ? "Unsnap flyout from taskbar" : "Snap flyout to taskbar",
       click: () => {
@@ -588,9 +708,7 @@ function buildMenu() {
       label: cfg.chips_docked ? "Unsnap chips from taskbar" : "Snap chips to taskbar",
       click: () => setChipsDocked(!cfg.chips_docked),
     },
-    { type: "separator" },
-    { label: "Quit", click: () => app.quit() },
-  ]);
+  ];
 }
 
 function finishDrag() {
@@ -632,7 +750,7 @@ function finishDrag() {
         config.save(cfg);
       }
     } else {
-      const p = clampToDisplay(x, y, w, h);
+      const p = clampToWorkArea(x, y, w, h);
       placingFlyout = true;
       flyout.setPosition(p.x, p.y);
       placingFlyout = false;
@@ -712,25 +830,51 @@ function createWindows() {
     flyout = null;
   });
 
-  chips = createWindow({
+  createChips();
+}
+
+function createChips() {
+  const win = createWindow({
     width: 340,
     height: 28,
     focusable: false,
     hasShadow: false,
   });
-  chips.loadFile(ui("chips.html"));
-  chips.setAlwaysOnTop(true, cfg.chips_docked ? "screen-saver" : "pop-up-menu", 1);
-  chips.once("ready-to-show", () => {
-    if (cfg.chips_hidden) return;
+  chips = win;
+  win.loadFile(ui("chips.html"));
+  win.setAlwaysOnTop(true, cfg.chips_docked ? "screen-saver" : "pop-up-menu", 1);
+  win.once("ready-to-show", () => {
+    if (cfg.chips_hidden || chips !== win) return;
     placeChips();
-    keepWidgetOnTop(chips, cfg.chips_docked);
+    keepWidgetOnTop(win, cfg.chips_docked);
   });
-  chips.on("moved", () => {
+  win.on("moved", () => {
     if (placingChips || dragState) return;
     if (!cfg.chips_docked) persistChipsPosition();
   });
-  chips.on("closed", () => {
-    chips = null;
+  win.webContents.on("did-finish-load", () => {
+    win.webContents.send("usage://chips-docked", !!cfg.chips_docked);
+    win.webContents.send("usage://chips-popped", chipsPopped);
+    win.webContents.send("usage://chips-fill", chipsFill);
+    if (latest) win.webContents.send("usage://snapshot", latest);
+  });
+  win.webContents.on("render-process-gone", () => {
+    try {
+      sendChipsLoading();
+      win.webContents.reload();
+    } catch {
+      /* ignore */
+    }
+  });
+  win.on("closed", () => {
+    if (chips === win) chips = null;
+    // Windows destroys the strip together with the taskbar that owns it (for example when
+    // Explorer restarts), so bring it back unless the app is quitting.
+    if (!app.isQuitting) {
+      setTimeout(() => {
+        if (!chips && !app.isQuitting) createChips();
+      }, 1500);
+    }
   });
   if (process.platform === "win32") {
     const pin = () => {
@@ -740,8 +884,8 @@ function createWindows() {
       }, 30);
     };
     try {
-      chips.hookWindowMessage(0x0006, pin);
-      chips.hookWindowMessage(0x001c, pin);
+      win.hookWindowMessage(0x0006, pin);
+      win.hookWindowMessage(0x001c, pin);
     } catch {
       /* ignore */
     }
@@ -778,15 +922,30 @@ function wireIpc() {
   ipcMain.handle("usage://get-flyout-state", () => ({
     docked: !!(cfg && cfg.flyout_docked),
     pinned: !!(cfg && cfg.flyout_pinned),
+    canDock: IS_WINDOWS,
   }));
   ipcMain.on("usage://flyout-resize", (_e, h, w) => {
     if (!flyout || !Number.isFinite(h) || !Number.isFinite(w)) return;
     const width = Math.max(560, Math.min(860, Math.round(w || 580)));
     const height = Math.max(140, Math.min(860, Math.round(h)));
-    setSizeKeepPos(flyout, width, height);
-    if (cfg.flyout_docked && !dragState) placeFlyoutDocked();
+    if (cfg.flyout_docked || dragState) {
+      setSizeKeepPos(flyout, width, height);
+      if (cfg.flyout_docked && !dragState) placeFlyoutDocked();
+      return;
+    }
+    const [x, y] = flyout.getPosition();
+    const [cw, ch] = flyout.getSize();
+    if (cw === width && ch === height) return;
+    // A flyout resting on the taskbar grows upward; otherwise it grows down but stays in the work area.
+    const wa = screen.getDisplayMatching(flyout.getBounds()).workArea;
+    const onTaskbar = y + ch >= wa.y + wa.height - 2;
+    const p = clampToWorkArea(x, onTaskbar ? wa.y + wa.height - height : y, width, height);
+    placingFlyout = true;
+    flyout.setBounds({ x: p.x, y: p.y, width, height });
+    placingFlyout = false;
   });
   ipcMain.on("usage://tray-menu", () => popupAppMenu());
+  ipcMain.on("usage://open-network", () => netUsage.openWindow());
   ipcMain.on("usage://open-usage", (_e, id) => {
     if (Object.hasOwn(USAGE_URLS, id)) shell.openExternal(USAGE_URLS[id]).catch((err) => console.error("open usage failed", err.message));
   });
@@ -795,7 +954,7 @@ function wireIpc() {
   ipcMain.on("usage://chips-resize", (_e, w, h) => {
     if (!chips || chips.isDestroyed() || !Number.isFinite(w) || !Number.isFinite(h)) return;
     const width = Math.max(96, Math.min(720, Math.round(w)));
-    const height = Math.max(24, Math.min(48, Math.round(h)));
+    const height = Math.max(24, Math.min(120, Math.round(h)));
     const [cw, ch] = chips.getSize();
     if (Math.abs(cw - width) < 2 && Math.abs(ch - height) < 2) return;
     const [cx, cy] = chips.getPosition();
@@ -834,12 +993,34 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => showFlyout());
+  // `--network` (e.g. from a shortcut) opens the Network usage window instead of the flyout.
+  app.on("second-instance", (_event, argv) => {
+    if (argv.includes("--network")) netUsage.openWindow();
+    else showFlyout();
+  });
   app.whenReady().then(() => {
-    Menu.setApplicationMenu(null);
+    // macOS needs an Edit menu for copy/paste shortcuts; elsewhere the widgets have no menu bar.
+    Menu.setApplicationMenu(
+      process.platform === "darwin" ? Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }]) : null
+    );
+    if (process.platform === "darwin" && app.dock) app.dock.hide();
     cfg = config.ensure();
     cfg.autostart = autostart.apply(cfg.autostart !== false);
     config.save(cfg);
+    try {
+      netUsage.init({
+        cfg,
+        save: () => saveSoon(),
+        setAutostart: (enabled) => {
+          cfg.autostart = autostart.apply(enabled);
+          config.save(cfg);
+          refreshTrayMenu();
+        },
+      });
+      if (process.argv.includes("--network")) netUsage.openWindow();
+    } catch (err) {
+      console.error("network monitor unavailable", err.message);
+    }
 
     createWindows();
     createTray();
@@ -851,11 +1032,6 @@ if (!gotLock) {
       sendFlyoutState();
       if (latest) flyout.webContents.send("usage://snapshot", latest);
       if (flyoutStaysOpen()) showFlyout();
-    });
-    chips.webContents.on("did-finish-load", () => {
-      chips.webContents.send("usage://chips-docked", !!cfg.chips_docked);
-      chips.webContents.send("usage://chips-popped", chipsPopped);
-      if (latest) chips.webContents.send("usage://snapshot", latest);
     });
     const revive = (win) => {
       if (!win || win.isDestroyed()) return;
@@ -869,7 +1045,6 @@ if (!gotLock) {
       });
     };
     revive(flyout);
-    revive(chips);
 
     let metricsTimer = null;
     screen.on("display-metrics-changed", () => {
@@ -905,6 +1080,8 @@ if (!gotLock) {
       if (dragState) return;
       recoverChipsIfNeeded();
     }, 800);
+    if (process.platform === "linux") setInterval(refreshTrayMenu, 3000);
+    setInterval(broadcastNet, 1000);
     setInterval(() => {
       if (dragState) return;
       if (chips && !cfg.chips_hidden && !chips.isDestroyed() && cfg.chips_docked) {
@@ -925,5 +1102,6 @@ app.on("before-quit", () => {
     try { config.save(cfg); } catch (err) { console.error("config write failed", err.message); }
   }
   if (poll) poll.stop();
+  netUsage.shutdown();
   if (tray && !tray.isDestroyed()) tray.destroy();
 });

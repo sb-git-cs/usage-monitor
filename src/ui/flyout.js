@@ -5,6 +5,10 @@ document.getElementById("refresh").addEventListener("click", (e) => {
   e.stopPropagation();
   window.usage.refresh();
 });
+document.getElementById("network").addEventListener("click", (e) => {
+  e.stopPropagation();
+  window.usage.openNetwork();
+});
 dockBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   window.usage.toggleFlyoutDock();
@@ -13,6 +17,8 @@ bindIntervalSelect(document.getElementById("interval"));
 
 function applyFlyoutState(state) {
   if (!state) return;
+  // Taskbar snapping only exists on Windows.
+  dockBtn.hidden = state.canDock === false;
   dockBtn.classList.toggle("active", !!state.docked);
   root.classList.toggle("docked", !!state.docked);
 }
@@ -23,9 +29,10 @@ window.usage.getFlyoutState().then(applyFlyoutState);
 
 function fitFlyout() {
   root.style.width = "max-content";
-  const w = Math.ceil(Math.max(root.scrollWidth, root.offsetWidth, 580));
-  const h = Math.ceil(Math.max(root.scrollHeight, root.offsetHeight));
-  window.usage.resizeFlyout(h + 4, w + 4);
+  const w = Math.ceil(Math.max(root.scrollWidth, root.offsetWidth, root.getBoundingClientRect().width, 580));
+  const h = Math.ceil(Math.max(root.scrollHeight, root.offsetHeight, root.getBoundingClientRect().height));
+  // Exact height: no transparent strip under the panel, so it can sit flush on the taskbar.
+  window.usage.resizeFlyout(h, w);
 }
 
 function render(snapshot) {
@@ -69,6 +76,51 @@ function render(snapshot) {
   });
   requestAnimationFrame(fitFlyout);
 }
+
+// ---- network card ---------------------------------------------------------------
+
+const netCard = document.getElementById("net");
+const NET_IDLE = {
+  setup_required: "Setup needed",
+  disabled: "Recording off",
+  not_running: "Helper not running",
+  error: "Not recording",
+  starting: "Starting…",
+};
+
+function setNetText(id, text) {
+  const node = document.getElementById(id);
+  if (node.textContent !== text) node.textContent = text;
+}
+
+function renderNet(summary) {
+  const wasHidden = netCard.hidden;
+  if (!summary) {
+    if (!wasHidden) {
+      netCard.hidden = true;
+      requestAnimationFrame(fitFlyout);
+    }
+    return;
+  }
+  netCard.hidden = false;
+  const running = summary.state === "running";
+  setNetText("netRx", running ? NetFormat.formatRate(summary.rx_rate) : "—");
+  setNetText("netTx", running ? NetFormat.formatRate(summary.tx_rate) : "—");
+  setNetText("netHour", summary.hour ? `↓ ${NetFormat.formatBytes(summary.hour.rx)}\u2003↑ ${NetFormat.formatBytes(summary.hour.tx)}` : "—");
+  setNetText("netState", running ? "Open monitor ›" : `${NET_IDLE[summary.state] || "Not recording"} · Open ›`);
+  let top;
+  if (!running) top = summary.message || "Open the monitor to start recording network usage.";
+  else if (!summary.top.length) top = "No app is using the network right now.";
+  else top = `Now: ${summary.top.map((a) => `${a.name} ${NetFormat.formatRateShort(a.rx_rate + a.tx_rate)}`).join(" · ")}`;
+  setNetText("netTop", top);
+  if (wasHidden) requestAnimationFrame(fitFlyout);
+}
+
+netCard.addEventListener("click", (e) => {
+  e.stopPropagation();
+  window.usage.openNetwork();
+});
+window.usage.onNet(renderNet);
 
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();

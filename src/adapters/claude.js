@@ -1,4 +1,5 @@
 const fs = require("fs");
+const { execFile } = require("child_process");
 const { claudeCredentials, cliOnPath, fileExists } = require("../paths");
 const { windowOf, emptyProvider } = require("../models");
 const { getJson, postJson } = require("../http");
@@ -7,6 +8,8 @@ const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const TOKEN_URL_LEGACY = "https://console.anthropic.com/v1/oauth/token";
+// On macOS, Claude Code keeps its login in the Keychain instead of .credentials.json.
+const KEYCHAIN_SERVICE = "Claude Code-credentials";
 
 function probe() {
   return {
@@ -21,6 +24,46 @@ function readCreds() {
   const raw = fs.readFileSync(p, "utf8");
   const json = JSON.parse(raw);
   return { path: p, mtimeMs: stat.mtimeMs, json, oauth: json.claudeAiOauth || null };
+}
+
+// Read-only: refreshing would rotate the token Claude Code relies on, so a Keychain login is never rewritten.
+// macOS may ask the user to allow access, so a read is cached and a refusal is not retried every poll.
+const KEYCHAIN_CACHE_MS = 5 * 60_000;
+const KEYCHAIN_RETRY_MS = 10 * 60_000;
+const keychain = { value: null, at: 0, failedAt: 0 };
+
+function readKeychain() {
+  if (process.platform !== "darwin") return Promise.resolve(null);
+  const now = Date.now();
+  if (keychain.value && now - keychain.at < KEYCHAIN_CACHE_MS) return Promise.resolve(keychain.value);
+  if (keychain.failedAt && now - keychain.failedAt < KEYCHAIN_RETRY_MS) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile("/usr/bin/security", ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"], { timeout: 60000, encoding: "utf8" }, (err, stdout) => {
+      let creds = null;
+      try {
+        if (!err) {
+          const json = JSON.parse(String(stdout).trim());
+          creds = { path: null, keychain: true, json, oauth: json.claudeAiOauth || null };
+        }
+      } catch {
+        creds = null;
+      }
+      keychain.value = creds;
+      keychain.at = creds ? Date.now() : 0;
+      keychain.failedAt = creds ? 0 : Date.now();
+      resolve(creds);
+    });
+  });
+}
+
+function forgetKeychain() {
+  keychain.value = null;
+  keychain.at = 0;
+}
+
+async function loadCreds(filePresent) {
+  if (filePresent) return readCreds();
+  return readKeychain();
 }
 
 function planLabel(oauth) {
@@ -136,23 +179,19 @@ function mapUsage(body, oauth) {
 
 async function fetchUsage(cfg) {
   const p = probe();
-  if (!p.creds_present && !p.cli_on_path) {
+  let creds;
+  try {
+    creds = await loadCreds(p.creds_present);
+  } catch {
+    creds = null;
+  }
+  if (!creds && !p.creds_present && !p.cli_on_path) {
     return emptyProvider("claude", "Claude Code", {
       state: "not_installed",
       hint: "Install Claude Code, then run: claude auth login",
     });
   }
-  if (!p.creds_present) {
-    return emptyProvider("claude", "Claude Code", {
-      state: "logged_out",
-      hint: "Run: claude auth login",
-    });
-  }
-
-  let creds;
-  try {
-    creds = readCreds();
-  } catch {
+  if (!creds) {
     return emptyProvider("claude", "Claude Code", {
       state: "logged_out",
       hint: "Run: claude auth login",
@@ -165,7 +204,7 @@ async function fetchUsage(cfg) {
     });
   }
 
-  const refreshEnabled = cfg?.adapters?.claude?.refresh_tokens !== false;
+  const refreshEnabled = cfg?.adapters?.claude?.refresh_tokens !== false && !creds.keychain;
   let refreshed = false;
   const exp = Number(creds.oauth.expiresAt || 0);
   if (refreshEnabled && exp && exp - Date.now() < 60_000 && creds.oauth.refreshToken) {
@@ -200,9 +239,11 @@ async function fetchUsage(cfg) {
     }
   }
   if (res.status === 401 || res.status === 403) {
+    // Claude Code may have rotated its token; read the Keychain again on the next poll.
+    if (creds.keychain) forgetKeychain();
     return emptyProvider("claude", "Claude Code", {
       state: "logged_out",
-      hint: "Run: claude auth login",
+      hint: creds.keychain ? "Open Claude Code once to refresh its sign-in" : "Run: claude auth login",
     });
   }
   if (res.status === 429) {

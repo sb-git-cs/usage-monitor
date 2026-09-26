@@ -50,12 +50,21 @@ function agyBinaryCandidates() {
   ];
 }
 
+// Windows keeps its original folders; macOS and Linux use their platform conventions.
 function appData() {
-  return process.env.APPDATA || path.join(home(), "AppData", "Roaming");
+  if (process.platform === "win32") return process.env.APPDATA || path.join(home(), "AppData", "Roaming");
+  if (process.platform === "darwin") return path.join(home(), "Library", "Application Support");
+  return process.env.XDG_CONFIG_HOME || path.join(home(), ".config");
 }
 
 function localAppData() {
-  return process.env.LOCALAPPDATA || path.join(home(), "AppData", "Local");
+  if (process.platform === "win32") return process.env.LOCALAPPDATA || path.join(home(), "AppData", "Local");
+  if (process.platform === "darwin") return path.join(home(), "Library", "Application Support");
+  return process.env.XDG_DATA_HOME || path.join(home(), ".local", "share");
+}
+
+function netDataDir() {
+  return path.join(localAppData(), "UsageMonitor");
 }
 
 function configDir() {
@@ -119,6 +128,7 @@ module.exports = {
   antigravityToken,
   agyBinaryCandidates,
   localAppData,
+  netDataDir,
   configDir,
   cacheDir,
   configPath,

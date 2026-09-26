@@ -11,6 +11,8 @@
   --codex: #60a5fa;
   --gemini: #7c9cff;
   --grok: #d6d3d1;
+  --net-rx: #3987e5;
+  --net-tx: #d95926;
   --bar-track: #1f2937;
   font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
 }
@@ -86,6 +88,7 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
   color: #9ca3af; font-size: 13px; cursor: pointer; border: 0; background: transparent;
 }
 .icon-btn:hover { background: rgba(255,255,255,0.06); color: #f9fafb; }
+.icon-btn[hidden] { display: none; }
 .icon-btn.active { color: #fbbf24; }
 .interval {
 
@@ -251,3 +254,58 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 @keyframes loading-pulse {
   50% { opacity: 0.4; }
 }
+
+/* network speed: chip on the strip, card in the flyout */
+.net-chip {
+  height: 22px; padding: 0 7px; border-radius: 6px;
+  background: rgba(17, 24, 39, 0.7); border: 1px solid rgba(75, 85, 99, 0.85); color: #e5e7eb;
+  display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto;
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer;
+}
+.net-chip[hidden] { display: none; }
+.net-chip.idle { color: #9ca3af; border-color: #6b7280; font-weight: 600; }
+.chips.docked .net-chip { padding: 0 5px; border-radius: 5px; }
+.net-arrow { font-weight: 800; }
+.net-arrow.rx { color: var(--net-rx); }
+.net-arrow.tx { color: var(--net-tx); margin-left: 3px; }
+.net-val { display: inline-block; min-width: 7.6ch; }
+.net-card {
+  margin-top: 8px; padding: 8px 10px 9px 12px; cursor: pointer;
+  background: rgba(31, 41, 55, 0.42); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px;
+  box-shadow: inset 2px 0 0 var(--net-rx);
+}
+.net-card:hover { background: rgba(31, 41, 55, 0.66); }
+.net-card[hidden] { display: none; }
+.net-glyph { color: var(--net-rx); font-weight: 800; width: 13px; text-align: center; }
+.net-row { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 8px; }
+.net-stat { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.net-label { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.net-swatch { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 8px; }
+.net-swatch.rx { background: var(--net-rx); }
+.net-swatch.tx { background: var(--net-tx); }
+.net-value { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; white-space: nowrap; }
+.net-value.small { font-size: 12.5px; padding-top: 3px; }
+/* width 0 + min-width 100%: long app names never widen the flyout */
+.net-top { margin-top: 6px; font-size: 11px; color: #d1d5db; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 0; min-width: 100%; }
+/* Docked on a horizontal taskbar: the strip is exactly as tall as the taskbar. */
+.chips.docked.fill {
+  height: var(--fill-h);
+  padding: 4px 6px 4px 3px;
+  gap: 4px;
+  border-radius: 0;
+  border-width: 0 1px;
+}
+.chips.docked.fill #root { height: 100%; gap: 4px; }
+.chips.docked.fill .pct-icon,
+.chips.docked.fill .net-chip { height: 100%; padding: 0 7px; border-radius: 6px; font-size: 11.5px; gap: 4px; }
+.chips.docked.fill .pct-icon .who,
+.chips.docked.fill .pct-icon .who .brand-mark { width: 12px; height: 12px; flex-basis: 12px; }
+.chips.docked.fill .chip-grip { height: 45%; }
+/* Tall taskbars: the network chip stacks download over upload. */
+.chips.docked.fill.tall .net-chip:not(.idle) {
+  display: inline-grid; grid-template-columns: auto auto; align-content: center;
+  column-gap: 3px; row-gap: 0; font-size: 11.5px; line-height: 1.15;
+}
+.chips.docked.fill.tall .net-chip:not(.idle) .net-arrow.tx { margin-left: 0; }
+.chips.docked.fill.tall .net-chip .net-val { min-width: 7ch; }
+.chips.docked.fill .net-chip[hidden] { display: none; }
