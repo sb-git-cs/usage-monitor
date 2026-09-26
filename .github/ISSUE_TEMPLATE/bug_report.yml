@@ -1,0 +1,45 @@
+name: Bug report
+description: Something shows the wrong value, looks broken, or crashes
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never paste tokens or the contents of your CLI login folders.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Claude Code meter
+        - Codex meter
+        - Gemini meter
+        - Grok meter
+        - Chips / flyout / tray
+        - Network usage
+        - Install / startup / updates
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows 11, Windows 10, macOS, Linux]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Release version, or `git rev-parse --short HEAD` for a source install
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: A screenshot of the chip or window helps a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce

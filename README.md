@@ -218,7 +218,7 @@ npm audit --audit-level=high
 npm run dist
 ```
 
-The screenshots in `docs/screenshots` are produced by `npm run screenshots`, which renders the real flyout, chips and network window offscreen with demo data (no real logins, usage or paths). The tests use synthetic credentials, responses and network samples. The UI smoke test uses hidden offscreen Electron windows and saves images under `.qa/`; it does not enable autostart or read your CLI logins. CI runs on Windows, macOS and Linux: unit and UI tests everywhere, the live capture probe on macOS and Linux, a compile and self-test of the Windows helper with Windows PowerShell 5.1, and an unpacked build per platform. See `review.md` for the defect list and `handoff.md` for release verification and remaining acceptance checks.
+The screenshots in `docs/screenshots` are produced by `npm run screenshots`, which renders the real flyout, chips and network window offscreen with demo data (no real logins, usage or paths). The tests use synthetic credentials, responses and network samples. The UI smoke test uses hidden offscreen Electron windows and saves images under `.qa/`; it does not enable autostart or read your CLI logins. CI runs on Windows, macOS and Linux: unit and UI tests everywhere, the live capture probe on macOS and Linux, a compile and self-test of the Windows helper with Windows PowerShell 5.1, and an unpacked build per platform. See [`docs/review.md`](docs/review.md) for the defect list and [`docs/handoff.md`](docs/handoff.md) for release verification and remaining acceptance checks.
 
 ## Privacy
 
@@ -251,7 +251,7 @@ The screenshots in `docs/screenshots` are produced by `npm run screenshots`, whi
 
 ## Contributing
 
-Bug reports, feature ideas and pull requests are welcome. Open an [issue](https://github.com/sb-git-cs/usage-monitor/issues) describing what you saw (OS, which CLI, and what the chip showed), or send a PR. Run `npm test` and `npm run test:ui` before submitting; CI checks Windows, macOS and Linux.
+Bug reports, feature ideas and pull requests are welcome. Open an [issue](https://github.com/sb-git-cs/usage-monitor/issues) describing what you saw (OS, which CLI, and what the chip showed), or send a PR. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and the project layout. Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

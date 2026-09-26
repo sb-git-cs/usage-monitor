@@ -8,7 +8,7 @@ Audit and fix defects, bugs and usage miscalculations; harden the Windows app an
 
 | Engineer | Assignment | Status | Evidence |
 | --- | --- | --- | --- |
-| Codex | Code audit, surgical fixes, regression tests and build verification; correct chip window selection | Implementation complete; release acceptance pending | `review.md`, `test/`, `scripts/ui-smoke.js`; verification below |
+| Codex | Code audit, surgical fixes, regression tests and build verification; correct chip window selection | Implementation complete; release acceptance pending | `docs/review.md`, `test/`, `scripts/ui-smoke.js`; verification below |
 | Owner / Fable | Live-account and interactive desktop acceptance; signed distribution | Pending | Checklist below |
 
 ## Verification
