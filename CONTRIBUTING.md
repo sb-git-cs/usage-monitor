@@ -50,4 +50,4 @@ npm run test:ui   # real Electron windows, offscreen
 
 ## Releasing
 
-Bump `version` in `package.json`, commit, then push a matching tag (`git tag v1.0.1 && git push origin v1.0.1`). The Release workflow builds every platform and publishes the installers.
+Bump `version` in `package.json` and commit, then push a matching tag (`git tag v1.0.1 && git push origin v1.0.1`) or run **Actions → Release → Run workflow** with **publish** ticked. The Release workflow builds every platform, creates the tag if needed and publishes the installers.
