@@ -8,7 +8,7 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const httpsAgent = new https.Agent({ keepAlive: false, maxSockets: 6 });
 const httpAgent = new http.Agent({ keepAlive: false, maxSockets: 6 });
 
-function request(method, url, { headers = {}, body = null } = {}) {
+function request(method, url, { headers = {}, body = null, timeout = TIMEOUT_MS, raw = false } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     if (u.protocol !== "https:" && u.protocol !== "http:") {
@@ -18,6 +18,7 @@ function request(method, url, { headers = {}, body = null } = {}) {
     const lib = u.protocol === "http:" ? http : https;
     const agent = u.protocol === "http:" ? httpAgent : httpsAgent;
     const payload = body == null ? null : Buffer.from(body);
+    const deadline = Number.isFinite(timeout) && timeout > 0 ? timeout : TIMEOUT_MS;
     let settled = false;
     let req;
 
@@ -36,7 +37,7 @@ function request(method, url, { headers = {}, body = null } = {}) {
         /* ignore */
       }
       finish(new Error("timeout"));
-    }, TIMEOUT_MS);
+    }, deadline);
 
     try {
       req = lib.request(
@@ -65,9 +66,11 @@ function request(method, url, { headers = {}, body = null } = {}) {
           });
           res.on("aborted", () => finish(new Error("Response aborted")));
           res.on("end", () => {
+            const buf = Buffer.concat(chunks);
             finish(null, {
               status: res.statusCode,
-              text: Buffer.concat(chunks).toString("utf8"),
+              text: raw ? "" : buf.toString("utf8"),
+              buffer: raw ? buf : undefined,
               headers: res.headers,
             });
           });
