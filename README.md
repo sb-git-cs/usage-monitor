@@ -32,7 +32,7 @@ npm install
 npm run setup   # installs any missing CLIs (Windows), then starts the app
 ```
 
-Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `grok`) and the chips fill in within seconds. Needs [Node.js](https://nodejs.org/) 22.13+. Prefer an installer? See [Packaged app](#packaged-app).
+Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `grok`) and the chips fill in within seconds. Needs [Node.js](https://nodejs.org/) 22.13+. Prefer an installer? Download one from [**Releases**](https://github.com/sb-git-cs/usage-monitor/releases/latest) (Windows `.exe`, macOS `.dmg`, Linux `.AppImage`).
 
 > If Usage Monitor saves you from a surprise rate limit, please ⭐ **star the repo** — it helps other developers find it.
 
@@ -112,7 +112,7 @@ You do not need all four. A missing login shows as gray with a sign-in hint. On 
 
 ### Packaged app
 
-Build outputs land in `dist/`:
+Download the installer for your platform from [**Releases**](https://github.com/sb-git-cs/usage-monitor/releases/latest), or build it yourself. Build outputs land in `dist/`:
 
 | Platform | Command | Files |
 | --- | --- | --- |
@@ -126,6 +126,8 @@ npm run dist        # or dist:mac / dist:linux
 ```
 
 Builds are unsigned. On macOS, open the app with right-click → **Open** the first time.
+
+To publish a release, bump `version` in `package.json`, then push a matching tag (`git tag v1.0.1 && git push origin v1.0.1`). The **Release** workflow tests, builds all three platforms and attaches the installers to a GitHub release.
 
 Sign in to the CLIs once (`claude`, `codex login`, `agy`, `grok`) so the meters can read usage. A packaged copy still uses those same local logins; it does not replace the CLIs.
 
