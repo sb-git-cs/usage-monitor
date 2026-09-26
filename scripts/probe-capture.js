@@ -1,6 +1,6 @@
 // Live check for macOS and Linux: runs this OS's real capture provider while curl downloads
 // a file slowly, then verifies the bytes were attributed to curl. Used by CI.
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 
 function createProvider() {
   if (process.platform === "darwin") return new (require("../src/net/providers/macos").MacProvider)();
@@ -41,8 +41,16 @@ setTimeout(() => {
         console.error(`FAIL: expected at least ${EXPECTED} bytes attributed to curl`);
         process.exit(1);
       }
-      console.log("PASS");
-      process.exit(0);
+      // The provider must not leave nettop running after stop().
+      setTimeout(() => {
+        const left = process.platform === "darwin" && spawnSync("/usr/bin/pgrep", ["-x", "nettop"]).status === 0;
+        if (left) {
+          console.error("FAIL: nettop still running after stop()");
+          process.exit(1);
+        }
+        console.log("PASS");
+        process.exit(0);
+      }, 1000);
     }, 3000);
   });
 }, 3000);

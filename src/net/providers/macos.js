@@ -5,9 +5,22 @@ const { spawn, execFile } = require("child_process");
 const { createNettopParser, parsePs, macIdentity } = require("../parsers");
 
 const NETTOP = "/usr/bin/nettop";
+const EXPECT = "/usr/bin/expect";
 const PS = "/bin/ps";
 // -d: deltas, -n: no reverse DNS (lookups would leave the Mac), -t external: skip loopback.
 const ARGS = ["-L", "0", "-d", "-n", "-s", "1", "-t", "external", "-J", "bytes_in,bytes_out"];
+// nettop block-buffers a piped stdout, so samples arrived a minute late or not at all.
+// expect (built into macOS) runs it on a pseudo-terminal, where it flushes every line,
+// the same way expect's unbuffer script does. -opost keeps plain \n line endings, and
+// the trap stops nettop along with expect.
+const UNBUFFER = [
+  "set stty_init -opost",
+  "set timeout -1",
+  `spawn -noecho ${NETTOP} ${ARGS.join(" ")}`,
+  "trap {catch {exec kill [exp_pid]}; exit} {SIGTERM SIGINT SIGHUP}",
+  "expect eof",
+  "exit [lindex [wait] 3]",
+].join("; ");
 const PID_TTL_MS = 10 * 60_000;
 
 class MacProvider extends EventEmitter {
@@ -38,8 +51,8 @@ class MacProvider extends EventEmitter {
     });
     let child;
     try {
-      // stdin stays an open pipe: nettop spins a CPU core when stdin reaches EOF.
-      child = spawn(NETTOP, ARGS, { stdio: ["pipe", "pipe", "pipe"] });
+      // nettop spins a CPU core when its stdin reaches EOF; under expect it reads the pty.
+      child = spawn(EXPECT, ["-c", UNBUFFER], { stdio: ["pipe", "pipe", "pipe"] });
     } catch (err) {
       this.retry(`Could not start nettop: ${err.message}`);
       return;
