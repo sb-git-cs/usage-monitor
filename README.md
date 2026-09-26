@@ -1,13 +1,40 @@
+<div align="center">
+
 # Usage Monitor
 
-A desktop app for **Windows, macOS and Linux** that shows two kinds of usage at a glance:
+**See how much of your Claude Code, Codex, Gemini and Grok plan you've used — and which apps are eating your bandwidth — without leaving your taskbar.**
 
-- **Plan meters:** how much of your **Claude Code**, **Codex**, **Gemini**, and **Grok Build** allowance you have used.
-- **Network usage:** which apps are using your internet right now, and how much each used over time.
+[![Checks](https://github.com/sb-git-cs/usage-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/sb-git-cs/usage-monitor/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+[![GitHub stars](https://img.shields.io/github/stars/sb-git-cs/usage-monitor?style=social)](https://github.com/sb-git-cs/usage-monitor/stargazers)
 
-The meters reuse the logins those CLIs already stored on disk. No API keys. Nothing is sent except the same usage requests the official apps make. The network monitor records byte counts only, never the contents of your traffic.
+![Usage Monitor flyout](docs/screenshots/tray-flyout.png)
 
-![Flyout](docs/screenshots/tray-flyout.png)
+[Quick start](#quick-start) · [Features](#what-you-see) · [Network usage](#network-usage) · [Install](#install) · [Privacy](#privacy) · [Troubleshooting](#troubleshooting)
+
+</div>
+
+## Why Usage Monitor?
+
+- **Never hit a limit by surprise.** 5-hour and weekly plan meters for **Claude Code**, **Codex**, **Gemini** and **Grok Build**, always visible as small chips on your taskbar.
+- **Zero setup for the meters.** Reuses the logins your CLIs already stored. No API keys, no accounts, no extra cost.
+- **Find the bandwidth hog.** Live per-app download/upload speed, per-minute history, data caps and one-click blocking (Windows).
+- **Private by design.** Runs entirely on your machine. Stores byte counts only, never traffic contents.
+- **Cross-platform.** Windows 10/11, macOS 12+, and 64-bit Linux.
+
+## Quick start
+
+```sh
+git clone https://github.com/sb-git-cs/usage-monitor.git
+cd usage-monitor
+npm install
+npm run setup   # installs any missing CLIs (Windows), then starts the app
+```
+
+Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `grok`) and the chips fill in within seconds. Needs [Node.js](https://nodejs.org/) 22.13+. Prefer an installer? See [Packaged app](#packaged-app).
+
+> If Usage Monitor saves you from a surprise rate limit, please ⭐ **star the repo** — it helps other developers find it.
 
 ## What you see
 
@@ -19,7 +46,7 @@ The meters reuse the logins those CLIs already stored on disk. No API keys. Noth
 | **Tray icon** | A Usage Monitor icon in the notification area / menu bar; its tooltip shows the live network speed. **Click** it to show the chips again. **Right-click** for the menu (on Linux the menu opens on click). **Double-click** opens the flyout. |
 | **Notifications** | A silent notification the first time a plan bar crosses 80% used, and when an app reaches its network data cap. |
 
-![UI overview](docs/screenshots/overview.png)
+![Chips, flyout and network window](docs/screenshots/overview.png)
 
 | Mark | Provider | Windows shown |
 | --- | --- | --- |
@@ -220,6 +247,10 @@ The screenshots in `docs/screenshots` are produced by `npm run screenshots`, whi
 | Extra Electron window / dies with the terminal | Use a packaged build or `npm start` (detached). Quit only from the right-click **Quit** menu. |
 | Quit | Right-click chips or flyout → **Quit**. Hiding the flyout or closing the network window only hides them. |
 
+## Contributing
+
+Bug reports, feature ideas and pull requests are welcome. Open an [issue](https://github.com/sb-git-cs/usage-monitor/issues) describing what you saw (OS, which CLI, and what the chip showed), or send a PR. Run `npm test` and `npm run test:ui` before submitting; CI checks Windows, macOS and Linux.
+
 ## License
 
-MIT
+[MIT](LICENSE)
