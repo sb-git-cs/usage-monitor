@@ -1,5 +1,6 @@
 const fs = require("fs");
 const { configDir, configPath } = require("./paths");
+const { normalizeNet } = require("./net/settings");
 
 const ALLOWED_INTERVALS = [5, 15, 30, 60];
 
@@ -8,6 +9,7 @@ const DEFAULTS = {
   config_version: 5,
   chips_docked: true,
   chips_hidden: false,
+  chips_show_network: true,
   chips_x: null,
   chips_y: null,
   chips_dock_x: null,
@@ -50,6 +52,12 @@ function normalize(parsed) {
   for (const id of Object.keys(DEFAULTS.adapters)) {
     cfg.adapters[id] = { refresh_tokens: raw.adapters?.[id]?.refresh_tokens !== false };
   }
+  cfg.net = normalizeNet(raw.net);
+  // Taskbar docking relies on the Windows taskbar; elsewhere the widgets float.
+  if (process.platform !== "win32") {
+    cfg.chips_docked = false;
+    cfg.flyout_docked = false;
+  }
   cfg.poll_interval_secs = ALLOWED_INTERVALS.includes(Number(cfg.poll_interval_secs)) ? Number(cfg.poll_interval_secs) : 5;
   return cfg;
 }
@@ -78,7 +86,7 @@ function ensure() {
     dirty = true;
   }
   if (fileVersion < 4) {
-    cfg.chips_docked = true;
+    cfg.chips_docked = process.platform === "win32";
     cfg.chips_hidden = false;
     cfg.config_version = 4;
     dirty = true;

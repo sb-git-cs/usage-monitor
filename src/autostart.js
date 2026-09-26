@@ -74,29 +74,60 @@ function removeShortcut() {
   }
 }
 
+function linuxEntryPath() {
+  const base = process.env.XDG_CONFIG_HOME || path.join(require("os").homedir(), ".config");
+  return path.join(base, "autostart", "usage-monitor.desktop");
+}
+
+// Desktop Entry Exec quoting: wrap in double quotes and escape ", `, $ and \.
+function desktopArg(value) {
+  return `"${String(value).replace(/(["`$\\])/g, "\\$1")}"`;
+}
+
+function writeLinuxEntry() {
+  const { app } = require("electron");
+  const exec = app.isPackaged
+    ? desktopArg(process.env.APPIMAGE || process.execPath)
+    : `${desktopArg(process.execPath)} ${desktopArg(appRoot())}`;
+  const file = linuxEntryPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(
+    file,
+    ["[Desktop Entry]", "Type=Application", "Name=Usage Monitor", "Comment=Plan and network usage monitor", `Exec=${exec}`, "Terminal=false", "X-GNOME-Autostart-enabled=true", ""].join("\n"),
+    "utf8"
+  );
+}
+
 function apply(enabled) {
   try {
-    const { app } = require("electron");
-    app.setLoginItemSettings({ openAtLogin: false });
-  } catch {
-    /* ignore */
-  }
-  if (process.platform !== "win32") return enabled;
-  try {
-    if (enabled) writeShortcut();
-    else removeShortcut();
+    if (process.platform === "win32") {
+      const { app } = require("electron");
+      app.setLoginItemSettings({ openAtLogin: false });
+      if (enabled) writeShortcut();
+      else removeShortcut();
+    } else if (process.platform === "darwin") {
+      const { app } = require("electron");
+      // An unpackaged checkout would register the bare Electron app, so only packaged builds opt in.
+      app.setLoginItemSettings({ openAtLogin: !!enabled && app.isPackaged, openAsHidden: true });
+    } else if (process.platform === "linux") {
+      if (enabled) writeLinuxEntry();
+      else fs.rmSync(linuxEntryPath(), { force: true });
+    }
   } catch (err) {
-    console.error("startup shortcut failed", err.message);
+    console.error("login item update failed", err.message);
   }
   return isEnabled();
 }
 
 function isEnabled() {
   try {
-    return fs.existsSync(shortcutPath());
+    if (process.platform === "win32") return fs.existsSync(shortcutPath());
+    if (process.platform === "darwin") return require("electron").app.getLoginItemSettings().openAtLogin;
+    if (process.platform === "linux") return fs.existsSync(linuxEntryPath());
   } catch {
-    return false;
+    /* fall through */
   }
+  return false;
 }
 
-module.exports = { apply, isEnabled, shortcutPath, appRoot };
+module.exports = { apply, isEnabled, shortcutPath, appRoot, desktopArg };

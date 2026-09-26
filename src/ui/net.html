@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
+  <title>Network usage</title>
+  <link rel="stylesheet" href="net.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="toolbar">
+      <div class="title">
+        <h1>Network usage</h1>
+        <span class="state" id="stateChip"><span class="dot"></span><span id="stateText">Starting…</span></span>
+      </div>
+      <div class="tools">
+        <label class="search">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 1a5.5 5.5 0 0 1 4.38 8.83l3.65 3.64-1.06 1.06-3.64-3.65A5.5 5.5 0 1 1 6.5 1Zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></svg>
+          <input id="search" type="search" placeholder="Search apps or paths" autocomplete="off" spellcheck="false" aria-label="Search apps or paths" />
+        </label>
+        <select id="range" aria-label="Time range"></select>
+        <button id="pause" class="btn toggle" type="button" aria-pressed="false" title="Freeze the list; recording continues">Pause view</button>
+        <button id="autosort" class="btn toggle" type="button" aria-pressed="true" title="Re-sort the list as numbers change">Auto-sort</button>
+        <button id="export" class="btn" type="button" title="Export the current view to CSV">Export CSV</button>
+        <button id="openSettings" class="btn" type="button">Settings</button>
+      </div>
+    </header>
+
+    <div id="banner" class="banner" hidden>
+      <span id="bannerText"></span>
+      <span class="banner-actions" id="bannerActions"></span>
+    </div>
+    <div id="pausedBar" class="notice" hidden>View paused — recording continues in the background. <button class="link" id="resume" type="button">Resume</button></div>
+    <div id="focusBar" class="notice" hidden>
+      <span>Only tracking: <strong id="focusNames"></strong></span>
+      <button class="link" id="clearFocus" type="button">Track all apps</button>
+    </div>
+
+    <section class="tiles" aria-label="Totals">
+      <div class="tile"><span class="tile-label"><span class="swatch rx"></span>Download now</span><span class="tile-value" id="tDownRate">0 B/s</span></div>
+      <div class="tile"><span class="tile-label"><span class="swatch tx"></span>Upload now</span><span class="tile-value" id="tUpRate">0 B/s</span></div>
+      <div class="tile"><span class="tile-label">Downloaded <span class="range-label"></span></span><span class="tile-value" id="tDown">0 B</span></div>
+      <div class="tile"><span class="tile-label">Uploaded <span class="range-label"></span></span><span class="tile-value" id="tUp">0 B</span></div>
+      <div class="tile"><span class="tile-label">Apps using the network</span><span class="tile-value" id="tActive">0</span></div>
+    </section>
+
+    <main class="split">
+      <section class="table-wrap" id="tableWrap" tabindex="0" aria-label="Apps">
+        <table class="apps">
+          <thead>
+            <tr>
+              <th data-col="name" class="col-app"><button type="button">App</button></th>
+              <th data-col="rx_rate" class="num"><button type="button">Download</button></th>
+              <th data-col="tx_rate" class="num"><button type="button">Upload</button></th>
+              <th data-col="rx" class="num wide"><button type="button">Downloaded</button></th>
+              <th data-col="tx" class="num wide"><button type="button">Uploaded</button></th>
+              <th data-col="total" class="num"><button type="button">Total</button></th>
+              <th data-col="avg_per_min" class="num wider"><button type="button">Avg / min</button></th>
+              <th data-col="status" class="col-status"><button type="button">Status</button></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div id="empty" class="empty" hidden></div>
+      </section>
+
+      <aside class="details" id="details" aria-live="polite">
+        <div id="noSelection" class="placeholder">Select an app to see its history, set a data cap, or block it.</div>
+        <div id="detailBody" hidden>
+          <div class="d-head">
+            <span class="app-icon large" id="dIcon"></span>
+            <div class="d-title">
+              <h2 id="dName"></h2>
+              <div class="d-path" id="dPath"></div>
+            </div>
+          </div>
+          <div class="chips" id="dChips"></div>
+          <dl class="stats">
+            <div><dt>Download now</dt><dd id="dRxRate"></dd></div>
+            <div><dt>Upload now</dt><dd id="dTxRate"></dd></div>
+            <div><dt>Downloaded</dt><dd id="dRx"></dd></div>
+            <div><dt>Uploaded</dt><dd id="dTx"></dd></div>
+            <div><dt>Average per minute</dt><dd id="dAvg"></dd></div>
+            <div><dt id="dPeakLabel">Busiest minute</dt><dd id="dPeak"></dd></div>
+          </dl>
+          <div class="chart-block">
+            <div class="chart-head">
+              <h3 id="chartTitle">Per minute</h3>
+              <div class="legend"><span><span class="swatch rx"></span>Download</span><span><span class="swatch tx"></span>Upload</span></div>
+            </div>
+            <div id="chart" class="chart"></div>
+          </div>
+          <section class="d-section">
+            <h3>Data cap</h3>
+            <div id="capInfo"></div>
+            <div class="row-actions">
+              <button class="btn" id="dCap" type="button">Set data cap…</button>
+              <button class="btn" id="dCapReset" type="button" hidden>Reset</button>
+            </div>
+          </section>
+          <section class="d-section">
+            <h3>Internet access</h3>
+            <p class="hint" id="blockHint"></p>
+            <button class="btn danger" id="dBlock" type="button">Block internet</button>
+          </section>
+          <section class="d-section switches">
+            <label class="switch"><input type="checkbox" id="dKeep" /><span>Keep this app's records forever</span></label>
+            <label class="switch"><input type="checkbox" id="dRecord" /><span>Record the domains and addresses it connects to</span></label>
+            <button class="link" id="dConnections" type="button">View connections…</button>
+          </section>
+          <section class="d-section row-actions wrap">
+            <button class="btn" id="dFocus" type="button">Only track this app</button>
+            <button class="btn" id="dIgnore" type="button">Ignore this app</button>
+            <button class="btn" id="dMore" type="button" title="More actions">More…</button>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span id="footState"></span>
+      <span id="footDb" class="grow"></span>
+      <span id="footKeep"></span>
+    </footer>
+  </div>
+
+  <dialog id="capDialog" aria-labelledby="capTitle">
+    <form method="dialog" id="capForm">
+      <h2 id="capTitle">Data cap</h2>
+      <p class="dialog-sub" id="capApp"></p>
+      <div class="field">
+        <label for="capAmount">Limit</label>
+        <div class="inline">
+          <input id="capAmount" type="number" min="0.01" step="any" required />
+          <select id="capUnit" aria-label="Unit"><option value="MB">MB</option><option value="GB" selected>GB</option><option value="TB">TB</option></select>
+        </div>
+      </div>
+      <fieldset class="field">
+        <legend>Counts</legend>
+        <label class="radio"><input type="radio" name="capPeriod" value="total" checked /> Until I reset it</label>
+        <label class="radio"><input type="radio" name="capPeriod" value="daily" /> Each day (resets at midnight)</label>
+        <label class="radio"><input type="radio" name="capPeriod" value="monthly" /> Each month (resets on the 1st)</label>
+      </fieldset>
+      <p class="hint" id="capNote"></p>
+      <p class="error" id="capError" hidden></p>
+      <div class="dialog-actions">
+        <button class="btn" type="button" id="capRemove">Remove cap</button>
+        <span class="grow"></span>
+        <button class="btn" type="button" id="capCancel">Cancel</button>
+        <button class="btn primary" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="connDialog" class="wide" aria-labelledby="connTitle">
+    <div class="dialog-head">
+      <div>
+        <h2 id="connTitle">Connections</h2>
+        <p class="dialog-sub" id="connApp"></p>
+      </div>
+      <input id="connSearch" type="search" placeholder="Filter domains or addresses" aria-label="Filter connections" />
+    </div>
+    <p class="notice" id="connOff" hidden>Recording is off for this app. <button class="link" id="connEnable" type="button">Start recording connections</button></p>
+    <div class="conn-wrap">
+      <table class="conns">
+        <thead><tr><th>Domain</th><th>Address</th><th class="num">Port</th><th>Protocol</th><th class="num">Downloaded</th><th class="num">Uploaded</th><th>Last seen</th></tr></thead>
+        <tbody id="connRows"></tbody>
+      </table>
+      <div class="empty" id="connEmpty" hidden>No connections recorded yet.</div>
+    </div>
+    <p class="hint" id="connNote"></p>
+    <div class="dialog-actions">
+      <button class="btn" type="button" id="connDelete">Delete recorded connections</button>
+      <span class="grow"></span>
+      <button class="btn primary" type="button" id="connClose">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="settingsDialog" class="wide" aria-labelledby="settingsTitle">
+    <div class="dialog-head"><h2 id="settingsTitle">Settings</h2></div>
+    <div class="settings">
+      <section>
+        <h3>Recording</h3>
+        <label class="switch"><input type="checkbox" id="sEnabled" /><span>Record network usage</span></label>
+        <div class="field inline-field">
+          <label for="sRetention">Keep history for</label>
+          <select id="sRetention"></select>
+        </div>
+        <p class="hint">Older records are deleted automatically, except for apps you keep forever.</p>
+        <div class="field">
+          <span class="label">Records folder</span>
+          <div class="path-box" id="sDbPath"></div>
+          <div class="row-actions wrap">
+            <button class="btn" type="button" id="sChoose">Change folder…</button>
+            <button class="btn" type="button" id="sShow">Show in folder</button>
+            <button class="btn" type="button" id="sDefault" hidden>Use default folder</button>
+          </div>
+        </div>
+      </section>
+      <section id="sHelperSection" hidden>
+        <h3>Network helper</h3>
+        <p class="hint" id="sHelperText"></p>
+        <div class="row-actions wrap">
+          <button class="btn" type="button" id="sHelperRepair">Reinstall helper</button>
+          <button class="btn" type="button" id="sHelperRemove">Remove helper</button>
+        </div>
+      </section>
+      <section>
+        <h3>General</h3>
+        <label class="switch"><input type="checkbox" id="sAutostart" /><span id="sAutostartLabel">Start Usage Monitor when I sign in</span></label>
+        <label class="switch"><input type="checkbox" id="sReverse" /><span>Look up host names for recorded addresses (reverse DNS)</span></label>
+        <p class="hint" id="sReverseHint">Lookups go to your DNS server. Leave this off to keep everything on this computer.</p>
+      </section>
+      <section>
+        <h3>Focus and ignored apps</h3>
+        <div class="list-title">Only tracking</div>
+        <ul class="app-list" id="sFocus"></ul>
+        <div class="list-title">Ignored</div>
+        <ul class="app-list" id="sIgnore"></ul>
+      </section>
+      <section>
+        <h3>Delete records</h3>
+        <div class="row-actions wrap">
+          <span>Older than</span>
+          <select id="sOlder" aria-label="Delete records older than"></select>
+          <button class="btn" type="button" id="sDeleteOlder">Delete</button>
+          <span class="grow"></span>
+          <button class="btn danger" type="button" id="sDeleteAll">Delete everything…</button>
+        </div>
+      </section>
+      <section>
+        <h3>What this can and can't see</h3>
+        <p class="hint">Usage Monitor stores byte counts, and domains only for apps you choose. It never reads packet contents, and nothing leaves this computer.</p>
+        <ul class="limits" id="sLimits"></ul>
+      </section>
+    </div>
+    <div class="dialog-actions">
+      <span class="grow"></span>
+      <button class="btn primary" type="button" id="sClose" autofocus>Done</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <div id="chartTip" class="chart-tip" hidden></div>
+
+  <script src="../net/format.js"></script>
+  <script src="net-chart.js"></script>
+  <script src="net.js"></script>
+</body>
+</html>

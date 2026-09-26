@@ -1,6 +1,6 @@
 function bindDrag(root, skipSelector) {
   let active = false;
-  const skip = skipSelector || "button, select, a, .icon-btn, .interval, .pct-icon, .tb-item, .provider";
+  const skip = skipSelector || "button, select, a, .icon-btn, .interval, .pct-icon, .tb-item, .provider, .net-card";
 
   root.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;

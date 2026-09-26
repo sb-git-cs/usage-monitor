@@ -68,3 +68,23 @@ test("portable autostart points to the durable executable, not the extraction fo
     else process.env.PORTABLE_EXECUTABLE_FILE = previous;
   }
 });
+
+test("docked chips are handed to the taskbar probe with this process id, and released when undocked", () => {
+  const calls = [];
+  const layout = load("src/taskbarLayout.js", {
+    electron: { screen: { screenToDipRect: (_w, r) => r } },
+    child_process: { execFile: (_cmd, args, _opts, cb) => { calls.push(args); cb(null, JSON.stringify({ tray: { x: 0, y: 0, w: 100, h: 48 }, occupied: [], ownerApplied: true })); } },
+  });
+  layout.setChipsOwner("not-a-handle", true);
+  layout.setChipsOwner("123456", true);
+  layout.setChipsOwner("123456", true);
+  layout.setChipsOwner("123456", false);
+  if (process.platform !== "win32") {
+    assert.deepEqual(calls, [], "only Windows has a taskbar to own the chips");
+    return;
+  }
+  assert.equal(calls.length, 2, "invalid handles are ignored and an applied state is not re-sent");
+  const flag = (args, name) => args[args.indexOf(name) + 1];
+  assert.deepEqual([flag(calls[0], "-Hwnd"), flag(calls[0], "-Own"), flag(calls[0], "-AppPid")], ["123456", "1", String(process.pid)]);
+  assert.equal(flag(calls[1], "-Own"), "0");
+});

@@ -16,13 +16,27 @@
           <option value="30">30s</option>
           <option value="60">60s</option>
         </select>
+        <button class="icon-btn" id="network" title="Network usage">⇅</button>
         <button class="icon-btn" id="dock" title="Snap to taskbar">▤</button>
         <button class="icon-btn" id="refresh" title="Refresh now">↻</button>
       </div>
     </div>
     <div id="body"></div>
+    <section class="net-card" id="net" hidden title="Open Network usage">
+      <div class="p-head">
+        <span class="p-name"><span class="net-glyph" aria-hidden="true">⇅</span><span>Network</span></span>
+        <span class="p-plan" id="netState">Open monitor ›</span>
+      </div>
+      <div class="net-row">
+        <div class="net-stat"><span class="net-label"><span class="net-swatch rx"></span>Download</span><span class="net-value" id="netRx">—</span></div>
+        <div class="net-stat"><span class="net-label"><span class="net-swatch tx"></span>Upload</span><span class="net-value" id="netTx">—</span></div>
+        <div class="net-stat"><span class="net-label">Used in the last hour</span><span class="net-value small" id="netHour">—</span></div>
+      </div>
+      <div class="net-top" id="netTop"></div>
+    </section>
   </div>
   <script src="../models.js"></script>
+  <script src="../net/format.js"></script>
   <script src="format.js"></script>
   <script src="drag.js"></script>
   <script src="flyout.js"></script>

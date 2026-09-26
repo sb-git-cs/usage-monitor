@@ -1,10 +1,14 @@
-name: Windows checks
+name: Checks
 on: [push, pull_request]
 permissions:
   contents: read
 jobs:
   test:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -13,7 +17,36 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run test:ui
+      - name: UI smoke test
+        if: runner.os != 'Linux'
+        run: npm run test:ui
+      - name: UI smoke test (virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npx electron --no-sandbox scripts/ui-smoke.js
+      - name: Live capture probe
+        if: runner.os != 'Windows'
+        run: node scripts/probe-capture.js
+      - name: Compile the network helper with Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $src = [IO.File]::ReadAllText("helpers/windows/NetCapture.cs")
+          Add-Type -TypeDefinition $src -Language CSharp -OutputAssembly "$env:RUNNER_TEMP\UsageMonitorNetHelper.exe" -OutputType WindowsApplication -ReferencedAssemblies System.Core, Microsoft.CSharp
+          Start-Process "$env:RUNNER_TEMP\UsageMonitorNetHelper.exe" -ArgumentList "--selftest", "$env:RUNNER_TEMP\selftest.json" -Wait
+          Get-Content "$env:RUNNER_TEMP\selftest.json"
       - run: npm audit --audit-level=high
-      - run: npx electron-builder --win --x64 --dir --publish never
-      - run: npm run test:ui -- --packaged
+        if: runner.os == 'Linux'
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win --x64 --dir --publish never
+      - name: Packaged UI smoke test
+        if: runner.os == 'Windows'
+        run: npm run test:ui -- --packaged
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: npx electron-builder --mac --dir --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: npx electron-builder --linux --x64 --dir --publish never
