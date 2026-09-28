@@ -409,7 +409,8 @@ test("post-update.js waits for the app to exit, reinstalls dependencies, then st
   const deadline = Date.now() + 5000;
   while (!fs.existsSync(marker("started")) && Date.now() < deadline) await tick(50);
   assert.match(fs.readFileSync(marker("npm-ran"), "utf8"), /ci --no-audit --no-fund/);
-  assert.ok(fs.readFileSync(marker("npm-ran"), "utf8").startsWith(root), "npm ci runs in the checkout");
+  // macOS temp folders sit behind a symlink (/var -> /private/var), so compare real paths.
+  assert.ok(fs.readFileSync(marker("npm-ran"), "utf8").startsWith(fs.realpathSync(root)), "npm ci runs in the checkout");
   assert.equal(fs.readFileSync(marker("started"), "utf8"), "yes");
   const base = process.platform === "darwin" ? path.join(root, "data", "Library", "Application Support") : path.join(root, "data");
   const logText = fs.readFileSync(path.join(base, "UsageMonitor", "logs", "update.log"), "utf8");
