@@ -10,6 +10,11 @@ const { load } = require("./helpers");
 const SOURCE = path.resolve(__dirname, "../src/updater.js");
 const quiet = { info() {}, warn() {}, error() {} };
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+// Windows timers tick every ~16 ms, so wait for a condition instead of a fixed delay.
+async function until(check, ms = 3000) {
+  const deadline = Date.now() + ms;
+  while (!check() && Date.now() < deadline) await tick(5);
+}
 
 function electronMock({ packaged = false, version = "1.1.0", shown = [], quits = [] } = {}) {
   const power = new EventEmitter();
@@ -233,6 +238,7 @@ test("a pending restart waits until nobody is using the app", async (t) => {
   updater.start({ ...ctx, kind: "git" });
   t.after(() => updater.stop());
   const run = updater.automatic();
+  await until(() => states.length && states.at(-1).status === "ready");
   await tick(30);
   assert.ok(!git.commands.some((c) => c.args[0] === "merge"), "nothing changes on disk while the user is busy");
   assert.equal(states.at(-1).status, "ready");
@@ -305,10 +311,11 @@ test("offline checks retry with backoff, and waking the computer checks again", 
   t.after(() => updater.stop());
   await updater.automatic();
   assert.equal(states.at(-1).status, "error");
-  await tick(60);
+  await until(() => requests >= 4);
+  await tick(50);
   assert.equal(requests, 4, "one check plus three retries, then it waits for the next period");
   mock.power.emit("resume");
-  await tick(30);
+  await until(() => requests >= 5);
   assert.ok(requests >= 5, "resume starts a new round of checks");
 });
 
