@@ -62,4 +62,12 @@ Acceptance still needed for this feature: the CI matrix passing on macOS and Lin
 
 The working tree already contained edits to README.md, src/main.js, src/ui/clickaway.html and src/ui/shared.css. Those edits were retained. The flyout pointer-events regression in the edited CSS was fixed after reproducing it in Electron. Generated screenshots and test profiles are in ignored `.qa/`; local npm cache and dist outputs are also ignored.
 
-Windows CI now runs unit tests, source and packaged UI tests, a dependency audit, and an unpacked build. Source development requires Node 22.12 or newer; packaged users do not need Node.
+Windows CI now runs unit tests, source and packaged UI tests, a dependency audit, and an unpacked build. Source development requires Node 22.13 or newer; packaged users do not need Node.
+
+## Audit and automatic updates (2026-09-28)
+
+The audit in [`audit-2026-09-28.md`](audit-2026-09-28.md) lists 17 findings with their fixes. The main change is automatic updating (`src/updater.js`): git clones fast-forward and restart (dependency reinstalls run after exit through `scripts/post-update.js`), the Windows installer and the Linux AppImage install GitHub releases through electron-updater, and the portable, zip, tar.gz and macOS builds notify with a download link. Releases must keep `latest*.yml` and `*.blockmap` attached.
+
+Verified on Linux (this session): 87 unit tests including real-git update scenarios and a real run of `post-update.js`; the UI smoke test with the new flyout footer; an AppImage build that produces `latest-linux.yml`, `resources/app-update.yml` and packs electron-updater; and an end-to-end run of the real app from a git checkout one commit behind a local origin, which merged the commit on its own and restarted.
+
+Acceptance still needed: a real Windows installer upgrade from 1.1.0 to the next release (silent NSIS install into the same folder, restart, Startup shortcut still valid), a real AppImage upgrade on a Linux desktop, and the notification-only path on macOS and the portable build. The first release that can deliver an update is the one after 1.1.0.

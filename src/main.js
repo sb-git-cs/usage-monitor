@@ -7,6 +7,7 @@ const { applyLocalResets } = require("./models");
 const taskbarLayout = require("./taskbarLayout");
 const autostart = require("./autostart");
 const updater = require("./updater");
+const log = require("./log");
 const netUsage = require("./net");
 const { formatRateShort } = require("./net/format");
 
@@ -347,7 +348,8 @@ let trayMenuKey = "";
 function refreshTrayMenu() {
   if (process.platform !== "linux" || !tray || tray.isDestroyed() || !cfg) return;
   const flyoutOpen = !!(flyout && !flyout.isDestroyed() && flyout.isVisible() && !flyout.isMinimized());
-  const key = [cfg.chips_hidden, cfg.chips_show_network, cfg.poll_interval_secs, cfg.autostart, cfg.check_updates_on_startup, flyoutOpen].join("|");
+  const update = updater.getState();
+  const key = [cfg.chips_hidden, cfg.chips_show_network, cfg.poll_interval_secs, cfg.autostart, cfg.auto_update, flyoutOpen, update && update.status].join("|");
   if (key === trayMenuKey) return;
   trayMenuKey = key;
   tray.setContextMenu(buildMenu());
@@ -674,15 +676,18 @@ function buildMenu() {
       },
     },
     {
-      label: "Check for updates at startup",
+      label: "Install updates automatically",
       type: "checkbox",
-      checked: cfg.check_updates_on_startup !== false,
+      checked: cfg.auto_update !== false,
       click: (item) => {
-        cfg.check_updates_on_startup = item.checked;
+        cfg.auto_update = item.checked;
         config.save(cfg);
+        updater.settingChanged();
+        refreshTrayMenu();
       },
     },
-    { label: "Check for updates now", click: () => runUpdateCheck(true) },
+    { label: "Check for updates now", click: () => runUpdateCheck() },
+    { label: updateMenuLabel(), enabled: false },
     ...(IS_WINDOWS ? taskbarMenuItems() : []),
     { type: "separator" },
     { label: "Quit", click: () => app.quit() },
@@ -760,11 +765,32 @@ function finishDrag() {
   }
 }
 
-async function runUpdateCheck(promptIfNone) {
+const UPDATE_LABELS = {
+  checking: "checking for updates…",
+  "up-to-date": "up to date",
+  downloading: "downloading an update…",
+  ready: "update ready",
+  installing: "installing an update…",
+  available: "update available",
+  off: "automatic updates off",
+};
+
+function updateMenuLabel() {
+  const u = updater.getState();
+  const version = `Version ${app.getVersion()}`;
+  const note = u && (u.status === "available" && u.latest ? `${u.latest} available` : UPDATE_LABELS[u.status]);
+  return note ? `${version} — ${note}` : version;
+}
+
+function sendUpdateState(state) {
+  if (flyout && !flyout.isDestroyed()) flyout.webContents.send("usage://update", state);
+  refreshTrayMenu();
+}
+
+async function runUpdateCheck() {
   ignoreFlyoutBlur = true;
   try {
-    const parent = flyout && !flyout.isDestroyed() && flyout.isVisible() ? flyout : null;
-    return await updater.run({ parent, promptIfNone: !!promptIfNone });
+    return await updater.checkNow();
   } finally {
     setTimeout(() => {
       ignoreFlyoutBlur = false;
@@ -772,16 +798,41 @@ async function runUpdateCheck(promptIfNone) {
   }
 }
 
-function scheduleStartupUpdateCheck() {
-  if (!cfg || cfg.check_updates_on_startup === false) return;
-  const tryCheck = (attempt) => {
-    runUpdateCheck(false).then((result) => {
-      if (result && result.error && attempt < 1) {
-        setTimeout(() => tryCheck(attempt + 1), 20000);
+function startUpdater() {
+  updater.start({
+    getConfig: () => cfg,
+    saveConfig: () => config.save(cfg),
+    onState: sendUpdateState,
+    // Restart for an update only while nobody is dragging a widget or working in Network usage.
+    canRestart: () => !dragState && !netUsage.isWindowFocused(),
+    beforeRestart: () => {
+      app.isQuitting = true;
+    },
+    dialogParent: () => (flyout && !flyout.isDestroyed() && flyout.isVisible() ? flyout : null),
+  });
+}
+
+// Floating widgets keep their saved coordinates; after a monitor is unplugged those can lie
+// off every screen, so pull them back onto the nearest display.
+function reclampWidgets() {
+  if (!cfg) return;
+  if (chips && !chips.isDestroyed()) {
+    if (cfg.chips_docked) placeChipsDocked();
+    else if (!cfg.chips_hidden) placeChipsFloating();
+  }
+  if (flyout && !flyout.isDestroyed()) {
+    if (cfg.flyout_docked) placeFlyoutDocked();
+    else if (flyout.isVisible()) {
+      const [x, y] = flyout.getPosition();
+      const [w, h] = flyout.getSize();
+      const p = clampToWorkArea(x, y, w, h);
+      if (p.x !== x || p.y !== y) {
+        placingFlyout = true;
+        flyout.setPosition(p.x, p.y);
+        placingFlyout = false;
       }
-    });
-  };
-  setTimeout(() => tryCheck(0), 5000);
+    }
+  }
 }
 
 function popupAppMenu() {
@@ -971,6 +1022,14 @@ function wireIpc() {
     }
   });
   ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
+  ipcMain.handle("usage://get-update", () => updater.getState());
+  ipcMain.on("usage://update-action", () => {
+    ignoreFlyoutBlur = true;
+    updater.action();
+    setTimeout(() => {
+      ignoreFlyoutBlur = false;
+    }, 300);
+  });
 }
 
 app.setName("Usage Monitor");
@@ -993,6 +1052,7 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  log.install();
   // `--network` (e.g. from a shortcut) opens the Network usage window instead of the flyout.
   app.on("second-instance", (_event, argv) => {
     if (argv.includes("--network")) netUsage.openWindow();
@@ -1025,11 +1085,12 @@ if (!gotLock) {
     createWindows();
     createTray();
     wireIpc();
-    scheduleStartupUpdateCheck();
+    startUpdater();
 
     flyout.webContents.on("did-finish-load", () => {
       flyout.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
       sendFlyoutState();
+      flyout.webContents.send("usage://update", updater.getState());
       if (latest) flyout.webContents.send("usage://snapshot", latest);
       if (flyoutStaysOpen()) showFlyout();
     });
@@ -1047,14 +1108,16 @@ if (!gotLock) {
     revive(flyout);
 
     let metricsTimer = null;
-    screen.on("display-metrics-changed", () => {
+    const displaysChanged = () => {
       clearTimeout(metricsTimer);
       metricsTimer = setTimeout(() => {
         taskbarLayout.invalidate();
-        if (cfg.chips_docked) placeChipsDocked();
-        if (cfg.flyout_docked) placeFlyoutDocked();
+        reclampWidgets();
       }, 300);
-    });
+    };
+    screen.on("display-metrics-changed", displaysChanged);
+    screen.on("display-removed", displaysChanged);
+    screen.on("display-added", displaysChanged);
 
     if (!latest) sendChipsLoading();
     poll = poller.start(cfg, (snap) => {
@@ -1102,6 +1165,7 @@ app.on("before-quit", () => {
     try { config.save(cfg); } catch (err) { console.error("config write failed", err.message); }
   }
   if (poll) poll.stop();
+  updater.stop();
   netUsage.shutdown();
   if (tray && !tray.isDestroyed()) tray.destroy();
 });

@@ -63,6 +63,14 @@
     "directories": {
       "output": "dist"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "sb-git-cs",
+        "repo": "usage-monitor",
+        "releaseType": "release"
+      }
+    ],
     "win": {
       "icon": "src/ui/icon.ico",
       "target": [
@@ -136,5 +144,8 @@
     "appImage": {
       "artifactName": "UsageMonitor-${version}-${arch}.AppImage"
     }
+  },
+  "dependencies": {
+    "electron-updater": "6.8.10"
   }
 }

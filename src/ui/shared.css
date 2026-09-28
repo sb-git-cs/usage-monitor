@@ -287,6 +287,23 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 .net-value.small { font-size: 12.5px; padding-top: 3px; }
 /* width 0 + min-width 100%: long app names never widen the flyout */
 .net-top { margin-top: 6px; font-size: 11px; color: #d1d5db; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 0; min-width: 100%; }
+/* Version and automatic update status under the flyout cards. */
+.update-bar {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 7px 2px 0;
+  border-top: 1px solid rgba(31, 41, 55, 0.9); font-size: 11px; color: var(--muted); white-space: nowrap;
+}
+.update-bar[hidden] { display: none; }
+.update-version { color: #d1d5db; font-weight: 600; }
+/* width 0 + min-width: a long message never widens the flyout */
+.update-status { flex: 1 1 0; width: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.update-status::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--dim); }
+.update-status.good::before { background: var(--green); }
+.update-status.busy::before { background: var(--codex); }
+.update-status.warn { color: #fcd34d; }
+.update-status.warn::before { background: var(--amber); }
+.link-btn { border: 0; background: transparent; color: #93c5fd; font: inherit; font-weight: 600; cursor: pointer; padding: 0 2px; }
+.link-btn:hover { text-decoration: underline; }
+.link-btn[hidden] { display: none; }
 /* Docked on a horizontal taskbar: the strip is exactly as tall as the taskbar. */
 .chips.docked.fill {
   height: var(--fill-h);

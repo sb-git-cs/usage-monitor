@@ -122,6 +122,57 @@ netCard.addEventListener("click", (e) => {
 });
 window.usage.onNet(renderNet);
 
+// ---- version and automatic updates -------------------------------------------------
+
+const updateBar = document.getElementById("update");
+const updateStatus = document.getElementById("updateStatus");
+const updateBtn = document.getElementById("updateAction");
+
+// [text, tone, action button]
+function updateLine(u) {
+  const v = u.latest || "the update";
+  switch (u.status) {
+    case "checking": return ["Checking for updates…", "busy", null];
+    case "up-to-date": return [u.auto ? "Up to date · updates install automatically" : "Up to date", "good", "Check now"];
+    case "downloading": return [`Downloading ${v}… ${Number(u.progress) || 0}%`, "busy", null];
+    case "ready": return [`${v} is ready · installs and restarts shortly`, "busy", null];
+    case "installing": return [`Installing ${v} · restarting…`, "busy", null];
+    case "available": return [`${v} is available · this copy can't update itself`, "warn", "Download"];
+    case "skipped": return [u.message || "Not updated", "warn", "Check now"];
+    case "error": return ["Couldn't check for updates", "warn", "Retry"];
+    case "off": return ["Automatic updates are off", "", "Check now"];
+    default: return [u.auto ? "Updates install automatically" : "Automatic updates are off", u.auto ? "good" : "", "Check now"];
+  }
+}
+
+function renderUpdate(u) {
+  if (!u || !u.current) {
+    if (!updateBar.hidden) {
+      updateBar.hidden = true;
+      requestAnimationFrame(fitFlyout);
+    }
+    return;
+  }
+  const wasHidden = updateBar.hidden;
+  updateBar.hidden = false;
+  const [text, tone, action] = updateLine(u);
+  setNetText("updateVersion", `v${u.current}${u.build ? ` · ${u.build}` : ""}`);
+  if (updateStatus.textContent !== text) updateStatus.textContent = text;
+  updateStatus.className = `update-status ${tone}`.trim();
+  const checked = u.checked_at ? ` Last checked ${new Date(u.checked_at).toLocaleString()}.` : "";
+  updateStatus.title = `${u.message || text}.${checked}`.replace(/\.\./g, ".");
+  updateBtn.hidden = !action;
+  if (action && updateBtn.textContent !== action) updateBtn.textContent = action;
+  if (wasHidden) requestAnimationFrame(fitFlyout);
+}
+
+updateBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  window.usage.updateAction();
+});
+window.usage.onUpdate(renderUpdate);
+window.usage.getUpdate().then(renderUpdate, () => {});
+
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   window.usage.openTrayMenu();

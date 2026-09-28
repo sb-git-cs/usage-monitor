@@ -24,6 +24,7 @@ let tickTimer = null;
 let range = "60";
 let status = { state: "starting", message: null, action: null };
 let storeWarning = null;
+let saveError = null;
 
 const reverse = new Map();
 const reverseQueue = [];
@@ -161,6 +162,12 @@ function tick() {
   } catch (err) {
     console.error("network tick failed", err.message);
   }
+  // A full disk or a removed records drive must not go unnoticed while the numbers keep moving.
+  if (engine.flushError !== saveError) {
+    if (engine.flushError) console.error("network records could not be saved", engine.flushError);
+    saveError = engine.flushError;
+    sendState();
+  }
   pushUpdate();
 }
 
@@ -181,7 +188,7 @@ function stateView() {
   const n = ctx.cfg.net;
   return {
     platform: process.platform,
-    status: { ...status, warning: storeWarning },
+    status: { ...status, warning: [storeWarning, saveError && `Network records can't be saved right now (${saveError}). They are kept in memory and saved once this is fixed.`].filter(Boolean).join(" ") || null },
     capabilities: capabilities(),
     limits: limits(),
     settings: {
@@ -499,8 +506,12 @@ async function exportCsv(text, name) {
     filters: [{ name: "CSV", extensions: ["csv"] }],
   });
   if (res.canceled || !res.filePath) return { ok: false, canceled: true };
-  // A byte-order mark makes Excel read the UTF-8 names correctly.
-  fs.writeFileSync(res.filePath, `﻿${text}`, "utf8");
+  try {
+    // A byte-order mark makes Excel read the UTF-8 names correctly.
+    fs.writeFileSync(res.filePath, `﻿${text}`, "utf8");
+  } catch (err) {
+    return { ok: false, error: `Could not save the export: ${err.message}` };
+  }
   return { ok: true, file: res.filePath };
 }
 
@@ -571,4 +582,8 @@ function summary({ hour = false } = {}) {
   return out;
 }
 
-module.exports = { init, openWindow, shutdown, summary };
+function isWindowFocused() {
+  return !!(win && !win.isDestroyed() && win.isVisible() && win.isFocused());
+}
+
+module.exports = { init, openWindow, shutdown, summary, isWindowFocused };

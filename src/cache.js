@@ -10,11 +10,27 @@ function readJson(file) {
   }
 }
 
-function writeJson(file, data) {
+// Polls run every few seconds; a file is rewritten only when its content changed, and the
+// snapshot (whose timestamps change on every poll) at most once a minute while the readings
+// themselves stay the same.
+const SNAPSHOT_MIN_GAP_MS = 60_000;
+const written = new Map();
+
+function writeJson(file, data, { sig = null, minGapMs = 0 } = {}) {
+  const text = JSON.stringify(data, null, 2);
+  const prev = written.get(file);
+  const now = Date.now();
+  if (prev && (prev.text === text || (sig != null && prev.sig === sig && now - prev.at < minGapMs))) return false;
   fs.mkdirSync(cacheDir(), { recursive: true });
   const tmp = file + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { encoding: "utf8" });
+  fs.writeFileSync(tmp, text, { encoding: "utf8" });
   fs.renameSync(tmp, file);
+  written.set(file, { text, sig, at: now });
+  return true;
+}
+
+function snapshotSig(snapshot) {
+  return JSON.stringify((snapshot.providers || []).map((p) => [p.id, p.status && p.status.state, p.plan, p.windows]));
 }
 
 function loadSnapshot() {
@@ -29,7 +45,7 @@ function loadSnapshot() {
 }
 
 function saveSnapshot(snapshot) {
-  writeJson(snapshotCachePath(), snapshot);
+  return writeJson(snapshotCachePath(), snapshot, { sig: snapshotSig(snapshot), minGapMs: SNAPSHOT_MIN_GAP_MS });
 }
 
 function loadAlertState() {
@@ -39,7 +55,7 @@ function loadAlertState() {
 }
 
 function saveAlertState(state) {
-  writeJson(alertStatePath(), state);
+  return writeJson(alertStatePath(), state);
 }
 
 module.exports = { loadSnapshot, saveSnapshot, loadAlertState, saveAlertState };

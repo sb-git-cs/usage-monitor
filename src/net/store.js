@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS connections (
   PRIMARY KEY (app_id, remote, port, proto)
 );
 CREATE INDEX IF NOT EXISTS connections_seen ON connections(last_seen);
+CREATE INDEX IF NOT EXISTS connections_remote ON connections(remote);
 `;
 
 const DB_NAME = "network.db";

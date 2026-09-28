@@ -45,6 +45,7 @@ class Engine extends EventEmitter {
     this.lastPrune = 0;
     this.lastSave = 0;
     this.dirty = false;
+    this.flushError = null;
     this.refreshLists();
   }
 
@@ -205,11 +206,22 @@ class Engine extends EventEmitter {
     for (const [key, rule] of Object.entries(this.settings.rules)) if (rule.cap) this.rollCap(key, rule, now);
     if (now - this.lastFlush >= FLUSH_EVERY_MS) {
       this.lastFlush = now;
-      this.store.flush();
+      // A failed flush keeps its rows buffered and is retried on the next flush.
+      try {
+        this.store.flush();
+        this.flushError = null;
+      } catch (err) {
+        this.flushError = String((err && err.message) || err);
+      }
     }
     if (now - this.lastPrune >= PRUNE_EVERY_MS) {
       this.lastPrune = now;
-      this.prune(now);
+      // Pruning flushes first, so it fails the same way while the records can't be written.
+      try {
+        this.prune(now);
+      } catch (err) {
+        this.flushError = String((err && err.message) || err);
+      }
     }
     // Cap counters change every second; persist them at a gentler pace.
     if (this.dirty && now - this.lastSave >= SAVE_EVERY_MS) {

@@ -1,7 +1,44 @@
-const { execFile } = require("child_process");
+// Keeps Usage Monitor current without asking. How depends on how it was installed:
+//   git        a clone of the repo: fast-forward to GitHub and restart. When dependencies
+//              changed, scripts/post-update.js reinstalls them after the app has exited,
+//              because npm ci deletes the Electron binary the app is running from.
+//   installer  the Windows installer or the Linux AppImage: electron-updater downloads the
+//              latest GitHub release, installs it silently and starts the new version.
+//   manual     portable exe, zip, tar.gz and the unsigned macOS app cannot replace
+//              themselves: the latest release is checked and a notification links to it.
+//   source     a copy without git or an installer: nothing to update from.
+// Automatic checks run shortly after launch, when the computer wakes or unlocks, and every
+// six hours, and retry with backoff while offline. "Install updates automatically" turns
+// them off; "Check for updates now" always works.
+const { execFile, spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { app, dialog } = require("electron");
+const { app, dialog, shell, powerMonitor, Notification } = require("electron");
+const { getJson } = require("./http");
+const { cliPath } = require("./paths");
+const log = require("./log");
+
+const REPO = "sb-git-cs/usage-monitor";
+const RELEASES_URL = `https://github.com/${REPO}/releases/latest`;
+const LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+const TIMING = {
+  first: 8000, // after launch, once the network is usually up
+  retry: [60_000, 5 * 60_000, 15 * 60_000], // offline: back off, then wait for the next period
+  period: 6 * 60 * 60_000,
+  wake: 30_000, // after resume or unlock, so Wi-Fi can reconnect
+  wakeGap: 30 * 60_000, // wakes closer together than this don't check again
+  idle: 60_000, // how often a pending restart looks for a quiet moment
+  restart: 3000, // lets the "updating" notification show first
+  renotify: 3 * 24 * 60 * 60_000, // manual formats: remind about the same version after this
+};
+
+let ctx = null;
+let state = null;
+let checking = null;
+let failures = 0;
+let lastAttempt = 0;
+let updater = null;
+const timers = {};
 
 function repoRoot() {
   return path.resolve(__dirname, "..");
@@ -15,22 +52,57 @@ function isGitCheckout() {
   }
 }
 
-function runCommand(cmd, args, timeoutMs) {
+function exists(file) {
+  try {
+    return fs.existsSync(file);
+  } catch {
+    return false;
+  }
+}
+
+function installKind({ platform = process.platform, env = process.env, execPath = process.execPath, resourcesPath = process.resourcesPath } = {}) {
+  if (!app.isPackaged) return isGitCheckout() ? "git" : "source";
+  const updateConfig = !!resourcesPath && exists(path.join(resourcesPath, "app-update.yml"));
+  if (platform === "win32") {
+    if (env.PORTABLE_EXECUTABLE_FILE) return "manual";
+    // The NSIS installer leaves its uninstaller next to the app; the zip does not.
+    const installed = exists(path.join(path.dirname(execPath), "Uninstall Usage Monitor.exe"));
+    return installed && updateConfig ? "installer" : "manual";
+  }
+  if (platform === "linux") return env.APPIMAGE && updateConfig ? "installer" : "manual";
+  return "manual";
+}
+
+// ---- versions ------------------------------------------------------------------
+
+function versionParts(v) {
+  return String(v || "").trim().replace(/^v/i, "").split("-")[0].split(".").map((n) => (Number.isFinite(Number(n)) ? Number(n) : 0));
+}
+
+function compareVersions(a, b) {
+  const x = versionParts(a);
+  const y = versionParts(b);
+  for (let i = 0; i < Math.max(x.length, y.length, 3); i++) {
+    const d = (x[i] || 0) - (y[i] || 0);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+// ---- git checkout --------------------------------------------------------------
+
+function git(args, timeout = 45000) {
   return new Promise((resolve, reject) => {
     execFile(
-      cmd,
+      "git",
       args,
-      {
-        cwd: repoRoot(),
-        windowsHide: true,
-        timeout: timeoutMs || 45000,
-        env: process.env,
-        shell: process.platform === "win32" && cmd !== "git" && !cmd.endsWith(".exe"),
-      },
+      // Never wait for a credential prompt nobody can see.
+      { cwd: repoRoot(), windowsHide: true, timeout, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
       (err, stdout, stderr) => {
         if (err) {
-          const msg = (stderr && String(stderr).trim()) || err.message;
-          reject(new Error(msg));
+          const e = new Error((stderr && String(stderr).trim()) || err.message);
+          e.code = err.code;
+          reject(e);
           return;
         }
         resolve(String(stdout || "").trim());
@@ -39,153 +111,401 @@ function runCommand(cmd, args, timeoutMs) {
   });
 }
 
-function git(args, timeoutMs) {
-  return runCommand("git", args, timeoutMs);
+function skip(message) {
+  return Object.assign(new Error(message), { skip: true });
 }
 
-async function remoteRef() {
+async function gitCheck() {
   try {
-    const upstream = await git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
-    if (upstream) return upstream;
+    await git(["symbolic-ref", "-q", "--short", "HEAD"]);
   } catch {
-    /* no upstream */
+    return { available: false, reason: "This copy is on a detached commit, so it is not updated automatically." };
   }
-  return "origin/main";
-}
-
-async function check() {
-  if (!isGitCheckout()) return { available: false, skipped: true };
-  await git(["fetch", "origin"]);
+  let ref = "";
+  try {
+    ref = await git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+  } catch {
+    ref = "";
+  }
+  if (!ref) ref = "origin/main";
+  const remote = ref.includes("/") ? ref.slice(0, ref.indexOf("/")) : "origin";
+  await git(["fetch", "--quiet", remote], 60000);
   const local = await git(["rev-parse", "HEAD"]);
-  const remote = await git(["rev-parse", await remoteRef()]);
-  if (!remote || local === remote) return { available: false, local, remote };
-  const ahead = Number(await git(["rev-list", "--count", `${local}..${remote}`]));
-  if (!ahead) return { available: false, local, remote };
-  await git(["merge-base", "--is-ancestor", local, remote]);
-  let summary = "";
+  const target = await git(["rev-parse", ref]);
+  if (!target || local === target) return { available: false };
+  const behind = Number(await git(["rev-list", "--count", `${local}..${target}`]));
+  if (!behind) return { available: false };
   try {
-    summary = await git(["log", "--oneline", `${local}..${remote}`]);
-  } catch {
-    summary = "";
-  }
-  const lines = summary
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, 8);
-  return { available: true, local, remote, summary: lines.join("\n") };
-}
-
-async function apply() {
-  if (await git(["status", "--porcelain"])) throw new Error("Commit or stash local changes before updating.");
-  await git(["pull", "--ff-only"], 60000);
-  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-  await runCommand(npmCmd, ["ci"], 180000);
-}
-
-function relaunch() {
-  app.relaunch();
-  app.exit(0);
-}
-
-function box(parent, opts) {
-  if (parent && !parent.isDestroyed()) return dialog.showMessageBox(parent, opts);
-  return dialog.showMessageBox(opts);
-}
-
-async function promptAndUpdate(parent, info) {
-  const detail = info.summary
-    ? `New commits:\n${info.summary}`
-    : "A newer version is on GitHub.";
-  const { response } = await box(parent, {
-    type: "question",
-    title: "Usage Monitor",
-    message: "An update is available. Update now?",
-    detail,
-    buttons: ["Yes", "No"],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true,
-  });
-  if (response !== 0) return { updated: false };
-  try {
-    await apply();
+    await git(["merge-base", "--is-ancestor", local, target]);
   } catch (err) {
-    await box(parent, {
-      type: "error",
-      title: "Usage Monitor",
-      message: "Update failed.",
-      detail: String(err.message || err),
-      buttons: ["OK"],
-    });
-    return { updated: false, error: err };
+    if (err.code === 1) return { available: false, reason: "This copy has commits that are not on GitHub, so it is not updated automatically." };
+    throw err;
   }
-  relaunch();
-  return { updated: true };
+  let summary = [];
+  try {
+    summary = (await git(["log", "--oneline", "-n", "8", `${local}..${target}`])).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  } catch {
+    summary = [];
+  }
+  return { available: true, local, target, ref, behind, summary, version: target.slice(0, 7) };
 }
 
-async function runUpdate({ parent, promptIfNone } = {}) {
-  if (app.isPackaged) {
-    if (!promptIfNone) return { available: false, skipped: true };
-    const { response } = await box(parent, {
-      type: "question",
-      title: "Usage Monitor",
-      message: "Open GitHub to download the latest portable build?",
-      buttons: ["Yes", "No"],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
+async function gitApply(info) {
+  if (await git(["status", "--porcelain", "--untracked-files=no"])) {
+    throw skip("This copy has uncommitted changes, so the update was skipped.");
+  }
+  const changed = await git(["diff", "--name-only", info.local, info.target, "--", "package.json", "package-lock.json"]);
+  const depsChanged = !!changed.trim();
+  const node = depsChanged ? cliPath("node") : null;
+  if (depsChanged && !node) throw skip("This update changes dependencies and needs Node.js on PATH to install them.");
+  // Merge the exact commit that was checked, so a clone without an upstream still updates.
+  await git(["merge", "--ff-only", info.target], 60000);
+  return { depsChanged, node };
+}
+
+function childEnv() {
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return env;
+}
+
+function restartAfterGit({ depsChanged, node }) {
+  if (depsChanged) {
+    // Reinstalls dependencies once this process has exited, then starts the app again.
+    const child = spawn(node, [path.join(repoRoot(), "scripts", "post-update.js"), "--pid", String(process.pid)], {
+      cwd: repoRoot(),
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      env: childEnv(),
     });
-    if (response === 0) {
-      const { shell } = require("electron");
-      await shell.openExternal("https://github.com/sb-git-cs/usage-monitor/releases");
-    }
+    child.on("error", (err) => log.error("post-update start failed", err.message));
+    child.unref();
+  } else {
+    app.relaunch();
+  }
+  quit();
+}
+
+// ---- installer (electron-updater) ------------------------------------------------
+
+function electronUpdater() {
+  if (updater) return updater;
+  const { autoUpdater } = require("electron-updater");
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.logger = {
+    info: (m) => log.info(`updater: ${m}`),
+    warn: (m) => log.warn(`updater: ${m}`),
+    error: (m) => log.error(`updater: ${m}`),
+    debug() {},
+  };
+  autoUpdater.on("error", (err) => log.warn("updater error", err && err.message));
+  autoUpdater.on("download-progress", (p) => {
+    const progress = Math.max(0, Math.min(100, Math.round(Number(p && p.percent) || 0)));
+    if (progress !== state.progress) setState({ status: "downloading", progress });
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    setState({ status: "ready", latest: (info && info.version) || state.latest, progress: 100 });
+    installWhenIdle();
+  });
+  updater = autoUpdater;
+  return updater;
+}
+
+function installWhenIdle() {
+  clearTimeout(timers.install);
+  if (state.status === "installing") return;
+  if (!canRestart()) {
+    timers.install = setTimeout(installWhenIdle, TIMING.idle);
+    return;
+  }
+  setState({ status: "installing" });
+  notify(`Updating to ${state.latest}`, "Usage Monitor restarts in a few seconds.");
+  timers.install = setTimeout(() => {
+    if (ctx && ctx.beforeRestart) ctx.beforeRestart();
+    updater.quitAndInstall(true, true);
+  }, TIMING.restart);
+}
+
+// ---- manual formats -------------------------------------------------------------
+
+function downloadUrl(release, { platform = process.platform, arch = process.arch, env = process.env } = {}) {
+  const assets = Array.isArray(release && release.assets) ? release.assets : [];
+  const pick = (re) => {
+    const a = assets.find((x) => x && re.test(String(x.name || "")));
+    return a && a.browser_download_url;
+  };
+  let url;
+  if (platform === "win32") url = env.PORTABLE_EXECUTABLE_FILE ? pick(/portable.*\.exe$/i) : pick(/-win\.zip$/i);
+  else if (platform === "darwin") url = pick(new RegExp(`-${arch}\\.dmg$`, "i")) || pick(/\.dmg$/i);
+  else url = env.APPIMAGE ? pick(/\.AppImage$/i) : pick(/\.tar\.gz$/i);
+  const safe = (u) => typeof u === "string" && u.startsWith("https://github.com/");
+  if (safe(url)) return url;
+  return safe(release && release.html_url) ? release.html_url : RELEASES_URL;
+}
+
+async function latestRelease() {
+  const res = await getJson(LATEST_API, { "User-Agent": `usage-monitor/${app.getVersion()}`, Accept: "application/vnd.github+json" });
+  if (res.status !== 200 || !res.json || typeof res.json.tag_name !== "string") throw new Error(`GitHub answered HTTP ${res.status}.`);
+  const version = res.json.tag_name.replace(/^v/i, "");
+  if (compareVersions(version, app.getVersion()) <= 0) return { available: false };
+  return { available: true, version, url: downloadUrl(res.json) };
+}
+
+function manualHint() {
+  if (process.env.PORTABLE_EXECUTABLE_FILE) return "The portable version can't replace itself while it runs. Download the new one and use it instead of this file.";
+  if (process.platform === "darwin") return "macOS only lets signed apps update in place. Open the download and drag Usage Monitor to Applications.";
+  return "This copy can't replace itself. Download the new version and replace this copy with it.";
+}
+
+function maybeNotifyManual() {
+  const cfg = ctx.getConfig();
+  const seen = cfg.update_notified_version === state.latest && Date.now() - Number(cfg.update_notified_at || 0) < TIMING.renotify;
+  if (seen) return;
+  cfg.update_notified_version = state.latest;
+  cfg.update_notified_at = Date.now();
+  if (ctx.saveConfig) ctx.saveConfig();
+  notify(`Usage Monitor ${state.latest} is available`, "Click to download it.", openDownload);
+}
+
+// ---- flows ----------------------------------------------------------------------
+
+async function gitFlow(interactive) {
+  const info = await gitCheck();
+  setState({ checked_at: Date.now() });
+  if (!info.available) {
+    setState({ status: info.reason ? "skipped" : "up-to-date", message: info.reason || null });
+    if (interactive) await box("info", info.reason ? "Usage Monitor was not updated." : "You're on the latest version.", info.reason);
+    return info;
+  }
+  setState({ status: "ready", latest: info.version });
+  if (interactive) {
+    const lines = info.summary.length ? `\n\n${info.summary.join("\n")}` : "";
+    await box("info", "Installing the update. Usage Monitor restarts when it is done.", `${info.behind} new change${info.behind === 1 ? "" : "s"}:${lines}`);
+  } else {
+    await whenIdle();
+  }
+  setState({ status: "installing" });
+  const result = await gitApply(info);
+  log.info(`updated ${info.local.slice(0, 7)} -> ${info.target.slice(0, 7)}${result.depsChanged ? ", reinstalling dependencies after exit" : ""}`);
+  notify("Usage Monitor updated", `Restarting with ${info.behind} new change${info.behind === 1 ? "" : "s"}.`);
+  timers.restart = setTimeout(() => restartAfterGit(result), TIMING.restart);
+  return { ...info, updated: true };
+}
+
+async function installerFlow(interactive) {
+  const u = electronUpdater();
+  const result = await u.checkForUpdates();
+  setState({ checked_at: Date.now() });
+  if (!result || !result.isUpdateAvailable) {
+    if (state.status !== "ready" && state.status !== "installing") setState({ status: "up-to-date" });
+    if (interactive) await box("info", "You're on the latest version.", `Version ${state.current}`);
+    return { available: false };
+  }
+  const version = result.updateInfo && result.updateInfo.version;
+  if (state.status !== "ready" && state.status !== "installing") setState({ status: "downloading", latest: version, progress: 0 });
+  if (interactive) box("info", `Downloading Usage Monitor ${version}.`, "It installs and restarts on its own when the download finishes.");
+  if (result.downloadPromise) await result.downloadPromise;
+  return { available: true, version };
+}
+
+async function manualFlow(interactive) {
+  const info = await latestRelease();
+  setState({ checked_at: Date.now() });
+  if (!info.available) {
+    setState({ status: "up-to-date" });
+    if (interactive) await box("info", "You're on the latest version.", `Version ${state.current}`);
+    return info;
+  }
+  setState({ status: "available", latest: info.version, url: info.url, message: manualHint() });
+  if (interactive) {
+    const { response } = await box("question", `Usage Monitor ${info.version} is available.`, manualHint(), ["Download", "Later"]);
+    if (response === 0) openDownload();
+  } else {
+    maybeNotifyManual();
+  }
+  return info;
+}
+
+async function doCheck(interactive) {
+  if (state.kind === "source") {
+    if (interactive) await box("info", "This copy can't update itself.", `It was not installed from Git or an installer. Download the latest version from ${RELEASES_URL}.`);
     return { available: false, skipped: true };
   }
-  let info;
-  try {
-    info = await check();
-  } catch (err) {
-    if (promptIfNone) {
-      await box(parent, {
-        type: "error",
-        title: "Usage Monitor",
-        message: "Could not check for updates.",
-        detail: String(err.message || err),
-        buttons: ["OK"],
-      });
+  if (!interactive && !autoEnabled()) return { available: false, skipped: true };
+  if (["ready", "installing"].includes(state.status)) {
+    if (interactive) {
+      // The user asked, so a downloaded installer update goes in now rather than at the next quiet moment.
+      if (state.kind === "installer" && state.status === "ready") installWhenIdle();
+      box("info", `Usage Monitor ${state.latest || ""} is being installed.`.replace("  ", " "), "It restarts on its own in a moment.");
     }
+    return { available: true };
+  }
+  setState({ status: "checking", message: null });
+  try {
+    if (state.kind === "git") return await gitFlow(interactive);
+    if (state.kind === "installer") return await installerFlow(interactive);
+    return await manualFlow(interactive);
+  } catch (err) {
+    const message = String((err && err.message) || err);
+    if (err && err.skip) {
+      log.info("update skipped:", message);
+      setState({ status: "skipped", message });
+      if (interactive) await box("info", "Usage Monitor was not updated.", message);
+      return { available: false, skipped: true, reason: message };
+    }
+    log.warn("update check failed:", message);
+    setState({ status: "error", message });
+    if (interactive) await box("error", "Could not check for updates.", message);
     return { available: false, error: err };
   }
-  if (info.skipped) {
-    if (promptIfNone) {
-      await box(parent, {
-        type: "info",
-        title: "Usage Monitor",
-        message: "This copy was not installed from Git, so it cannot self-update.",
-        buttons: ["OK"],
-      });
-    }
-    return info;
-  }
-  if (!info.available) {
-    if (promptIfNone) {
-      await box(parent, {
-        type: "info",
-        title: "Usage Monitor",
-        message: "You're on the latest version.",
-        buttons: ["OK"],
-      });
-    }
-    return info;
-  }
-  return promptAndUpdate(parent, info);
 }
 
-let running = null;
-function run(options) {
-  if (!running) running = runUpdate(options).finally(() => { running = null; });
-  return running;
+function runCheck(interactive) {
+  if (checking) {
+    if (interactive) box("info", "Usage Monitor is already checking for updates.", "The flyout shows how it is going.");
+    return checking;
+  }
+  checking = doCheck(!!interactive).finally(() => { checking = null; });
+  return checking;
 }
 
-module.exports = { check, apply, run, isGitCheckout };
+async function automatic() {
+  if (!ctx || state.kind === "source" || !autoEnabled()) return;
+  lastAttempt = Date.now();
+  const result = await runCheck(false);
+  if (result && result.error) {
+    if (failures < TIMING.retry.length) schedule(TIMING.retry[failures++]);
+  } else {
+    failures = 0;
+  }
+}
+
+function schedule(ms) {
+  clearTimeout(timers.next);
+  timers.next = setTimeout(automatic, ms);
+}
+
+function onWake() {
+  if (Date.now() - lastAttempt < TIMING.wakeGap) return;
+  failures = 0;
+  schedule(TIMING.wake);
+}
+
+// ---- helpers --------------------------------------------------------------------
+
+function autoEnabled() {
+  const cfg = ctx && ctx.getConfig();
+  return !!cfg && cfg.auto_update !== false;
+}
+
+function canRestart() {
+  return !ctx || !ctx.canRestart || ctx.canRestart();
+}
+
+function whenIdle() {
+  return new Promise((resolve) => {
+    const tryNow = () => {
+      if (canRestart()) resolve();
+      else timers.idle = setTimeout(tryNow, TIMING.idle);
+    };
+    tryNow();
+  });
+}
+
+function quit() {
+  if (ctx && ctx.beforeRestart) ctx.beforeRestart();
+  // app.quit (not app.exit) so config and network records are saved on the way out.
+  app.quit();
+}
+
+function notify(title, body, onClick) {
+  try {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({ title, body, silent: true });
+    if (onClick) n.on("click", onClick);
+    n.show();
+  } catch (err) {
+    log.warn("update notification failed", err.message);
+  }
+}
+
+function box(type, message, detail, buttons = ["OK"]) {
+  const parent = ctx && ctx.dialogParent ? ctx.dialogParent() : null;
+  const opts = { type, title: "Usage Monitor", message, detail: detail || undefined, buttons, defaultId: 0, cancelId: buttons.length - 1, noLink: true };
+  return parent && !parent.isDestroyed() ? dialog.showMessageBox(parent, opts) : dialog.showMessageBox(opts);
+}
+
+function publicState() {
+  return { ...state, auto: autoEnabled() };
+}
+
+function setState(patch) {
+  state = { ...state, ...patch };
+  if (ctx && ctx.onState) {
+    try {
+      ctx.onState(publicState());
+    } catch (err) {
+      log.warn("update state broadcast failed", err.message);
+    }
+  }
+}
+
+// ---- public API -----------------------------------------------------------------
+
+// ctx: getConfig(), saveConfig(), onState(state), canRestart(), beforeRestart(), dialogParent()
+function start(context) {
+  ctx = context;
+  state = { kind: context.kind || installKind(), status: "idle", current: app.getVersion(), build: null, latest: null, progress: null, url: null, message: null, checked_at: null };
+  log.info(`Usage Monitor ${state.current} started (${state.kind} install, ${process.platform} ${process.arch})`);
+  if (state.kind === "git") git(["rev-parse", "--short", "HEAD"]).then((build) => setState({ build })).catch(() => {});
+  setState({ status: autoEnabled() || state.kind === "source" ? "idle" : "off" });
+  schedule(TIMING.first);
+  timers.period = setInterval(automatic, TIMING.period);
+  try {
+    powerMonitor.on("resume", onWake);
+    powerMonitor.on("unlock-screen", onWake);
+  } catch {
+    /* no power events on this system */
+  }
+}
+
+function settingChanged() {
+  if (!ctx) return;
+  if (autoEnabled()) {
+    failures = 0;
+    if (["off", "idle"].includes(state.status)) setState({ status: "idle" });
+    schedule(TIMING.first);
+  } else {
+    clearTimeout(timers.next);
+    if (["idle", "up-to-date", "error", "skipped"].includes(state.status)) setState({ status: "off" });
+  }
+}
+
+function openDownload() {
+  shell.openExternal((state && state.url) || RELEASES_URL).catch((err) => log.warn("open download failed", err.message));
+}
+
+function checkNow() {
+  return runCheck(true);
+}
+
+function action() {
+  if (state && state.status === "available") openDownload();
+  else if (state && !["checking", "downloading", "ready", "installing"].includes(state.status)) checkNow();
+}
+
+function getState() {
+  return state ? publicState() : null;
+}
+
+function stop() {
+  for (const t of Object.values(timers)) {
+    clearTimeout(t);
+    clearInterval(t);
+  }
+}
+
+module.exports = { start, stop, checkNow, action, settingChanged, openDownload, getState, installKind, compareVersions, downloadUrl, isGitCheckout, TIMING };

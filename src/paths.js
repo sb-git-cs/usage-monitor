@@ -75,6 +75,10 @@ function cacheDir() {
   return path.join(localAppData(), "UsageMonitor", "cache");
 }
 
+function logDir() {
+  return path.join(localAppData(), "UsageMonitor", "logs");
+}
+
 function configPath() {
   return path.join(configDir(), "config.json");
 }
@@ -131,6 +135,7 @@ module.exports = {
   netDataDir,
   configDir,
   cacheDir,
+  logDir,
   configPath,
   snapshotCachePath,
   alertStatePath,

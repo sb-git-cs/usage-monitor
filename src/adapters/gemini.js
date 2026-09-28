@@ -19,9 +19,16 @@ const API_HOSTS = [
   "https://cloudcode-pa.googleapis.com",
 ];
 const USER_AGENT = "antigravity/windows/amd64";
+// Reading Credential Manager starts PowerShell and compiles a small C# reader, so a result is
+// reused instead of paying that on every poll (every 5 s by default) while signed out.
+const WINCRED_HIT_MS = 60_000;
+const WINCRED_MISS_MS = 2 * 60_000;
+const MAX_BINARY_BYTES = 512 * 1024 * 1024;
 
 let memCreds = null;
 let oauthClient = null;
+const wincred = { at: 0, blob: undefined };
+const clientLookup = { key: null };
 
 function probe() {
   return {
@@ -46,7 +53,9 @@ function findAgyBinary() {
   return null;
 }
 
-function extractOauthClient(binPath) {
+// The OAuth client is embedded in the agy binary. The binary is read asynchronously, and a
+// lookup that found nothing is not repeated until the binary changes.
+async function extractOauthClient(binPath) {
   if (oauthClient) return oauthClient;
   const envId = process.env.AGY_CLIENT_ID || process.env.GEMINI_OAUTH_CLIENT_ID;
   const envSecret = process.env.AGY_CLIENT_SECRET || process.env.GEMINI_OAUTH_CLIENT_SECRET;
@@ -54,10 +63,20 @@ function extractOauthClient(binPath) {
     oauthClient = { clientId: envId, clientSecret: envSecret };
     return oauthClient;
   }
-  if (!binPath || !fileExists(binPath)) return null;
+  if (!binPath) return null;
+  let stat;
+  try {
+    stat = await fs.promises.stat(binPath);
+  } catch {
+    return null;
+  }
+  const key = `${binPath}|${stat.size}|${stat.mtimeMs}`;
+  if (clientLookup.key === key) return null;
+  clientLookup.key = key;
+  if (!stat.isFile() || stat.size > MAX_BINARY_BYTES) return null;
   let text;
   try {
-    text = fs.readFileSync(binPath, "latin1");
+    text = await fs.promises.readFile(binPath, "latin1");
   } catch {
     return null;
   }
@@ -108,9 +127,18 @@ function fromFile(filePath) {
   }
 }
 
+async function readWinCred() {
+  const age = Date.now() - wincred.at;
+  if (wincred.blob !== undefined && age < (wincred.blob ? WINCRED_HIT_MS : WINCRED_MISS_MS)) return wincred.blob;
+  const blob = await readGenericCredential(WINCRED_TARGET);
+  wincred.at = Date.now();
+  wincred.blob = blob || null;
+  return wincred.blob;
+}
+
 async function readStoredCreds() {
   if (process.platform === "win32") {
-    const blob = await readGenericCredential(WINCRED_TARGET);
+    const blob = await readWinCred();
     const fromCred = fromTokenBlock(blob && blob.token, "wincred") || fromTokenBlock(blob, "wincred");
     if (fromCred) return fromCred;
   }
@@ -137,7 +165,7 @@ function accessValid(creds) {
 
 async function refreshAccess(creds) {
   if (!creds || !creds.refresh_token) return null;
-  const client = extractOauthClient(findAgyBinary());
+  const client = await extractOauthClient(findAgyBinary());
   if (!client) return null;
   const res = await postForm(
     TOKEN_URL,

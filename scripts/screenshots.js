@@ -1,6 +1,8 @@
 // Regenerates docs/screenshots from the real UI rendered offscreen with demo data.
 // Run with: npm run screenshots   (no real logins, usage or paths are read)
-const { app, BrowserWindow, ipcMain, nativeTheme } = require("electron");
+// Add -- --keep-network to reuse docs/screenshots/network.png instead of re-rendering it,
+// for example on macOS or Linux, where the Windows program icons in the demo don't exist.
+const { app, BrowserWindow, ipcMain, nativeImage, nativeTheme } = require("electron");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -11,6 +13,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "usage-monitor-shots-"));
 const MB = 1024 ** 2;
 const GB = 1024 ** 3;
 const MIN = 60000;
+const KEEP_NETWORK = process.argv.includes("--keep-network");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 app.setPath("userData", path.join(os.tmpdir(), "usage-monitor-shots-profile"));
@@ -44,6 +47,8 @@ const netSummary = {
   ],
   hour: { rx: 1.46 * GB, tx: 212 * MB },
 };
+
+const updateState = { kind: "installer", status: "up-to-date", current: require("../package.json").version, build: null, auto: true, checked_at: now };
 
 function findDefender() {
   const base = "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform";
@@ -231,6 +236,7 @@ async function main() {
   ipcMain.handle("usage://get-interval", () => 5);
   ipcMain.handle("usage://get-chips-docked", () => true);
   ipcMain.handle("usage://get-flyout-state", () => ({ docked: false, pinned: false, canDock: true }));
+  ipcMain.handle("usage://get-update", () => updateState);
   ipcMain.handle("net:state", () => netState);
   ipcMain.handle("net:settings", () => netState);
   ipcMain.handle("net:series", () => edgeSeries);
@@ -254,6 +260,7 @@ async function main() {
         w.webContents.send("usage://interval", 5);
         w.webContents.send("usage://snapshot", snapshot);
         w.webContents.send("usage://net", netSummary);
+        w.webContents.send("usage://update", updateState);
       },
     })
   );
@@ -272,7 +279,9 @@ async function main() {
       },
     })
   );
-  const netImage = await renderPage("net", {
+  const kept = KEEP_NETWORK ? nativeImage.createFromPath(path.join(OUT, "network.png")) : null;
+  if (kept && kept.isEmpty()) throw new Error("--keep-network: docs/screenshots/network.png is missing");
+  const netImage = kept || await renderPage("net", {
     width: 1280,
     height: 780,
     setup: async (w) => {
@@ -281,7 +290,7 @@ async function main() {
       await w.webContents.executeJavaScript(`document.querySelector('#rows tr[data-key="msedge"]').click()`);
     },
   });
-  fs.writeFileSync(path.join(OUT, "network.png"), netImage.toPNG());
+  if (!kept) fs.writeFileSync(path.join(OUT, "network.png"), netImage.toPNG());
   const network = saveTmp("network.png", netImage);
 
   // Desktop scene: network window, flyout resting on the taskbar, chips in the taskbar.
@@ -335,7 +344,7 @@ async function main() {
       <div class="sec" style="left:48px; top:150px">
         <h2>1. FLYOUT</h2>
         <img src="${flyout.name}" width="${flyout.width}" height="${flyout.height}">
-        <div class="note">Two-by-two plan cards and a network card: live speed, the last hour, and the apps<br>using the network now. Click the network card for the full monitor.</div>
+        <div class="note">Two-by-two plan cards and a network card: live speed, the last hour, and the apps<br>using the network now. The footer shows the version; updates install themselves.</div>
       </div>
       <div class="sec" style="left:700px; top:150px">
         <h2>2. TASKBAR CHIPS</h2>
@@ -367,7 +376,8 @@ async function main() {
     OH
   );
   fs.writeFileSync(path.join(OUT, "overview.png"), overview.toPNG());
-  console.log(`wrote ${["tray-flyout.png", "overview.png", "network.png"].map((f) => path.join("docs", "screenshots", f)).join(", ")}`);
+  const written = ["tray-flyout.png", "overview.png", ...(kept ? [] : ["network.png"])];
+  console.log(`wrote ${written.map((f) => path.join("docs", "screenshots", f)).join(", ")}`);
 }
 
 app.whenReady().then(async () => {
