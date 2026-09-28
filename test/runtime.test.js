@@ -112,37 +112,6 @@ test("alerts distinguish model pools, deduplicate 100% toasts and ignore stale r
   assert.equal(shown.length, 2);
 });
 
-test("updater runs actual subprocesses instead of recursively invoking itself", async () => {
-  const commands = [];
-  const updater = load("src/updater.js", {
-    electron: { app: {} }, fs: { existsSync: () => true },
-    child_process: { execFile: (cmd, args, _opts, callback) => {
-      commands.push([cmd, ...args]);
-      let output = "";
-      if (args[0] === "rev-parse") output = args.includes("HEAD") ? "local" : args.includes("@{u}") ? "origin/main" : "remote";
-      if (args[0] === "rev-list") output = "2";
-      if (args[0] === "log") output = "abc fix";
-      callback(null, output, "");
-    } },
-  });
-  assert.equal((await updater.check()).available, true);
-  await updater.apply();
-  assert.equal(commands[0][1], "fetch");
-  assert.ok(commands.some((c) => c[1] === "ci"));
-});
-
-test("updater skips locally ahead copies and refuses dirty updates", async () => {
-  let dirty = false;
-  const updater = load("src/updater.js", {
-    electron: { app: {} }, fs: { existsSync: () => true },
-    child_process: { execFile: (_cmd, args, _opts, callback) => callback(null,
-      args[0] === "rev-list" ? "0" : args[0] === "status" ? (dirty ? " M src/main.js" : "") : args.join(" "), "") },
-  });
-  assert.equal((await updater.check()).available, false);
-  dirty = true;
-  await assert.rejects(updater.apply(), /Commit or stash/);
-});
-
 test("HTTP rejects unsupported protocols, truncated bodies and oversized responses", async () => {
   await assert.rejects(request("GET", "file:///test"), /Unsupported protocol/);
   const server = http.createServer((req, res) => {

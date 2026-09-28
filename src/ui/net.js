@@ -718,7 +718,7 @@ function exportCsv() {
   api.exportCsv(text, `network-usage-${slug}-${stamp}.csv`).then((res) => {
     if (res && res.ok) toast(`Exported ${rows.length} apps to ${res.file}`);
     else if (res && res.error) toast(res.error);
-  });
+  }, (err) => toast(`Export failed: ${err.message}`));
 }
 
 // ---- events -----------------------------------------------------------------------

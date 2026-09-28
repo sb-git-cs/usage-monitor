@@ -21,6 +21,7 @@
 - **Zero setup for the meters.** Reuses the logins your CLIs already stored. No API keys, no accounts, no extra cost.
 - **Find the bandwidth hog.** Live per-app download/upload speed, per-minute history, data caps and one-click blocking (Windows).
 - **Private by design.** Runs entirely on your machine. Stores byte counts only, never traffic contents.
+- **Stays current on its own.** Checks for a new version at launch, when your laptop wakes and every six hours, installs it and restarts. No manual updating.
 - **Cross-platform.** Windows 10/11, macOS 12+, and 64-bit Linux.
 
 ## Quick start
@@ -32,7 +33,7 @@ npm install
 npm run setup   # installs any missing CLIs (Windows), then starts the app
 ```
 
-Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `grok`) and the chips fill in within seconds. Needs [Node.js](https://nodejs.org/) 22.13+. Prefer an installer? Download one from [**Releases**](https://github.com/sb-git-cs/usage-monitor/releases/latest) (Windows `.exe`, macOS `.dmg`, Linux `.AppImage`).
+Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `grok`) and the chips fill in within seconds. Needs [Node.js](https://nodejs.org/) 22.13+. Prefer an installer? Download one from [**Releases**](https://github.com/sb-git-cs/usage-monitor/releases/latest) (Windows `.exe`, macOS `.dmg`, Linux `.AppImage`). Either way, [updates install automatically](#automatic-updates).
 
 > If Usage Monitor saves you from a surprise rate limit, please ⭐ **star the repo** — it helps other developers find it.
 
@@ -40,11 +41,11 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 | Surface | What it does |
 | --- | --- |
-| **Flyout** | Two-by-two provider cards (5-hour / weekly, `used/total %`), plus a **Network** card with live download and upload speed, the data used in the last hour, and the apps using the network right now. Click the Network card (or the ⇅ button) to open the full Network usage window. It rests flush on top of the taskbar. **Open flyout** / **Hide flyout**. Click outside the panel to close it. On Windows, **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks the panel just above the taskbar. |
+| **Flyout** | Two-by-two provider cards (5-hour / weekly, `used/total %`), plus a **Network** card with live download and upload speed, the data used in the last hour, and the apps using the network right now. Click the Network card (or the ⇅ button) to open the full Network usage window. The footer shows the version and the [automatic update](#automatic-updates) status (**Up to date**, **Downloading 1.2.0… 42%**, …) with **Check now**. It rests flush on top of the taskbar. **Open flyout** / **Hide flyout**. Click outside the panel to close it. On Windows, **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks the panel just above the taskbar. |
 | **Chips** | Small strip with each company’s mark (Anthropic, OpenAI, Gemini, xAI) plus `82/100`, and a network chip with live speed (`↓ 1.2 MB/s ↑ 40 KB/s`; click it to open Network usage). On Windows, **Snap chips to taskbar** keeps them in an empty gap on the bar, as tall as the taskbar with 2px spare above and below (the network chip then shows download over upload), and stay visible while the Start menu or Quick Settings is open; if the bar has no room, the strip **pops out just above the taskbar**. On macOS and Linux the strip floats and can be dragged anywhere. If the overlay hits a paint/layout problem, the strip shows **loading…** instead of going blank, then the meters return. |
 | **Network usage window** | Live download and upload speed for every app, history for the chosen time range, per-minute charts, data caps, blocking and connection logs. Open it from the tray menu (**Network usage…**) or start the app with `--network`. |
 | **Tray icon** | A Usage Monitor icon in the notification area / menu bar; its tooltip shows the live network speed. **Click** it to show the chips again. **Right-click** for the menu (on Linux the menu opens on click). **Double-click** opens the flyout. |
-| **Notifications** | A silent notification the first time a plan bar crosses 80% used, and when an app reaches its network data cap. |
+| **Notifications** | A silent notification the first time a plan bar crosses 80% used, when an app reaches its network data cap, and when Usage Monitor updates itself. |
 
 ![Chips, flyout and network window](docs/screenshots/overview.png)
 
@@ -116,9 +117,9 @@ Download the installer for your platform from [**Releases**](https://github.com/
 
 | Platform | Command | Files |
 | --- | --- | --- |
-| Windows | `npm run dist` | `UsageMonitor-Setup-1.0.0.exe` (installer), `UsageMonitor-portable-1.0.0.exe` (single-file portable), `Usage Monitor-1.0.0-win.zip` (unpacked folder; best for **Start with Windows**) |
-| macOS | `npm run dist:mac` (on a Mac) | `UsageMonitor-1.0.0-<arch>.dmg`, `.zip` |
-| Linux | `npm run dist:linux` (on Linux) | `UsageMonitor-1.0.0-x86_64.AppImage`, `.tar.gz` |
+| Windows | `npm run dist` | `UsageMonitor-Setup-1.1.0.exe` (installer; updates itself), `UsageMonitor-portable-1.1.0.exe` (single-file portable), `Usage Monitor-1.1.0-win.zip` (unpacked folder) |
+| macOS | `npm run dist:mac` (on a Mac) | `UsageMonitor-1.1.0-<arch>.dmg`, `.zip` |
+| Linux | `npm run dist:linux` (on Linux) | `UsageMonitor-1.1.0-x86_64.AppImage` (updates itself), `.tar.gz` |
 
 ```sh
 npm install
@@ -127,7 +128,7 @@ npm run dist        # or dist:mac / dist:linux
 
 Builds are unsigned. On macOS, open the app with right-click → **Open** the first time.
 
-To publish a release, bump `version` in `package.json` and commit, then either push a matching tag (`git tag v1.0.1 && git push origin v1.0.1`) or open **Actions → Release → Run workflow** and tick **publish**. The workflow tests, builds all three platforms, creates the tag if needed and attaches the installers to a GitHub release.
+To publish a release, bump `version` in `package.json`, add a section to [`CHANGELOG.md`](CHANGELOG.md) and commit, then either push a matching tag (`git tag v1.1.1 && git push origin v1.1.1`) or open **Actions → Release → Run workflow** and tick **publish**. The workflow tests, builds all three platforms, creates the tag if needed and attaches the installers plus the update metadata (`latest.yml`, `latest-linux.yml`, `latest-mac.yml`, `*.blockmap`) to a GitHub release. Installed copies pick the release up on their next check.
 
 Sign in to the CLIs once (`claude`, `codex login`, `agy`, `grok`) so the meters can read usage. A packaged copy still uses those same local logins; it does not replace the CLIs.
 
@@ -179,7 +180,18 @@ The first launch:
 
 To disable, right-click the flyout, chips or tray icon and uncheck the login option.
 
-With **Check for updates at startup** enabled (default), a launch also fetches `origin` from GitHub. If `main` is ahead of your copy, a Yes/No dialog appears before the meters keep running. **No** skips until the next start. The check needs Git on PATH and a clone of [sb-git-cs/usage-monitor](https://github.com/sb-git-cs/usage-monitor).
+## Automatic updates
+
+With **Install updates automatically** on (the default), Usage Monitor checks GitHub about 8 seconds after it starts, 30 seconds after the computer wakes or is unlocked (at most every 30 minutes), and every six hours while it runs. If it is offline it retries after 1, 5 and 15 minutes. When there is a new version it installs it and restarts by itself, with a notification; it waits while you are working in the Network usage window or a menu.
+
+| How you installed it | What happens |
+| --- | --- |
+| `git clone` + `npm start` | Fetches GitHub and fast-forwards your branch (its upstream, or `origin/main`). If `package.json` or `package-lock.json` changed, `scripts/post-update.js` runs `npm ci` after the app has quit, then starts it again. Needs `git` and `node` on PATH. Skipped (and shown in the flyout) when you have uncommitted changes, local commits that are not on GitHub, or a detached checkout. |
+| Windows installer (`UsageMonitor-Setup-*.exe`) | Downloads the new installer from the GitHub release (only the changed blocks when it can), checks its SHA-512, installs silently into the same folder and restarts. No administrator prompt. |
+| Linux AppImage | Downloads the new AppImage, replaces the old one and restarts. **Start at login** follows the new file. |
+| Portable `.exe`, `.zip`, `.tar.gz`, macOS `.dmg` | These can't replace themselves (macOS only allows in-place updates for signed apps), so you get one notification per new version; click it, or **Download** in the flyout, to get the file for your system. |
+
+**Check for updates now** (right-click menu, or **Check now** in the flyout footer) runs a check at any time, also when automatic updates are off. Activity is written to `logs/main.log` (and `logs/update.log` for dependency reinstalls) in the local data folder listed under [Privacy](#privacy). Copies older than 1.1.0 need one manual update to get this.
 
 ## Use
 
@@ -194,8 +206,8 @@ With **Check for updates at startup** enabled (default), a launch also fetches `
   - **Refresh every** — 5, 15, 30, or 60 seconds (default **5s**)
   - **Open flyout** / **Hide flyout**
   - **Start with Windows** / **Open at login** / **Start at login** (on by default after first launch)
-  - **Check for updates at startup** (on by default). If a newer version is on GitHub, it asks **Yes / No**. Yes runs `git pull --ff-only` and `npm ci`, then restarts Usage Monitor.
-  - **Check for updates now**
+  - **Install updates automatically** (on by default); see [Automatic updates](#automatic-updates)
+  - **Check for updates now**, followed by the current version and update status
   - Windows only: **Snap flyout to taskbar** / **Unsnap flyout from taskbar**, **Snap chips to taskbar** / **Unsnap chips from taskbar**
   - Quit
 - Drag flyout or chips **from the title bar / dotted grip** to move them anywhere. Positions are saved.
@@ -227,8 +239,8 @@ The screenshots in `docs/screenshots` are produced by `npm run screenshots`, whi
 - Reverse DNS for recorded addresses is off by default; when on, lookups go to your DNS server
 - Reads the credentials the CLIs already wrote (`~/.claude`, `.codex`, `.gemini`, `.grok`; on Windows also the Credential Manager entry `gemini:antigravity`; on macOS the Keychain item `Claude Code-credentials`)
 - Polls each provider’s usage endpoint; never sends prompts, files, or chat history
-- If **Check for updates at startup** is on, it runs `git fetch` against this GitHub repo (no extra personal data)
-- Settings, logs and caches stay under `%APPDATA%\UsageMonitor` and `%LOCALAPPDATA%\UsageMonitor` (Windows), `~/Library/Application Support/UsageMonitor` (macOS), or `~/.config/UsageMonitor` and `~/.local/share/UsageMonitor` (Linux). Network records are in `network.db` there unless you choose another folder
+- Update checks only contact GitHub: `git fetch` for a clone, the release feed and files for an installed copy, and the public releases API for portable/zip/macOS copies. No personal data is sent
+- Settings, logs (`logs/main.log`) and caches stay under `%APPDATA%\UsageMonitor` and `%LOCALAPPDATA%\UsageMonitor` (Windows), `~/Library/Application Support/UsageMonitor` (macOS), or `~/.config/UsageMonitor` and `~/.local/share/UsageMonitor` (Linux). Network records are in `network.db` there unless you choose another folder
 
 ## Troubleshooting
 
@@ -245,7 +257,8 @@ The screenshots in `docs/screenshots` are produced by `npm run screenshots`, whi
 | Block has no effect (Windows) | Windows Firewall must be on for the current network; the window warns when it is off. |
 | An app is missing on Linux | UDP-only and very short-lived connections can't be counted without root; see **Settings → What this can and can't see**. |
 | Does not start at login | Leave the login option checked; on Windows confirm `Usage Monitor.vbs` exists in the Startup folder. |
-| Update check does nothing | Needs a `git clone` of this repo and `git` on PATH. Use **Check for updates now** to see the error. Local uncommitted changes can block `git pull`. |
+| Update didn't install | The flyout footer says why (for example uncommitted changes in a clone, or offline). Use **Check for updates now** for the full message, and see `logs/main.log`. A clone needs `git` (and `node` when dependencies change) on PATH; the portable, zip, tar.gz and macOS builds only notify, see [Automatic updates](#automatic-updates). |
+| Something else went wrong | Errors are logged to `logs/main.log` in the local data folder (`%LOCALAPPDATA%\UsageMonitor`, `~/Library/Application Support/UsageMonitor` or `~/.local/share/UsageMonitor`). |
 | Extra Electron window / dies with the terminal | Use a packaged build or `npm start` (detached). Quit only from the right-click **Quit** menu. |
 | Quit | Right-click chips or flyout → **Quit**. Hiding the flyout or closing the network window only hides them. |
 

@@ -45,6 +45,7 @@ async function check(file) {
     await win.loadFile(path.join(source, `ui/${file}.html`));
     win.webContents.send("usage://snapshot", snapshot);
     win.webContents.send("usage://net", netSummary);
+    if (file === "flyout") win.webContents.send("usage://update", { current: "1.1.0", build: null, status: "skipped", auto: true, message: hostile });
     await new Promise((resolve) => setTimeout(resolve, 200));
     const result = await win.webContents.executeJavaScript(`({
       text: document.body.textContent,
@@ -54,6 +55,7 @@ async function check(file) {
       cards: document.querySelectorAll('.provider').length,
       chips: document.querySelectorAll('.pct-icon').length,
       net: document.getElementById('net').hidden ? null : document.getElementById('net').textContent.replace(/\\s+/g, ' ').trim(),
+      update: document.getElementById('update') && !document.getElementById('update').hidden ? document.getElementById('update').textContent.replace(/\\s+/g, ' ').trim() : null,
       node: typeof require,
       clickable: (() => {
         const el = document.querySelector('#refresh, .pct-icon');
@@ -73,6 +75,11 @@ async function check(file) {
       assert.equal(result.cards, 4);
       assert.deepEqual(result.widths, ["25%", "90%", "80%", "0%"]);
       assert.equal(result.reds, 2);
+      assert.equal(result.update, `v1.1.0 ${hostile} Check now`, "update status renders as text with its action");
+      win.webContents.send("usage://update", { current: "1.1.0", status: "downloading", latest: "1.2.0", progress: 42, auto: true });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(await win.webContents.executeJavaScript(`document.getElementById('updateStatus').textContent`), "Downloading 1.2.0… 42%");
+      assert.equal(await win.webContents.executeJavaScript(`document.getElementById('updateAction').hidden`), true, "no action while an update is on its way");
     } else {
       assert.equal(result.chips, 4);
       assert.equal(result.net, "↓1.5 MB/s↑30 KB/s");
@@ -205,6 +212,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("usage://get-interval", () => 5);
   ipcMain.handle("usage://get-chips-docked", () => true);
   ipcMain.handle("usage://get-flyout-state", () => ({ docked: false, pinned: false }));
+  ipcMain.handle("usage://get-update", () => null);
   ipcMain.handle("net:state", () => netState);
   ipcMain.handle("net:icon", () => null);
   ipcMain.handle("net:series", () => netSeries);

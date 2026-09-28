@@ -28,4 +28,7 @@ contextBridge.exposeInMainWorld("usage", {
   dragBegin: (sx, sy) => ipcRenderer.send("usage://drag-begin", sx, sy),
   dragTo: (sx, sy) => ipcRenderer.send("usage://drag-to", sx, sy),
   dragEnd: () => ipcRenderer.send("usage://drag-end"),
+  onUpdate: (cb) => ipcRenderer.on("usage://update", (_e, state) => cb(state)),
+  getUpdate: () => ipcRenderer.invoke("usage://get-update"),
+  updateAction: () => ipcRenderer.send("usage://update-action"),
 });

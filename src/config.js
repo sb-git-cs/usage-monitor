@@ -6,7 +6,7 @@ const ALLOWED_INTERVALS = [5, 15, 30, 60];
 
 const DEFAULTS = {
   poll_interval_secs: 5,
-  config_version: 5,
+  config_version: 6,
   chips_docked: true,
   chips_hidden: false,
   chips_show_network: true,
@@ -21,7 +21,9 @@ const DEFAULTS = {
   flyout_dock_x: null,
   flyout_dock_y: null,
   autostart: true,
-  check_updates_on_startup: true,
+  auto_update: true,
+  update_notified_version: "",
+  update_notified_at: 0,
   notify_on_limit_reached: true,
   adapters: {
     claude: { refresh_tokens: true },
@@ -94,6 +96,13 @@ function ensure() {
   if (fileVersion < 5) {
     cfg.check_updates_on_startup = true;
     cfg.config_version = 5;
+    dirty = true;
+  }
+  if (fileVersion < 6) {
+    // "Check for updates at startup" became "Install updates automatically"; an opt-out carries over.
+    cfg.auto_update = cfg.check_updates_on_startup !== false;
+    delete cfg.check_updates_on_startup;
+    cfg.config_version = 6;
     dirty = true;
   }
   if (!ALLOWED_INTERVALS.includes(Number(cfg.poll_interval_secs))) {

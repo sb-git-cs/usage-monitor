@@ -40,6 +40,8 @@ npm run test:ui   # real Electron windows, offscreen
 | Path | What it holds |
 | --- | --- |
 | `src/main.js` | Electron main process: windows, tray, menus |
+| `src/updater.js`, `scripts/post-update.js` | Automatic updates (git checkouts, installer/AppImage via electron-updater, notify-only formats) |
+| `src/log.js` | Main-process log file (`logs/main.log`) and crash handlers |
 | `src/adapters/` | One file per provider; reads the CLI login and fetches usage |
 | `src/poller.js`, `src/models.js` | Polling, caching and quota normalization |
 | `src/net/` | Network usage: capture providers per OS, engine, SQLite store |
@@ -50,4 +52,4 @@ npm run test:ui   # real Electron windows, offscreen
 
 ## Releasing
 
-Bump `version` in `package.json` and commit, then push a matching tag (`git tag v1.0.1 && git push origin v1.0.1`) or run **Actions → Release → Run workflow** with **publish** ticked. The Release workflow builds every platform, creates the tag if needed and publishes the installers.
+Bump `version` in `package.json`, add a `CHANGELOG.md` section and commit, then push a matching tag (`git tag v1.0.1 && git push origin v1.0.1`) or run **Actions → Release → Run workflow** with **publish** ticked. The Release workflow builds every platform, creates the tag if needed and publishes the installers together with `latest*.yml` and `*.blockmap`, which installed copies read to update themselves. Never delete those files from a release.

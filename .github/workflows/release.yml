@@ -77,12 +77,16 @@ jobs:
         with:
           name: installers-${{ runner.os }}
           if-no-files-found: error
+          # latest*.yml and the .blockmap files are what installed copies read to update
+          # themselves (electron-updater), so they ship with every release.
           path: |
             dist/*.exe
             dist/*.zip
             dist/*.dmg
             dist/*.AppImage
             dist/*.tar.gz
+            dist/*.blockmap
+            dist/latest*.yml
 
   release:
     needs: [prepare, build]
@@ -97,6 +101,40 @@ jobs:
           path: installers
           merge-multiple: true
       - run: ls -la installers
+      - name: Check update metadata
+        run: |
+          for f in latest.yml latest-linux.yml latest-mac.yml; do
+            test -s "installers/$f" || { echo "::error::$f is missing, installed copies could not update"; exit 1; }
+          done
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+          path: repo
+      - name: Release notes
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          version="${TAG#v}"
+          {
+            echo "## Download"
+            echo
+            echo "| Platform | File |"
+            echo "| --- | --- |"
+            echo "| Windows | \`UsageMonitor-Setup-*.exe\` (installer, updates itself) or \`UsageMonitor-portable-*.exe\` (no install) |"
+            echo "| macOS (Apple silicon / Intel) | \`UsageMonitor-*-arm64.dmg\` / \`UsageMonitor-*-x64.dmg\` |"
+            echo "| Linux | \`UsageMonitor-*.AppImage\` (updates itself) |"
+            echo
+            echo "Builds are unsigned. Windows SmartScreen: **More info → Run anyway**. macOS: right-click the app → **Open** the first time."
+            echo
+            echo "**Updates:** from 1.1.0 on, the Windows installer and the Linux AppImage update themselves (at launch, after the computer wakes and every six hours). The portable exe, zip/tar.gz folders and the macOS app show a notification with a download link. Copies older than 1.1.0 need one manual update. Keep \`latest*.yml\` and \`*.blockmap\` attached to this release: installed copies read them."
+            echo
+            echo "After installing, sign in once to the CLIs you want metered: \`claude\`, \`codex login\`, \`agy\`, \`grok\`."
+            echo
+            # The matching CHANGELOG.md section, if there is one.
+            awk -v v="$version" 'index($0, "## " v " ") == 1 { found = 1; print "## What changed"; next } /^## / && found { exit } found' repo/CHANGELOG.md
+          } > notes.md
+          cat notes.md
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
@@ -104,15 +142,4 @@ jobs:
           files: installers/*
           generate_release_notes: true
           fail_on_unmatched_files: true
-          body: |
-            ## Download
-
-            | Platform | File |
-            | --- | --- |
-            | Windows | `UsageMonitor-Setup-*.exe` (installer) or `UsageMonitor-portable-*.exe` (no install) |
-            | macOS (Apple silicon / Intel) | `UsageMonitor-*-arm64.dmg` / `UsageMonitor-*-x64.dmg` |
-            | Linux | `UsageMonitor-*.AppImage` |
-
-            Builds are unsigned. Windows SmartScreen: **More info → Run anyway**. macOS: right-click the app → **Open** the first time.
-
-            After installing, sign in once to the CLIs you want metered: `claude`, `codex login`, `agy`, `grok`.
+          body_path: notes.md
