@@ -1,0 +1,27 @@
+# Changelog
+
+## 1.1.0 — 2026-09-28
+
+### Automatic updates
+
+- Usage Monitor now updates itself. It checks GitHub about 8 seconds after it starts, 30 seconds after the computer wakes or is unlocked, and every six hours, retries after 1, 5 and 15 minutes when offline, then installs the new version and restarts with a notification. It waits while you are working in the Network usage window or a menu.
+- **Windows installer** and **Linux AppImage**: the new release is downloaded (only the changed blocks when possible), its SHA-512 checked, installed silently and started.
+- **git clone**: fast-forwards to GitHub. Dependencies are reinstalled after the app has quit (`scripts/post-update.js`), because `npm ci` would delete the Electron binary the app runs from. Uncommitted changes, local commits and detached checkouts are left alone and reported.
+- **Portable exe, zip, tar.gz and macOS**: one notification per new version with a direct download link, since these can't replace themselves.
+- **Install updates automatically** replaces **Check for updates at startup** (an opt-out carries over). **Check for updates now** always works. The flyout footer shows the version and update status with **Check now** / **Download**.
+- Releases now publish `latest.yml`, `latest-linux.yml`, `latest-mac.yml` and `*.blockmap` for installed copies to read.
+
+### Fixes from the 2026-09-28 audit
+
+See [`docs/audit-2026-09-28.md`](docs/audit-2026-09-28.md) for details.
+
+- Updating a clone no longer breaks the app: the old updater ran `npm ci` while running, deleting its own Electron binary (A-01). Clones without an upstream branch update from `origin/main` (A-02); diverged history and hidden git credential prompts no longer look like failures (A-03, A-04); restarts go through normal shutdown so settings and network records are saved (A-05).
+- Windows: Gemini no longer starts PowerShell and compiles a Credential Manager reader on every poll when you aren't signed in to Gemini (A-08). The `agy` binary is read asynchronously and only once per version when looking for its OAuth client (A-09).
+- Chips and flyout move back onto a remaining screen when a monitor is unplugged (A-10).
+- Errors, crashes and update activity are written to `logs/main.log` (1 MB, previous file kept) instead of being lost, and an uncaught error no longer opens a modal error box (A-11).
+- The snapshot and alert caches are no longer rewritten every poll when nothing changed (A-12).
+- Network usage: a failed CSV export shows why (A-13); a banner warns when records can't be saved, for example on a full disk or a removed records drive (A-14); domain updates for recorded connections use an index (A-17).
+
+## 1.0.0 — 2026-09-26
+
+First release: plan meters for Claude Code, Codex, Gemini and Grok Build; per-app network usage on Windows, macOS and Linux; installers for all three platforms.
