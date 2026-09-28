@@ -9,10 +9,21 @@ const { Engine } = require("../src/net/engine");
 const { Store } = require("../src/net/store");
 const { normalizeNet } = require("../src/net/settings");
 
-function tempDir(t) {
+function tempDir(t, before) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "usage-monitor-audit-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }));
+  // Windows can't delete an open database, so anything holding files closes first.
+  t.after(() => {
+    if (before) before();
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  });
   return dir;
+}
+
+function tempStore(t) {
+  let store = null;
+  const dir = tempDir(t, () => store && store.close());
+  store = new Store(path.join(dir, "network.db"));
+  return store;
 }
 
 test("A-07: 'check for updates at startup' becomes 'install updates automatically', keeping an opt-out", () => {
@@ -121,9 +132,7 @@ test("A-12: unchanged caches are not rewritten on every poll", () => {
 });
 
 test("A-14: a failing records flush is reported without breaking the engine, and cleared once saving works", (t) => {
-  const dir = tempDir(t);
-  const store = new Store(path.join(dir, "network.db"));
-  t.after(() => store.close());
+  const store = tempStore(t);
   const clock = { now: Date.now() };
   const engine = new Engine({ store, settings: normalizeNet({}), now: () => clock.now });
   const flush = store.flush.bind(store);
@@ -140,9 +149,7 @@ test("A-14: a failing records flush is reported without breaking the engine, and
 });
 
 test("A-17: connection domains are updated through an index on the remote address", (t) => {
-  const dir = tempDir(t);
-  const store = new Store(path.join(dir, "network.db"));
-  t.after(() => store.close());
+  const store = tempStore(t);
   const plan = store.db.prepare("EXPLAIN QUERY PLAN UPDATE connections SET domain = ? WHERE remote = ? AND domain IS NULL").all("example.com", "1.2.3.4");
   assert.ok(plan.some((row) => /connections_remote/.test(row.detail)), JSON.stringify(plan));
 });
