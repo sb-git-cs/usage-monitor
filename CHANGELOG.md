@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Windows: GPU and disk readings come from one PowerShell process that stays running, instead of starting PowerShell every 5 seconds, which roughly halves the CPU the readings cost.
+
 ## 1.2.0 — 2026-09-29
 
 ### Two-row chips and system readings
