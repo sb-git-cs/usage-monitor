@@ -7,3 +7,6 @@
 *.css text
 *.md text
 *.json text
+*.jar binary
+*.bat text eol=crlf
+*.webp binary

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The paired computer is reached over plain HTTP on the local network; everything it sends is
+     encrypted and authenticated by the app itself (docs/phone-protocol.md). GitHub is HTTPS. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

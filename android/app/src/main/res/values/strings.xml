@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Usage Monitor</string>
+    <string name="tile_label">Network speed</string>
+    <string name="widget_plans">Plan meters</string>
+    <string name="widget_data">Data usage</string>
+    <string name="widget_device">Phone status</string>
+    <string name="widget_plans_description">Claude Code, Codex, Gemini and Grok Build usage from your computer</string>
+    <string name="widget_data_description">Mobile and Wi-Fi data today and this billing cycle</string>
+    <string name="widget_device_description">Memory, storage, battery and CPU clock</string>
+</resources>
