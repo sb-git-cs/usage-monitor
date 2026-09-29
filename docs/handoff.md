@@ -16,6 +16,13 @@ Audit and fix defects, bugs and usage miscalculations; harden the Windows app an
 
 ## Verification
 
+### Settings window, forecasts, phone sharing and the Android app (2026-09-29)
+
+- Desktop: settings window, configurable warning level, quiet hours, forecast line and notification, Beta update channel, and the phone link (`src/phone.js`, protocol in `docs/phone-protocol.md`). `npm test` 112 tests, 111 passed, 1 skipped. `test/phone.test.js` runs the real HTTP server: a paired client gets an encrypted snapshot that decrypts to the expected payload; unsigned, wrongly signed, stale and unknown requests are refused; repeated failures are rate limited; removing a phone revokes it.
+- Windows hardware worker: under PowerShell 7 the first sample took 594 ms and the next 15 ms from the same process. Windows PowerShell 5.1 on a real desktop still needs a check.
+- Android (`android/`): the pairing crypto matches the desktop on the shared vectors in `test/fixtures/phone-vectors.json`. Unit tests cover billing cycles, projections, versions, the update manifest, snapshot parsing and formatting. The Android SDK can't be downloaded in the build sandbox, so the app, lint and debug APK are built by the `android` job in Checks.
+- Not yet tried on a phone: pairing by QR over real Wi-Fi, the three widgets on a launcher, the status bar speed and tile, Usage access data against Android's own Data usage screen, and a self-update between two signed releases. The first signed release needs the `ANDROID_KEYSTORE_*` secrets (see `android/README.md`).
+
 ### Two-row chips merged with 1.1.0 (2026-09-29)
 
 - The uncommitted chips work had been stashed while the tree synced to 1.1.0, then re-applied with conflicts in README.md, package.json, package-lock.json, `scripts/ui-smoke.js` and `src/main.js`. The resolutions are marker-free and keep both sides. Every line the stash added was checked against the resulting files before the stash was dropped.

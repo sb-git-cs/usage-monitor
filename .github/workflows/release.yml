@@ -112,10 +112,10 @@ jobs:
             exit 0
           fi
           export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$ANDROID_KEYSTORE_PATH"' EXIT
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$ANDROID_KEYSTORE_PATH"
           cd android
           ./gradlew --no-daemon testReleaseUnitTest releaseBundle
-          rm -f "$ANDROID_KEYSTORE_PATH"
           ls -la app/build/dist
       - uses: actions/upload-artifact@v7
         with:
