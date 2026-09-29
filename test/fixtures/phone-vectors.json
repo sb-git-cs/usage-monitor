@@ -1,0 +1,20 @@
+{
+  "code": "ABCDE-FGHJK-MNPQR-STVWX",
+  "normalized": "ABCDEFGHJKMNPQRSTVWX",
+  "device_id": "6a4af7fa622e289e",
+  "master_key": "6PoRj3puqautqUcE3QYcxgNL9yWXtvFrzOvUkjpuVoA",
+  "mac_key": "JCiQNqTUrYSpw1xo0Eu_5luA9DYxjlssYUeVMX9Enkc",
+  "enc_key": "YGcOY1HAGXqbi3swowj-aett8jJHvi4HAfWNR9nhx-I",
+  "method": "GET",
+  "path": "/v1/snapshot",
+  "time": 1790000000000,
+  "signature": "NKfwHMLI0VySz_NqX8ZiMaQieRbk_tPw-e5K41cybjo",
+  "iv": "AAECAwQFBgcICQoL",
+  "box": {
+    "v": 1,
+    "iv": "AAECAwQFBgcICQoL",
+    "data": "gD4JUI1XYSB9ldHfwhBRb-5Wk1LrtZwsI8PB-RE668uaHxPwdg49MYkMciqVbf4rk7cvTvV7FDJmInJGzFZxr1ZP399z2SCgH4_jIsvGjoFBpRbKXZi2BkyO0rOrMbFacKLTz3QEsBjy5AQNA96sathPJwDPr8yUzraIn5vc5A"
+  },
+  "plaintext": "{\"v\":1,\"name\":\"desk\",\"providers\":[{\"id\":\"claude\",\"windows\":[{\"kind\":\"five_hour\",\"label\":\"5h\",\"used_pct\":42}]}]}",
+  "link": "usagemonitor://pair?h=192.168.1.20%2C100.101.102.103&p=47329&c=ABCDE-FGHJK-MNPQR-STVWX&n=Studio+PC"
+}
