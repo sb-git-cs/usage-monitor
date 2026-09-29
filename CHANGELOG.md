@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 — 2026-09-29
+
+### Android app, settings window and forecasts
 
 - **Settings window** (tray menu → Settings…, or ⚙ in the flyout): start at login, refresh interval, the "warn at" percentage (50–95%, was fixed at 80%), limit and forecast notifications, quiet hours, which chips the strip shows, automatic updates with a Stable or Beta channel, and phone sharing.
 - **Burn-rate forecast**: the flyout shows when a plan window will reach 100% at the current pace, if that happens before it resets, and an optional notification says so once per window when it is half used.

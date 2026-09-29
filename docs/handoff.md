@@ -61,9 +61,9 @@ Audit and fix defects, bugs and usage miscalculations; harden the Windows app an
 
 `npm run dist` produces:
 
-- `dist/UsageMonitor-Setup-1.2.0.exe`
-- `dist/UsageMonitor-portable-1.2.0.exe`
-- `dist/Usage Monitor-1.2.0-win.zip`
+- `dist/UsageMonitor-Setup-1.3.0.exe`
+- `dist/UsageMonitor-portable-1.3.0.exe`
+- `dist/Usage Monitor-1.3.0-win.zip`
 - `dist/win-unpacked/Usage Monitor.exe`
 
 The build is unsigned: Authenticode inspection reported `NotSigned`. The builder's signing log does not establish that a signing certificate was used. 1.2.0 is published (tag `v1.2.0`, 2026-09-29): Windows installer, portable exe and zip, macOS dmg and zip for both architectures, Linux AppImage and tar.gz, with `latest*.yml` and the blockmaps attached. It is the first release the 1.1.0 updater can deliver; a real 1.1.0 to 1.2.0 installer upgrade has not been tried yet.
