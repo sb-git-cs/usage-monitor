@@ -52,12 +52,12 @@ Audit and fix defects, bugs and usage miscalculations; harden the Windows app an
 
 `npm run dist` produces:
 
-- `dist/UsageMonitor-Setup-1.0.0.exe`
-- `dist/UsageMonitor-portable-1.0.0.exe`
-- `dist/Usage Monitor-1.0.0-win.zip`
+- `dist/UsageMonitor-Setup-1.2.0.exe`
+- `dist/UsageMonitor-portable-1.2.0.exe`
+- `dist/Usage Monitor-1.2.0-win.zip`
 - `dist/win-unpacked/Usage Monitor.exe`
 
-The build is unsigned: Authenticode inspection reported `NotSigned`. The builder's signing log does not establish that a signing certificate was used. No release was published. The chip selection correction is being committed and pushed to `origin/main`; local build artifacts were rebuilt with the correction.
+The build is unsigned: Authenticode inspection reported `NotSigned`. The builder's signing log does not establish that a signing certificate was used. 1.1.0 is published (tag `v1.1.0`). 1.2.0 is prepared (version, changelog, docs) but not tagged or published: run the Release workflow from `main` with "publish" ticked, or push tag `v1.2.0`. It is the first release the 1.1.0 updater can deliver.
 
 ## Release acceptance still needed
 

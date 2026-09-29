@@ -119,9 +119,9 @@ Download the installer for your platform from [**Releases**](https://github.com/
 
 | Platform | Command | Files |
 | --- | --- | --- |
-| Windows | `npm run dist` | `UsageMonitor-Setup-1.1.0.exe` (installer; updates itself), `UsageMonitor-portable-1.1.0.exe` (single-file portable), `Usage Monitor-1.1.0-win.zip` (unpacked folder) |
-| macOS | `npm run dist:mac` (on a Mac) | `UsageMonitor-1.1.0-<arch>.dmg`, `.zip` |
-| Linux | `npm run dist:linux` (on Linux) | `UsageMonitor-1.1.0-x86_64.AppImage` (updates itself), `.tar.gz` |
+| Windows | `npm run dist` | `UsageMonitor-Setup-1.2.0.exe` (installer; updates itself), `UsageMonitor-portable-1.2.0.exe` (single-file portable), `Usage Monitor-1.2.0-win.zip` (unpacked folder) |
+| macOS | `npm run dist:mac` (on a Mac) | `UsageMonitor-1.2.0-<arch>.dmg`, `.zip` |
+| Linux | `npm run dist:linux` (on Linux) | `UsageMonitor-1.2.0-x86_64.AppImage` (updates itself), `.tar.gz` |
 
 ```sh
 npm install
