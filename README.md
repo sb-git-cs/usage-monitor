@@ -6,12 +6,12 @@
 
 [![Checks](https://github.com/sb-git-cs/usage-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/sb-git-cs/usage-monitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android-lightgrey)
 [![GitHub stars](https://img.shields.io/github/stars/sb-git-cs/usage-monitor?style=social)](https://github.com/sb-git-cs/usage-monitor/stargazers)
 
 ![Usage Monitor flyout](docs/screenshots/tray-flyout.png)
 
-[Quick start](#quick-start) · [Features](#what-you-see) · [Network usage](#network-usage) · [Install](#install) · [Privacy](#privacy) · [Troubleshooting](#troubleshooting)
+[Quick start](#quick-start) · [Features](#what-you-see) · [Network usage](#network-usage) · [Settings](#settings) · [Android app](#android-app) · [Install](#install) · [Privacy](#privacy) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -22,7 +22,9 @@
 - **Find the bandwidth hog.** Live per-app download/upload speed, per-minute history, data caps and one-click blocking (Windows).
 - **Private by design.** Runs entirely on your machine. Stores byte counts only, never traffic contents.
 - **Stays current on its own.** Checks for a new version at launch, when your laptop wakes and every six hours, installs it and restarts. No manual updating.
-- **Cross-platform.** Windows 10/11, macOS 12+, and 64-bit Linux.
+- **See it coming.** A burn-rate forecast tells you when a window will hit 100% at your current pace, before it happens.
+- **On your phone too.** The Android app shows your computer's plan meters, your phone's mobile and Wi-Fi data against your data plan, and its CPU, memory and battery, with home screen widgets.
+- **Cross-platform.** Windows 10/11, macOS 12+, 64-bit Linux, and Android 10+.
 
 ## Quick start
 
@@ -45,7 +47,8 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 | **Chips** | Compact two-row strip with provider marks and percentages, stacked network speeds (click to open Network usage), and live system readings. On Windows, **Snap chips to taskbar** keeps the strip in an empty gap; if there is no room, it pops out above the taskbar. On macOS/Linux it floats and can be dragged anywhere. Click a provider to open the flyout; right-click for the menu. |
 | **Network usage window** | Live download and upload speed for every app, history for the chosen time range, per-minute charts, data caps, blocking and connection logs. Open it from the tray menu (**Network usage…**) or start the app with `--network`. |
 | **Tray icon** | A Usage Monitor icon in the notification area / menu bar; its tooltip shows the live network speed. **Click** it to show the chips again. **Right-click** for the menu (on Linux the menu opens on click). **Double-click** opens the flyout. |
-| **Notifications** | A silent notification the first time a plan bar crosses 80% used, when an app reaches its network data cap, and when Usage Monitor updates itself. |
+| **Notifications** | A silent notification the first time a plan bar crosses your warning level (80% unless you change it), when a window is on course to run out before it resets, when an app reaches its network data cap, and when Usage Monitor updates itself. None are shown during quiet hours. |
+| **Forecast** | Under each provider card in the flyout: when the window reaches 100% at the current pace (from the last hour of readings, or six hours for weekly windows), shown only if that is before it resets. |
 
 The chips now stack in **two compact rows**, with short provider percentages and stacked download/upload speeds. **CPU**, **MEM**, **GPU** (when detected), **DISK** activity and **SPACE** used sit alongside them. CPU and memory refresh every 2 seconds, GPU/disk activity every 5 seconds, and storage every 30 seconds. Hover DISK or SPACE for drive details: DISK shows the busiest physical HDD/SSD on Windows; SPACE shows the fullest mounted volume. On macOS/Linux, DISK shows read/write throughput and GPU utilization depends on driver support. An unavailable reading is shown as a dash.
 
@@ -98,6 +101,41 @@ See exactly which apps are using your internet, live and over time.
 **Windows helper.** The first time you open **Network usage**, click **Set up (needs administrator)** and approve the prompt. Usage Monitor compiles its helper from source (`helpers/windows/NetCapture.cs`) with the C# compiler built into Windows, installs it under `C:\Program Files\Usage Monitor Network Helper\<your account>`, and registers a scheduled task (`\UsageMonitor\NetCapture-<your account>`) that runs it as SYSTEM at sign-in and whenever Usage Monitor starts. Only administrators can change those files. The helper only talks to your own Usage Monitor over a local named pipe, and it only adds or removes block rules it created (group **Usage Monitor** in Windows Firewall). When a new version of the helper ships, the window offers **Update helper**. To remove it, open **Settings → Network helper → Remove helper**; do this before uninstalling Usage Monitor.
 
 **Honest limits.** None of this uses a packet driver, so full HTTPS URLs and packet contents can't be seen. They stay encrypted, and connection recording shows domains and IP addresses, not URLs. Speed throttling isn't included; use blocking or data caps to control heavy apps. Caps count while Usage Monitor is running. On Linux, UDP/QUIC traffic isn't countable without root, connections that open and close within a second can be missed, and apps owned by other users appear as **Other** unless Usage Monitor runs as root. macOS only allows per-app blocking through a signed network extension, so blocking isn't offered there.
+
+## Settings
+
+Open **Settings…** from the right-click menu, or the ⚙ button in the flyout.
+
+| Setting | What it does |
+| --- | --- |
+| Start at login, refresh interval | Same as the menu items. |
+| Warn at | The percentage (50–95%) at which chips and bars turn amber and the plan notification fires. |
+| Notifications | Limit warnings, forecast warnings, and quiet hours (for example 22:00 to 07:00) when nothing is shown. |
+| Chips | Which providers and system readings the chips strip shows, and whether network speed is on it. |
+| Updates | Install updates automatically, the **Stable** or **Beta** channel, and **Check now**. |
+| Phone | Share this computer's plan meters with the Android app: turn it on, scan the QR code with the phone, see and remove paired phones. |
+
+## Android app
+
+Download `UsageMonitor-<version>.apk` from [**Releases**](https://github.com/sb-git-cs/usage-monitor/releases/latest) on an Android 10+ phone and open it (Android asks once to allow installs from your browser).
+
+| Screen | What it shows |
+| --- | --- |
+| **Plans** | Your computer's Claude Code, Codex, Gemini and Grok Build meters, reset times and forecasts, plus its CPU, memory, GPU, disk and network. Read over your Wi-Fi every 30 seconds while the app is open. |
+| **Data** | Live download and upload speed; mobile and Wi-Fi data today and this billing cycle; data per app. Needs **Usage access**, which the app asks for. |
+| **Phone** | CPU clock per core, memory, storage, battery level, temperature and current, heat status. |
+| **Settings** | Pairing, status bar speed, data plan (billing day, monthly and daily caps, warning level), alerts and quiet hours, updates, permissions. |
+
+- **Widgets**: *Plan meters*, *Data usage* and *Phone status*. They refresh every 15 minutes in the background, every minute while the status bar speed is on, and whenever you open the app.
+- **Status bar speed**: the current speed as the notification icon, updated every second, with today's data in the notification. Switch it from Settings or the **Network speed** Quick Settings tile.
+- **Alerts**: plan warning, limit reached and forecast (like the desktop), and your mobile data cap at the warning level and when used up. Quiet hours apply.
+- **Updates itself**: checks GitHub when opened and every six hours, verifies the download's SHA-256 and that it is signed with the same key, then installs it. Android asks you to allow installing updates once, and to confirm the first update; from Android 12 later ones install on their own.
+
+**Pairing.** On the computer, open **Settings → Phone**, turn on sharing and click **Pair a phone…**; the code is good for 10 minutes while the window stays open. In the app, tap **Pair** and scan the QR code (or type the address and code). The phone and computer must be on the same network. The phone keeps a key derived from the code; the computer answers only signed requests from paired phones and encrypts every reply. Your CLI logins never leave the computer. See [`docs/phone-protocol.md`](docs/phone-protocol.md).
+
+**Honest limits.** Android doesn't let apps read how busy the CPU is, so the app shows how fast the cores run against their top speed. Android's data counts are kept in 2-hour blocks, so "today" can include a little of the evening before. Widgets can't refresh more often than every 15 minutes on their own. Away from the computer's network the Plans screen and widget show the last reading.
+
+**Building it.** `cd android && ./gradlew assembleDebug` (JDK 17 and the Android SDK). Release APKs are built and signed by the Release workflow; see [`android/README.md`](android/README.md) for the signing key.
 
 ## Requirements
 
@@ -201,6 +239,7 @@ With **Install updates automatically** on (the default), Usage Monitor checks Gi
 - **Tray icon** → show chips if they vanished. Right-click that icon for the menu. Double-click for the flyout.
 - **Right-click** flyout, chips, or the tray icon → menu
   - **Network usage…** — open the network window
+  - **Settings…** — see [Settings](#settings)
   - **Show chips** — bring the meters back if they went invisible
   - Hide / show chips
   - **Show network speed on chips** (on by default)
@@ -218,7 +257,7 @@ With **Install updates automatically** on (the default), Usage Monitor checks Gi
 
 Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-hour window reads `100/100%` in red.
 
-Chips show the current short window: 5-hour usage first, then daily usage when available. If neither is reported, they show another available quota such as weekly. Hover over a chip to see which window it shows. Warnings begin at 80%. Cached readings are marked stale (dashed chip borders); after a reported reset time passes, usage becomes unknown until the provider confirms the new reading. The app never assumes a reset means zero usage or invents the next reset date.
+Chips show the current short window: 5-hour usage first, then daily usage when available. If neither is reported, they show another available quota such as weekly. Hover over a chip to see which window it shows. Warnings begin at 80%, or the level you choose in [Settings](#settings). Cached readings are marked stale (dashed chip borders); after a reported reset time passes, usage becomes unknown until the provider confirms the new reading. The app never assumes a reset means zero usage or invents the next reset date.
 
 ## Development checks
 
@@ -230,6 +269,7 @@ node scripts/probe-capture.js # macOS/Linux: live capture of a curl download
 npm run screenshots           # regenerate docs/screenshots from the real UI with demo data
 npm audit --audit-level=high
 npm run dist
+cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug   # Android app (JDK 17, Android SDK)
 ```
 
 The screenshots in `docs/screenshots` are produced by `npm run screenshots`, which renders the real flyout, chips and network window offscreen with demo data (no real logins, usage or paths). The tests use synthetic credentials, responses and network samples. The UI smoke test uses hidden offscreen Electron windows and saves images under `.qa/`; it does not enable autostart or read your CLI logins. CI runs on Windows, macOS and Linux: unit and UI tests everywhere, the live capture probe on macOS and Linux, a compile and self-test of the Windows helper with Windows PowerShell 5.1, and an unpacked build per platform. See [`docs/review.md`](docs/review.md) for the defect list and [`docs/handoff.md`](docs/handoff.md) for release verification and remaining acceptance checks.
@@ -241,6 +281,8 @@ The screenshots in `docs/screenshots` are produced by `npm run screenshots`, whi
 - Reverse DNS for recorded addresses is off by default; when on, lookups go to your DNS server
 - Reads the credentials the CLIs already wrote (`~/.claude`, `.codex`, `.gemini`, `.grok`; on Windows also the Credential Manager entry `gemini:antigravity`; on macOS the Keychain item `Claude Code-credentials`)
 - Polls each provider’s usage endpoint; never sends prompts, files, or chat history
+- Phone sharing is off until you turn it on. When on, the computer listens on your local network (port 47329) and answers only phones paired with a code shown on its screen, with encrypted plan meters and system readings. Remove a phone in **Settings → Phone**
+- The Android app reads your phone's data counts with Usage access and keeps them on the phone. It only contacts your paired computer and GitHub (for updates)
 - Update checks only contact GitHub: `git fetch` for a clone, the release feed and files for an installed copy, and the public releases API for portable/zip/macOS copies. No personal data is sent
 - Settings, logs (`logs/main.log`) and caches stay under `%APPDATA%\UsageMonitor` and `%LOCALAPPDATA%\UsageMonitor` (Windows), `~/Library/Application Support/UsageMonitor` (macOS), or `~/.config/UsageMonitor` and `~/.local/share/UsageMonitor` (Linux). Network records are in `network.db` there unless you choose another folder
 

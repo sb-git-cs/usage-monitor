@@ -1,6 +1,6 @@
 # Phone link protocol (v1)
 
-How the Android app reads plan meters from Usage Monitor on a computer. The computer side is `src/phone.js`; the phone side is `android/app/src/main/java/app/usagemonitor/pairing/`. Both are tested against the same vectors in `test/fixtures/phone-vectors.json`.
+How the Android app reads plan meters from Usage Monitor on a computer. The computer side is `src/phone.js`; the phone side is `android/app/src/main/java/io/github/sbgitcs/usagemonitor/pairing/`. Both are tested against the same vectors in `test/fixtures/phone-vectors.json`.
 
 ## Turning it on
 
