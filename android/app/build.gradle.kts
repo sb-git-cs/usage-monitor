@@ -66,9 +66,6 @@ android {
     lint {
         abortOnError = true
         checkReleaseBuilds = false
-        // Problems go to the build log, where CI shows them.
-        textReport = true
-        textOutput = file("stdout")
         disable += setOf("GradleDependency", "NewerVersionAvailable", "OldTargetApi", "AndroidGradlePluginVersion")
     }
     testOptions {
