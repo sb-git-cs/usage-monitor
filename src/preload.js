@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("usage", {
   openTrayMenu: () => ipcRenderer.send("usage://tray-menu"),
   openNetwork: () => ipcRenderer.send("usage://open-network"),
   onNet: (cb) => ipcRenderer.on("usage://net", (_e, summary) => cb(summary)),
+  onSystem: (cb) => ipcRenderer.on("usage://system", (_e, summary) => cb(summary)),
   openUsage: (id) => ipcRenderer.send("usage://open-usage", id),
   getInterval: () => ipcRenderer.invoke("usage://get-interval"),
   setIntervalSecs: (secs) => ipcRenderer.send("usage://set-interval", secs),

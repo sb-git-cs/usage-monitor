@@ -58,3 +58,30 @@ No style-only findings.
 - Authenticode inspection reports NotSigned. Public signed distribution requires the owner's signing certificate; this review does not claim a signed release.
 
 DPI conversion follows [Electron screen documentation](https://www.electronjs.org/docs/latest/api/screen#screenscreentodiprectwindow-rect-windows).
+
+## Two-row chips and system metrics review (2026-09-29)
+
+No outstanding blockers or should-fix findings in this change. Fixed during verification:
+
+- **Should-fix — packaged hardware script execution:** PowerShell cannot execute a file inside app.asar. Electron now reads the bundled script and passes it as a fixed command argument. Verified with live readings from the packaged collector. `src/system.js:41`.
+- **Should-fix — short taskbar overflow:** Two rows overflowed a 28px strip. Reduced short-strip padding and line heights; real Electron layout tests now pass at 28, 36, 48 and 60px. `src/ui/shared.css:331`.
+
+Validation and platform limitations are recorded in `docs/handoff.md`.
+
+## Taskbar alignment follow-up (2026-09-29)
+
+- **Should-fix — fixed:** Docking tested the floating window's 50px height before applying a 44px taskbar fill, causing a two-row strip to reject a 48px taskbar. The placement path also skipped recentering for windows that merely fit within the taskbar. It now resizes to the intended docked height first and snaps both axes. `src/main.js:203`.
+- **Should-fix — fixed:** The shared resize helper ignored a one-pixel size difference, which could leave unequal taskbar insets. Exact size matches are now the only no-op. `src/main.js:57`.
+
+The user's saved docking preference was off; it was restored to true as requested. Native window bounds and a desktop capture verified full taskbar containment after restart. No outstanding findings for this fix.
+
+## Two-row chips merged with 1.1.0 (2026-09-29)
+
+The uncommitted chips work was stashed, the tree synced to the 1.1.0 release, and the stash re-applied with conflicts in README.md, package.json, package-lock.json, scripts/ui-smoke.js and src/main.js. The resolutions were reviewed: both sides are kept (`electron-updater` and `systeminformation`; `startUpdater()`/`updater.stop()` and the system poller start/stop; the flyout update message and the system snapshot in the smoke test) and the obsolete `scheduleStartupUpdateCheck` is gone. No conflict markers remain.
+
+- **Should-fix — fixed:** Windows MEM ran `si.mem()` every 2 seconds, and on Windows that call starts PowerShell with a `Win32_PageFileUsage` CIM query for swap figures the app discards. Measured here: about 270 ms and one PowerShell process per call. Memory now comes from `os.totalmem()`/`os.freemem()` on Windows (36.2% used versus 36.1% from the library on the same machine); other platforms are unchanged. `src/system.js:39`.
+- **Nit — fixed:** a hardware probe stalled for more than 15 seconds reset `gpuPresent`, hiding the GPU chip until the next good sample, contrary to the intent stated in the collector. Presence is now kept; only the readings are cleared. `src/system.js:105`.
+- **Docs — fixed:** the README overview and taskbar screenshots still showed the single-row chips. Regenerated `overview.png` and `tray-flyout.png`; the poster height now follows the flyout height because font metrics differ by platform and clipped the network image (`scripts/screenshots.js`). `network.png` was left as committed.
+- **Tests:** three new tests in `test/system.test.js` (memory source per platform, failed and late probes after stop, stalled probe keeps the GPU chip). Reverting either fix makes its test fail.
+
+Not changed, recorded for the owner: the Windows hardware sample (`src/system-windows.ps1`) costs about 450 ms of CPU per run (3 runs: 438–484 ms, about 1.5 s wall) and runs every 5 seconds, roughly 9% of one core, or 0.6% of this 16-thread CPU. About half is PowerShell start-up; the three CIM queries cost about 300, 270 and 20 ms warm. A persistent PowerShell worker would roughly halve it but adds a long-lived child process, so it was left as a decision rather than made here. `si.fsSize()` also starts PowerShell on Windows, but only every 30 seconds.

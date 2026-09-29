@@ -146,6 +146,7 @@
     }
   },
   "dependencies": {
-    "electron-updater": "6.8.10"
+    "electron-updater": "6.8.10",
+    "systeminformation": "5.33.14"
   }
 }

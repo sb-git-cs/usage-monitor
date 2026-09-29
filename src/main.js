@@ -9,6 +9,7 @@ const autostart = require("./autostart");
 const updater = require("./updater");
 const log = require("./log");
 const netUsage = require("./net");
+const systemUsage = require("./system");
 const { formatRateShort } = require("./net/format");
 
 const IS_WINDOWS = process.platform === "win32";
@@ -23,6 +24,8 @@ let chipsPopped = false;
 let ignoreFlyoutBlur = false;
 let poll;
 let latest;
+let systemPoll;
+let latestSystem;
 let saveTimer = null;
 
 function saveSoon() {
@@ -52,7 +55,7 @@ function setSizeKeepPos(win, w, h) {
   if (!win || win.isDestroyed()) return;
   const [x, y] = win.getPosition();
   const [cw, ch] = win.getSize();
-  if (Math.abs(cw - w) < 2 && Math.abs(ch - h) < 2) return;
+  if (cw === w && ch === h) return;
   placingFlyout = true;
   placingChips = true;
   win.setBounds({ x, y, width: Math.round(w), height: Math.round(h) });
@@ -198,23 +201,21 @@ function popChipsAboveTaskbar(w, h, extras) {
   return true;
 }
 
-function placeChipsDocked(opts = {}) {
+function placeChipsDocked() {
   if (!chips || chips.isDestroyed()) return;
-  const [w, h] = chips.getSize();
-  const [x, y] = chips.getPosition();
+  const [w, currentHeight] = chips.getSize();
+  // Test the docked height, not the taller floating window (which includes its outer margin).
+  const fillHeight = taskbarFillHeight();
+  const h = fillHeight || currentHeight;
   const extras = otherDockedRects("chips");
   const room = taskbarLayout.dockRoom(w, h, extras);
   if (!room.fits) {
-    popChipsAboveTaskbar(w, h, extras);
+    popChipsAboveTaskbar(w, currentHeight, extras);
     return;
   }
-  if (!opts.force && taskbarLayout.isWellDocked(x, y, w, h, extras)) {
-    cfg.chips_dock_x = x;
-    cfg.chips_dock_y = y;
-    setChipsPopped(false);
-    setChipsFill(taskbarFillHeight());
-    return;
-  }
+  setChipsFill(fillHeight);
+  setSizeKeepPos(chips, w, h);
+  // Always snap the cross axis too: being inside the taskbar does not mean it is centered.
   let pos;
   if (cfg.chips_dock_x != null) {
     pos = taskbarLayout.snapDocked(cfg.chips_dock_x, cfg.chips_dock_y || 0, w, h, extras);
@@ -887,7 +888,7 @@ function createWindows() {
 function createChips() {
   const win = createWindow({
     width: 340,
-    height: 28,
+    height: 48,
     focusable: false,
     hasShadow: false,
   });
@@ -908,6 +909,7 @@ function createChips() {
     win.webContents.send("usage://chips-popped", chipsPopped);
     win.webContents.send("usage://chips-fill", chipsFill);
     if (latest) win.webContents.send("usage://snapshot", latest);
+    if (latestSystem) win.webContents.send("usage://system", latestSystem);
   });
   win.webContents.on("render-process-gone", () => {
     try {
@@ -1086,6 +1088,10 @@ if (!gotLock) {
     createTray();
     wireIpc();
     startUpdater();
+    systemPoll = systemUsage.start((snapshot) => {
+      latestSystem = snapshot;
+      if (chips && !chips.isDestroyed()) chips.webContents.send("usage://system", snapshot);
+    });
 
     flyout.webContents.on("did-finish-load", () => {
       flyout.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
@@ -1166,6 +1172,7 @@ app.on("before-quit", () => {
   }
   if (poll) poll.stop();
   updater.stop();
+  if (systemPoll) systemPoll.stop();
   netUsage.shutdown();
   if (tray && !tray.isDestroyed()) tray.destroy();
 });

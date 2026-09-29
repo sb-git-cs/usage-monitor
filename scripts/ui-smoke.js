@@ -30,6 +30,8 @@ const snapshot = { providers: [
   ] },
   { id: "grok", display_name: "Grok Build", status: { state: "logged_out", hint: "Sign in" }, windows: [] },
 ] };
+const systemSummary = { cpu: 42, mem: 67, gpuPresent: true, gpu: 18, disk: 9, space: 84,
+  disks: [{ name: "0 C:", busy: 9 }], volumes: [{ name: '<img src="x" onerror="window.injected=true">', used: 84 * 1024 ** 3, size: 100 * 1024 ** 3 }] };
 
 async function check(file) {
   const win = new BrowserWindow({ show: false, width: 860, height: 600, webPreferences: {
@@ -46,6 +48,7 @@ async function check(file) {
     win.webContents.send("usage://snapshot", snapshot);
     win.webContents.send("usage://net", netSummary);
     if (file === "flyout") win.webContents.send("usage://update", { current: "1.1.0", build: null, status: "skipped", auto: true, message: hostile });
+    win.webContents.send("usage://system", systemSummary);
     await new Promise((resolve) => setTimeout(resolve, 200));
     const result = await win.webContents.executeJavaScript(`({
       text: document.body.textContent,
@@ -83,16 +86,17 @@ async function check(file) {
     } else {
       assert.equal(result.chips, 4);
       assert.equal(result.net, "↓1.5 MB/s↑30 KB/s");
-      assert.match(result.text, /25\/100/);
-      assert.doesNotMatch(result.text, /90\/100/);
+      assert.match(result.text, /25%/);
+      assert.doesNotMatch(result.text, /90%/);
       assert.equal(result.reds, 1);
+      assert.match(result.text, /CPU42%MEM67%GPU18%DISK9%SPACE84%/);
     }
     const deadline = Date.now() + 5000;
     while (!renderedFrame && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.ok(renderedFrame && !renderedFrame.isEmpty(), `${file} must produce a rendered frame`);
     fs.writeFileSync(path.join(output, `${file}.png`), renderedFrame.toPNG());
     if (file === "chips") {
-      // Docked on a 48px taskbar, the strip and its chips fill the full height.
+      // Two rows fit the taskbar, with network spanning both rows.
       win.webContents.send("usage://chips-fill", 48);
       await new Promise((resolve) => setTimeout(resolve, 250));
       const fill = await win.webContents.executeJavaScript(`({
@@ -100,13 +104,41 @@ async function check(file) {
         chip: document.querySelector('#root .pct-icon').getBoundingClientRect().height,
         net: document.getElementById('net').getBoundingClientRect().height,
         netDisplay: getComputedStyle(document.getElementById('net')).display,
+        rows: new Set([...document.querySelectorAll('#root .pct-icon')].map(el => el.getBoundingClientRect().top)).size,
+        width: document.getElementById('bar').getBoundingClientRect().width,
       })`);
-      assert.deepEqual(fill, { bar: 48, chip: 40, net: 40, netDisplay: "grid" });
+      assert.equal(fill.bar, 48);
+      assert.equal(fill.rows, 2);
+      assert.equal(fill.chip, 21);
+      assert.equal(fill.net, 44);
+      assert.equal(fill.netDisplay, "grid");
+      assert.ok(fill.width < 420, `compact strip including system metrics: ${fill.width}px`);
       renderedFrame = null;
       const fillDeadline = Date.now() + 5000;
       while (!renderedFrame && Date.now() < fillDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
       assert.ok(renderedFrame && !renderedFrame.isEmpty(), "filled chips must render");
       fs.writeFileSync(path.join(output, "chips-fill.png"), renderedFrame.toPNG());
+      for (const height of [28, 36, 60]) {
+        win.webContents.send("usage://chips-fill", height);
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        assert.deepEqual(await win.webContents.executeJavaScript(`(() => {
+          const bar = document.getElementById('bar').getBoundingClientRect();
+          return [...document.querySelectorAll('#root .pct-icon, .system-chip:not([hidden]), .net-chip')].filter(el => {
+            const r = el.getBoundingClientRect();
+            return r.top < bar.top || r.bottom > bar.bottom || el.scrollHeight > el.clientHeight;
+          }).map(el => ({ name: el.textContent, client: el.clientHeight, scroll: el.scrollHeight, top: el.offsetTop, height: el.offsetHeight }));
+        })()`), [], `both rows fit a ${height}px taskbar`);
+      }
+      win.webContents.send("usage://system", { ...systemSummary, gpuPresent: false, cpu: null, mem: null, disk: null, space: null });
+      win.webContents.send("usage://chips-fill", 0);
+      win.webContents.send("usage://chips-docked", false);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const absent = await win.webContents.executeJavaScript(`({
+        hidden: document.querySelector('[data-metric="gpu"]').hidden,
+        cpu: document.querySelector('[data-metric="cpu"] .system-value').textContent,
+        rows: new Set([...document.querySelectorAll('#root .pct-icon')].map(el => el.getBoundingClientRect().top)).size,
+      })`);
+      assert.deepEqual(absent, { hidden: true, cpu: "—", rows: 2 });
     }
     console.log(`${file}: rendering, CSP, escaping, warning colors and preload passed`);
   } finally { win.destroy(); }

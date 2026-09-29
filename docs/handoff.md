@@ -8,10 +8,35 @@ Audit and fix defects, bugs and usage miscalculations; harden the Windows app an
 
 | Owner | Assignment | Status | Evidence |
 | --- | --- | --- | --- |
+| Development | Compact two-row chips; CPU, memory, optional GPU, disk activity and storage | Complete; unit, source/packaged UI and live packaged hardware checks passed | `src/system.js`, `src/system-windows.ps1`, `src/ui/chips.js`, `test/system.test.js`, `scripts/ui-smoke.js` |
+| Development | Keep the complete two-row strip inside the taskbar | Complete; rebuilt, restarted and verified on the live desktop | `src/main.js:203`, `test/windows.test.js`; taskbar 48px, chip window 44px, 2px inset on both sides vertically |
+| Development | Review the two-row chips after syncing to 1.1.0; fix Windows memory sampling and GPU chip flicker; refresh screenshots and changelog; prepare 1.2.0 | Complete; see the merge section below and `docs/review.md` | `src/system.js`, `test/system.test.js`, `docs/screenshots/` |
 | Development | Code audit, surgical fixes, regression tests and build verification; correct chip window selection | Implementation complete; release acceptance pending | `docs/review.md`, `test/`, `scripts/ui-smoke.js`; verification below |
 | Maintainer | Live-account and interactive desktop acceptance; signed distribution | Pending | Checklist below |
 
 ## Verification
+
+### Two-row chips merged with 1.1.0 (2026-09-29)
+
+- The uncommitted chips work had been stashed while the tree synced to 1.1.0, then re-applied with conflicts in README.md, package.json, package-lock.json, `scripts/ui-smoke.js` and `src/main.js`. The resolutions are marker-free and keep both sides. Every line the stash added was checked against the resulting files before the stash was dropped.
+- Fixed: Windows MEM started PowerShell every 2 seconds through `si.mem()` (now `os`), and a stalled hardware probe hid the GPU chip. Both have regression tests that fail on the old code. README and taskbar screenshots regenerated for the two-row strip; CHANGELOG has an Unreleased entry.
+- Verified: `npm test` 94 tests, 93 passed, 1 skipped (the updater suite's Windows skip), 0 failed; source `test:ui` passed. An unpacked build made after the merge ships `systeminformation`, `electron-updater`, `src/system.js` and `src/system-windows.ps1`, and its collector ran from app.asar with real readings (CPU 5.8%, MEM 36.1%, GPU 0%, DISK 1%, SPACE 78.4%). The packaged `test:ui` was not repeated: `dist/win-unpacked` is in use by the running app and was not touched, so it still holds the pre-merge build.
+- Open decision: the Windows hardware sample costs about 450 ms CPU every 5 seconds (about 9% of one core). A persistent PowerShell worker would roughly halve that; see `docs/review.md`.
+- Local setup: `node_modules` lacked `electron-updater` after the release sync. `npm install` added it and left both package files byte-identical. Run `npm ci` after pulling.
+
+### Two-row chips and system metrics (2026-09-29)
+
+- Follow-up alignment fix: docking now checks and applies the intended taskbar height before placing the window, and always centers the cross axis. The previous floating 50px height could prevent docking on a 48px taskbar. Restored the user's saved `chips_docked` setting to true.
+- Alignment validation: 70 unit tests passed; source and packaged UI tests passed. Added regression coverage for floating-to-docked transitions, one-pixel height drift and recentering across 32/40/48/60px taskbars. The harness removes its signal listeners between cases.
+- Rebuilt `dist/win-unpacked`, restarted the desktop app, and measured native bounds: taskbar `(0, 1032, 1920, 48)`, chip window `(1272, 1034, 369, 44)`. Fully contained with a 2px top/bottom inset and clear of occupied taskbar areas. Local evidence: `.qa/taskbar-before.png`, `.qa/taskbar-after.png`. Existing locked executable was preserved in `.qa/Usage Monitor-before-alignment.exe` before replacement.
+
+- Provider chips use two rows and short percentages; network download/upload spans both rows. The full synthetic strip, including CPU/MEM/GPU/DISK/SPACE, measured about 369px wide at 48px high.
+- CPU/MEM refresh every 2 seconds; GPU/disk activity every 5 seconds; storage every 30 seconds. Windows DISK is the busiest physical disk's active time; SPACE is the fullest mounted volume. Tooltips list drive values. Failed readings become unknown; absent GPUs are hidden.
+- Before the merge: `npm test` 69 passed; source and packaged `test:ui` passed, including 28/36/48/60px taskbar heights, floating two-row layout, absent GPU and unavailable samples, CSP and pointer hit-testing.
+- `npm exec electron-builder -- --win --x64 --dir --publish never` passed. Updated app: `dist/win-unpacked/Usage Monitor.exe`. Installer/ZIP/portable artifacts were not regenerated for this change.
+- Live packaged collector verified on Windows outside the sandbox (CIM access is denied inside it): CPU 11.4%, memory 49.5%, GPU detected at 0%, busiest disk 31%, fullest volume 78.3%. This exercised the script read from app.asar and the production dependency.
+- `git diff --check` and changed JavaScript syntax checks passed. macOS/Linux hardware behavior has not been exercised locally; their disk activity uses throughput and GPU percentages depend on driver support. Interactive desktop docking still needs manual acceptance.
+- Existing package-lock engine-version edit was preserved.
 
 - `npm test`: 30 tests passed, no failures. Tests use synthetic credentials and provider responses, including five-hour versus weekly chip selection.
 - `npm run test:ui`: both real Electron offscreen render tests passed, including CSP, escaped hostile text, warning thresholds, preload isolation and pointer hit-testing.

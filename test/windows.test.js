@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { load } = require("./helpers");
 
-function mainHarness() {
+function mainHarness(taskbar = {}) {
   const events = {};
   const ipc = {};
   const electron = {
@@ -10,9 +10,13 @@ function mainHarness() {
     ipcMain: { on: (event, cb) => { ipc[event] = cb; }, handle() {} },
     BrowserWindow: { fromWebContents: () => null },
   };
+  const signals = new Map(["SIGHUP", "SIGINT"].map(name => [name, new Set(process.listeners(name))]));
   const api = load("src/main.js", {
-    electron, "./config": { save() {} }, "./poller": {}, "./alerts": {}, "./taskbarLayout": {}, "./autostart": {}, "./updater": {},
-  }, ["wireIpc", "keepWidgetOnTop", "setState: (state) => { cfg = state.cfg; chips = state.chips; flyout = state.flyout; }"]);
+    electron, "./config": { save() {} }, "./poller": {}, "./alerts": {}, "./taskbarLayout": taskbar, "./autostart": {}, "./updater": {},
+  }, ["wireIpc", "keepWidgetOnTop", "placeChipsDocked", "setState: (state) => { cfg = state.cfg; chips = state.chips; flyout = state.flyout; }"]);
+  for (const [name, existing] of signals) {
+    for (const listener of process.listeners(name)) if (!existing.has(listener)) process.removeListener(name, listener);
+  }
   api.wireIpc();
   return { api, ipc, events };
 }
@@ -27,6 +31,37 @@ test("hidden chips stay hidden when other windows request always-on-top", () => 
   api.setState({ cfg: { chips_hidden: false }, chips });
   api.keepWidgetOnTop(chips, true);
   assert.equal(shown, true);
+});
+
+test("two-row chips resize before docking and center completely inside the taskbar", () => {
+  for (const trayHeight of [32, 40, 48, 60]) {
+    for (const startHeight of [50, trayHeight - 4, trayHeight - 3]) {
+      const top = 1080 - trayHeight;
+      const layout = load("src/taskbarLayout.js", { electron: { screen: {
+        getDisplayMatching: () => ({ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }),
+      } } }, ["cache"]);
+      layout.cache.at = Date.now();
+      layout.cache.data = { tray: { x: 0, y: top, w: 1920, h: trayHeight }, occupied: [
+        { x: 43, y: top, w: 672, h: trayHeight }, { x: 1662, y: top, w: 258, h: trayHeight },
+      ] };
+      let bounds = { x: 1286, y: top, width: 376, height: startHeight };
+      const messages = [];
+      const chips = {
+        isDestroyed: () => false, isVisible: () => true, getNativeWindowHandle: () => Buffer.alloc(8),
+        getSize: () => [bounds.width, bounds.height], getPosition: () => [bounds.x, bounds.y],
+        setBounds: b => { bounds = b; }, setPosition: (x, y) => { bounds = { ...bounds, x, y }; }, setAlwaysOnTop() {},
+        webContents: { send: (...args) => messages.push(args), setBackgroundThrottling() {} },
+      };
+      const { api } = mainHarness({ ...layout, setChipsOwner() {} });
+      api.setState({ cfg: { chips_docked: true, chips_dock_x: 1286, chips_dock_y: top }, chips });
+      api.placeChipsDocked();
+      assert.equal(bounds.height, trayHeight - 4, `floating height ${startHeight}, taskbar ${trayHeight}`);
+      assert.equal(bounds.y, top + 2, "equal top and bottom insets, even when the old bounds already fit");
+      assert.ok(bounds.x >= 715 && bounds.x + bounds.width <= 1662, "avoids taskbar buttons and notification area");
+      assert.ok(messages.some(([channel, value]) => channel === "usage://chips-fill" && value === trayHeight - 4));
+      assert.ok(!messages.some(([channel, value]) => channel === "usage://chips-popped" && value));
+    }
+  }
 });
 
 test("malformed renderer dimensions cannot reach native window APIs", () => {

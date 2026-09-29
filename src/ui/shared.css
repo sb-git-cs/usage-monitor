@@ -170,7 +170,8 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 .hint { font-size: 11px; color: var(--muted); padding: 4px 0 2px; }
 .badge { font-size: 10px; color: var(--amber); margin-left: 6px; }
 .chips {
-  display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 4px;
+  display: inline-flex; align-items: stretch; gap: 5px; padding: 3px 5px 3px 3px;
+  height: 46px;
   width: max-content;
   white-space: nowrap;
   background: rgba(17, 24, 39, 0.94);
@@ -207,6 +208,7 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
   opacity: 0.4;
 }
 .chip-grip {
+  align-self: center;
   width: 10px; height: 18px; flex: 0 0 10px;
   cursor: grab;
 
@@ -220,7 +222,13 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
   margin: 0 2px;
 }
 .chips.docked .chip-grip { opacity: 0.35; }
-.chips #root { display: flex; gap: 6px; }
+.chips #root {
+  display: grid; grid-template-rows: repeat(2, minmax(0, 1fr));
+  grid-auto-flow: column; grid-auto-columns: minmax(52px, max-content); gap: 2px 3px;
+}
+.chips .pct-icon, .chips.docked .pct-icon {
+  height: 100%; min-height: 0; padding: 0 4px; border-radius: 4px; font-size: 10px; gap: 3px;
+}
 .pct-icon {
   height: 22px; min-width: max-content; padding: 0 7px; border-radius: 6px;
   background: rgba(17, 24, 39, 0.7); border: 1px solid rgba(75, 85, 99, 0.85);
@@ -307,22 +315,38 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 /* Docked on a horizontal taskbar: the strip is exactly as tall as the taskbar. */
 .chips.docked.fill {
   height: var(--fill-h);
-  padding: 4px 6px 4px 3px;
+  padding: 2px 5px 2px 3px;
   gap: 4px;
   border-radius: 0;
   border-width: 0 1px;
 }
-.chips.docked.fill #root { height: 100%; gap: 4px; }
-.chips.docked.fill .pct-icon,
-.chips.docked.fill .net-chip { height: 100%; padding: 0 7px; border-radius: 6px; font-size: 11.5px; gap: 4px; }
-.chips.docked.fill .pct-icon .who,
-.chips.docked.fill .pct-icon .who .brand-mark { width: 12px; height: 12px; flex-basis: 12px; }
-.chips.docked.fill .chip-grip { height: 45%; }
-/* Tall taskbars: the network chip stacks download over upload. */
-.chips.docked.fill.tall .net-chip:not(.idle) {
-  display: inline-grid; grid-template-columns: auto auto; align-content: center;
-  column-gap: 3px; row-gap: 0; font-size: 11.5px; line-height: 1.15;
+.chips.docked #root { gap: 2px 3px; }
+.chips .pct-icon .who,
+.chips .pct-icon .who .brand-mark { width: 10px; height: 10px; flex-basis: 10px; }
+.chips .net-chip {
+  height: 100%; padding: 0 5px; border-radius: 4px; font-size: 10px;
 }
-.chips.docked.fill.tall .net-chip:not(.idle) .net-arrow.tx { margin-left: 0; }
-.chips.docked.fill.tall .net-chip .net-val { min-width: 7ch; }
-.chips.docked.fill .net-chip[hidden] { display: none; }
+.chips .net-chip:not(.idle) {
+  display: grid; grid-template-columns: auto auto; grid-template-rows: repeat(2, 1fr);
+  align-items: center; column-gap: 3px; row-gap: 0;
+}
+.chips .net-chip .net-arrow.tx { margin-left: 0; }
+.chips .net-chip .net-val { min-width: 7ch; }
+.chips .net-chip[hidden] { display: none; }
+.system-chips {
+  display: grid; grid-template-rows: repeat(2, minmax(0, 1fr)); grid-auto-flow: column;
+  gap: 2px 5px; padding-left: 5px; border-left: 1px solid var(--hud-border);
+}
+.system-chip {
+  display: flex; align-items: center; justify-content: space-between; gap: 4px;
+  font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums;
+}
+.system-chip[hidden] { display: none; }
+.system-label { color: #9ca3af; font-size: 9px; font-weight: 650; }
+.system-value { min-width: 4ch; text-align: right; font-weight: 650; color: #e5e7eb; }
+.system-chip.busy .system-value { color: #fbbf24; }
+.chips.docked.fill.short { padding-top: 0; padding-bottom: 0; }
+.chips.short #root, .chips.short .system-chips { row-gap: 0; }
+.chips.short .pct-icon { font-size: 9px; line-height: 1; }
+.chips.short .net-chip { font-size: 9px; line-height: 1; }
+.chips.short .pct-icon .who, .chips.short .pct-icon .brand-mark { width: 9px; height: 9px; flex-basis: 9px; }

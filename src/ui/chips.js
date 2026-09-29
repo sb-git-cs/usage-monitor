@@ -22,11 +22,15 @@ bindDrag(bar, "button, .pct-icon, .net-chip");
 
 let lastKey = "";
 
+function chipValue(win) {
+  return Number.isFinite(win?.used_pct) ? `${Math.round(win.used_pct)}%` : "—";
+}
+
 function chipKey(snapshot) {
   const docked = bar.classList.contains("docked") ? "1" : "0";
   const parts = (snapshot.providers || []).map((p) => {
     const win = UsageModels.currentWindow(p);
-    const num = win ? formatUsedTotal(win, true) : "—";
+    const num = chipValue(win);
     const cls = win ? (alerting(win) ? "red" : "green") : "gray";
     const state = (p.status && p.status.state) || "";
     return `${escapeHtml(p.id)}:${win?.kind || ""}:${win?.label || ""}:${cls}:${num}:${state}`;
@@ -42,8 +46,7 @@ function setFill(height) {
   if (next === fillHeight) return;
   fillHeight = next;
   bar.classList.toggle("fill", fillHeight > 0);
-  // Two text lines need about 36px; shorter taskbars keep the one-line network chip.
-  bar.classList.toggle("tall", fillHeight >= 36);
+  bar.classList.toggle("short", fillHeight > 0 && fillHeight < 40);
   if (fillHeight) bar.style.setProperty("--fill-h", `${fillHeight}px`);
   else bar.style.removeProperty("--fill-h");
   requestAnimationFrame(fitBar);
@@ -81,7 +84,7 @@ function render(snapshot) {
     let cls = "gray";
     let num = "—";
     if (win) {
-      num = formatUsedTotal(win, true);
+      num = chipValue(win);
       cls = alerting(win) ? "red" : "green";
     }
     const stale = p.status?.state === "stale";
@@ -157,6 +160,44 @@ netChip.addEventListener("contextmenu", (e) => {
   window.usage.openTrayMenu();
 });
 window.usage.onNet(renderNet);
+
+// Fixed-width values prevent the widget from shifting with every hardware sample.
+const systemRoot = document.getElementById("system");
+const systemFields = [["cpu", "CPU"], ["mem", "MEM"], ["gpu", "GPU"], ["disk", "DISK"], ["space", "SPACE"]];
+for (const [key, label] of systemFields) {
+  const el = document.createElement("div");
+  el.className = "system-chip";
+  el.dataset.metric = key;
+  el.append(netSpan("system-label", label), netSpan("system-value", "—"));
+  systemRoot.append(el);
+}
+function renderSystem(data = {}) {
+  const pct = (n) => Number.isFinite(n) && n >= 0 ? `${Math.round(Math.min(100, n))}%` : "—";
+  const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GiB`;
+  const titles = {
+    cpu: "CPU: total processor utilization",
+    mem: "MEM: physical memory in use",
+    gpu: "GPU: busiest GPU engine; — means the driver does not expose utilization",
+    disk: data.diskRate != null ? "DISK: total read + write throughput" : "DISK: busiest HDD/SSD active time",
+    space: "SPACE: fullest mounted volume (storage used)",
+  };
+  for (const [key] of systemFields) {
+    const el = systemRoot.querySelector(`[data-metric="${key}"]`);
+    el.hidden = key === "gpu" && data.gpuPresent !== true;
+    el.querySelector(".system-value").textContent = key === "disk" && data.diskRate != null ? NetFormat.formatRateShort(data.diskRate) : pct(data[key]);
+    el.classList.toggle("busy", Number.isFinite(data[key]) && data[key] >= 80);
+    el.title = titles[key];
+    if (key === "disk") el.title += (data.disks || []).map((d) => `\n${d.name}: ${pct(d.busy)}`).join("");
+    if (key === "space") el.title += (data.volumes || []).map((v) => `\n${v.name}: ${gb(v.used)} / ${gb(v.size)}`).join("");
+  }
+  requestAnimationFrame(fitBar);
+}
+renderSystem();
+window.usage.onSystem(renderSystem);
+systemRoot.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  window.usage.openTrayMenu();
+});
 
 grip.addEventListener("contextmenu", (e) => {
   e.preventDefault();

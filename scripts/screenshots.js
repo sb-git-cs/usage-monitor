@@ -274,6 +274,7 @@ async function main() {
       setup: async (w) => {
         w.webContents.send("usage://chips-docked", true);
         w.webContents.send("usage://chips-fill", 44);
+        w.webContents.send("usage://system", { cpu: 24, mem: 52, gpuPresent: true, gpu: 12, disk: 8, space: 68 });
         w.webContents.send("usage://snapshot", snapshot);
         w.webContents.send("usage://net", netSummary);
       },
@@ -316,9 +317,10 @@ async function main() {
   fs.writeFileSync(path.join(OUT, "tray-flyout.png"), desk.toPNG());
 
   // Overview poster: each surface with a short explanation.
-  const OH = 1000;
   const NS = 0.47;
   const row2 = 150 + 25 + flyout.height + 75;
+  // Grow with the flyout, whose height depends on the platform's fonts, so the network image is never clipped.
+  const OH = Math.max(1000, row2 + 30 + Math.round(network.height * NS) + 6);
   const overview = await renderScene(
     `<!doctype html><html><head><meta charset="utf-8"><style>
       html, body { margin: 0; width: ${W}px; height: ${OH}px; overflow: hidden; background: #0b0f17; color: #e5e7eb; font-family: ${FONT}; }
@@ -349,7 +351,7 @@ async function main() {
       <div class="sec" style="left:700px; top:150px">
         <h2>2. TASKBAR CHIPS</h2>
         <div class="strip"><img src="${chips.name}" width="${chips.width}" height="${chips.height}"></div>
-        <div class="note">Each company's mark with % used, plus live download and upload speed. On Windows the strip<br>fills the taskbar height and stays visible while the Start menu or Quick Settings is open.</div>
+        <div class="note">Two compact rows: each company's mark with % used, stacked download and upload speed, plus CPU,<br>memory, GPU, disk and storage readings. On Windows the strip fills the taskbar height.</div>
       </div>
       <div class="sec" style="left:700px; top:315px">
         <h2>3. NOTIFICATIONS</h2>
