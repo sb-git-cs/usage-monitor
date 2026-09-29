@@ -1,0 +1,25 @@
+.page { height: 100%; display: flex; flex-direction: column; }
+.page-head { display: flex; align-items: baseline; gap: 12px; padding: 16px 24px 8px; border-bottom: 1px solid var(--border); }
+.page-head h1 { margin: 0; font-size: 18px; }
+.version { color: var(--muted); font-size: 12px; }
+.page .settings { flex: 1; padding: 4px 24px 24px; }
+.settings h3 { margin: 0 0 8px; }
+.settings select, .settings input[type="time"], .settings input[type="number"] {
+  height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface);
+}
+.settings input[type="number"] { width: 96px; }
+.indent { margin-left: 23px; }
+.label-inline { font-weight: 600; }
+.radio { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.radio input { accent-color: var(--accent); margin: 0; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; }
+.status-line { margin: 6px 0 10px; font-size: 12px; color: var(--text-2); }
+.status-line.error { color: var(--danger); }
+.status-line.good { color: var(--good); }
+.pairing { display: flex; gap: 18px; align-items: flex-start; margin: 14px 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.pairing[hidden] { display: none; }
+.pairing img { background: #fff; border-radius: 6px; padding: 6px; flex: 0 0 auto; image-rendering: pixelated; }
+.pairing-text p { margin: 0 0 8px; }
+.code { font: 600 18px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 0.06em; margin: 4px 0 6px; user-select: text; }
+#phoneBody[hidden] { display: none; }
+[hidden] { display: none !important; }

@@ -51,9 +51,9 @@ function currentWindow(provider) {
   return (windows.length ? windows : numeric).reduce((a, b) => (a.used_pct >= b.used_pct ? a : b));
 }
 
-function isAlerting(provider) {
+function isAlerting(provider, threshold = ALERT_USED_PCT) {
   return (provider.windows || []).some(
-    (w) => w.used_pct != null && w.used_pct >= ALERT_USED_PCT
+    (w) => w.used_pct != null && w.used_pct >= threshold
   );
 }
 

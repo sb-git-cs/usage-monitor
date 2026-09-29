@@ -366,6 +366,9 @@ test("versions compare numerically and downloads match the platform", () => {
   assert.equal(updater.compareVersions("1.10.0", "1.9.9"), 1);
   assert.equal(updater.compareVersions("v1.1.0", "1.1"), 0);
   assert.equal(updater.compareVersions("1.1.0", "1.2.0-beta.1"), -1);
+  assert.equal(updater.compareVersions("1.3.0", "1.3.0-beta.1"), 1, "the final release follows its betas");
+  assert.equal(updater.compareVersions("1.3.0-beta.10", "1.3.0-beta.2"), 1);
+  assert.equal(updater.compareVersions("1.3.0-beta.1", "1.3.0-beta.1"), 0);
   const base = "https://github.com/sb-git-cs/usage-monitor/releases/download/v1.2.0/";
   const release = { html_url: "https://github.com/sb-git-cs/usage-monitor/releases/tag/v1.2.0", assets: [
     "UsageMonitor-portable-1.2.0.exe", "Usage Monitor-1.2.0-win.zip", "UsageMonitor-1.2.0-arm64.dmg", "UsageMonitor-1.2.0-x64.dmg", "usage-monitor-1.2.0.tar.gz",

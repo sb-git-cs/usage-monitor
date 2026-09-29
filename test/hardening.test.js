@@ -35,7 +35,7 @@ test("A-07: 'check for updates at startup' becomes 'install updates automaticall
     });
     const cfg = config.ensure();
     assert.equal(cfg.auto_update, expected);
-    assert.equal(cfg.config_version, 6);
+    assert.equal(cfg.config_version, 7);
     assert.equal("check_updates_on_startup" in written, false, "the old key is dropped");
     assert.equal(written.auto_update, expected);
   }

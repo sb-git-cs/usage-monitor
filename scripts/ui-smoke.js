@@ -23,7 +23,7 @@ const snapshot = { providers: [
     { kind: "weekly", label: "Weekly", used_pct: 90, remaining_pct: 10, resets_at: future },
   ] },
   { id: "codex", display_name: "Codex", status: { state: "ok" }, windows: [
-    { kind: "five_hour", label: "5h", used_pct: 80, remaining_pct: 20, resets_at: future },
+    { kind: "five_hour", label: "5h", used_pct: 80, remaining_pct: 20, resets_at: future, forecast_at: new Date(Date.now() + 1800000).toISOString(), burn_per_hour: 40 },
   ] },
   { id: "gemini", display_name: "Gemini", status: { state: "stale" }, windows: [
     { kind: "quota", label: "Pro", used_pct: null, remaining_pct: null },
@@ -78,6 +78,9 @@ async function check(file) {
       assert.equal(result.cards, 4);
       assert.deepEqual(result.widths, ["25%", "90%", "80%", "0%"]);
       assert.equal(result.reds, 2);
+      assert.match(result.text, /5h reaches 100% around \d{1,2}:\d\d [AP]M at this pace \(\+40%\/h\)/, "burn-rate forecast line");
+      const gear = await win.webContents.executeJavaScript(`(() => { const b = document.getElementById('settings'); const r = b.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b; })()`);
+      assert.equal(gear, true, "the settings button receives clicks");
       assert.equal(result.update, `v1.1.0 ${hostile} Check now`, "update status renders as text with its action");
       win.webContents.send("usage://update", { current: "1.1.0", status: "downloading", latest: "1.2.0", progress: 42, auto: true });
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -176,6 +179,73 @@ const netSeries = {
   points: Array.from({ length: 60 }, (_, i) => ({ start_ms: now - (59 - i) * MINUTE, rx: i % 7 ? (i * 37 % 50) * 1024 ** 2 : 0, tx: (i % 5) * 1024 ** 2 })),
 };
 
+async function checkSettings() {
+  const qr = require("qrcode-generator")(0, "M");
+  qr.addData("usagemonitor://pair?h=192.168.1.20&p=47329&c=ABCDE-FGHJK-MNPQR-STVWX&n=desk");
+  qr.make();
+  const view = {
+    platform: "win32", version: "1.3.0", login_label: "Start with Windows", intervals: [5, 15, 30, 60], thresholds: [50, 60, 70, 80, 90],
+    settings: { autostart: true, poll_interval_secs: 5, chips_hidden: false, chips_docked: true, chips_show_network: true,
+      chips_show: { claude: true, codex: true, gemini: true, grok: false, cpu: true, mem: true, gpu: true, disk: true, space: true },
+      alert_threshold: 80, notify_on_limit_reached: true, forecast_alerts: true, quiet_hours: { enabled: true, start: "22:00", end: "07:00" },
+      auto_update: true, update_channel: "stable" },
+    update: { kind: "installer", status: "up-to-date", current: "1.3.0", checked_at: Date.now() - 120000, auto: true },
+    phone: { enabled: true, listening: true, error: null, port: 47329, addresses: ["192.168.1.20"], name: "desk",
+      devices: [{ id: "0123456789abcdef", name: hostile, created_at: Date.now() - 86400000, last_seen: Date.now() - 60000 }],
+      pairing: { code: "ABCDE-FGHJK-MNPQR-STVWX", link: "usagemonitor://pair?x", expires_at: Date.now() + 540000,
+        qr: `data:image/svg+xml;base64,${Buffer.from(qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true })).toString("base64")}` } },
+  };
+  const patches = [];
+  ipcMain.handle("settings:get", () => view);
+  ipcMain.handle("settings:set", (_e, patch) => { patches.push(patch); return view; });
+  const win = new BrowserWindow({ show: false, width: 640, height: 1400, webPreferences: {
+    preload: path.join(source, "settings-preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
+  } });
+  const errors = [];
+  let renderedFrame = null;
+  win.webContents.on("paint", (_event, _dirty, frame) => { renderedFrame = frame; });
+  win.webContents.on("console-message", (details) => {
+    if (details.level === "error") errors.push(details.message);
+  });
+  try {
+    await win.loadFile(path.join(source, "ui/settings.html"));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const result = await win.webContents.executeJavaScript(`({
+      injected: !!window.injected,
+      node: typeof require,
+      version: document.getElementById('version').textContent,
+      threshold: document.getElementById('threshold').value,
+      quiet: document.getElementById('quiet').checked,
+      grok: document.querySelector('#chipChecks input[data-key="grok"]').checked,
+      device: document.querySelector('#devices li span').textContent,
+      code: document.getElementById('pairCode').textContent,
+      qr: document.getElementById('pairQr').naturalWidth,
+      phoneStatus: document.getElementById('phoneStatus').textContent,
+    })`);
+    assert.deepEqual(errors, []);
+    assert.equal(result.injected, false);
+    assert.equal(result.node, "undefined");
+    assert.equal(result.version, "Version 1.3.0");
+    assert.equal(result.threshold, "80");
+    assert.equal(result.quiet, true);
+    assert.equal(result.grok, false);
+    assert.ok(result.device.startsWith(hostile), "device names render as text");
+    assert.equal(result.code, "ABCDE-FGHJK-MNPQR-STVWX");
+    assert.ok(result.qr > 0, "the pairing QR code loads under the CSP");
+    assert.equal(result.phoneStatus, "Listening on 192.168.1.20:47329.");
+    await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('threshold'); s.value = '70'; s.dispatchEvent(new Event('change')); })()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(patches.at(-1), { alert_threshold: 70 });
+    const deadline = Date.now() + 5000;
+    renderedFrame = null;
+    win.webContents.invalidate();
+    while (!renderedFrame && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(renderedFrame && !renderedFrame.isEmpty(), "settings must produce a rendered frame");
+    fs.writeFileSync(path.join(output, "settings.png"), renderedFrame.toPNG());
+    console.log("settings: rendering, CSP, escaping, QR and saving passed");
+  } finally { win.destroy(); }
+}
+
 async function checkNet() {
   const win = new BrowserWindow({ show: false, width: 1280, height: 780, webPreferences: {
     preload: path.join(source, "net-preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
@@ -245,6 +315,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("usage://get-chips-docked", () => true);
   ipcMain.handle("usage://get-flyout-state", () => ({ docked: false, pinned: false }));
   ipcMain.handle("usage://get-update", () => null);
+  ipcMain.handle("usage://get-prefs", () => ({ alert_threshold: 80, chips_show: {} }));
   ipcMain.handle("net:state", () => netState);
   ipcMain.handle("net:icon", () => null);
   ipcMain.handle("net:series", () => netSeries);
@@ -253,6 +324,7 @@ app.whenReady().then(async () => {
     await check("flyout");
     await check("chips");
     await checkNet();
+    await checkSettings();
     app.exit(0);
   } catch (err) {
     console.error(err);

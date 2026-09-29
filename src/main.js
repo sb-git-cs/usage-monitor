@@ -1,5 +1,6 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, shell, screen } = require("electron");
+const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, ipcMain, shell, screen } = require("electron");
 const path = require("path");
+const os = require("os");
 const config = require("./config");
 const poller = require("./poller");
 const alerts = require("./alerts");
@@ -10,6 +11,8 @@ const updater = require("./updater");
 const log = require("./log");
 const netUsage = require("./net");
 const systemUsage = require("./system");
+const { History } = require("./history");
+const { PhoneLink } = require("./phone");
 const { formatRateShort } = require("./net/format");
 
 const IS_WINDOWS = process.platform === "win32";
@@ -26,6 +29,9 @@ let poll;
 let latest;
 let systemPoll;
 let latestSystem;
+let history;
+let phone;
+let settingsWin = null;
 let saveTimer = null;
 
 function saveSoon() {
@@ -631,6 +637,7 @@ function broadcastNet() {
 function buildMenu() {
   return Menu.buildFromTemplate([
     { label: "Network usage…", click: () => netUsage.openWindow() },
+    { label: "Settings…", click: () => openSettings() },
     { type: "separator" },
     { label: "Show chips", click: () => restoreVisibility() },
     {
@@ -674,6 +681,7 @@ function buildMenu() {
         cfg.autostart = autostart.apply(item.checked);
         config.save(cfg);
         refreshTrayMenu();
+        sendSettings();
       },
     },
     {
@@ -685,6 +693,7 @@ function buildMenu() {
         config.save(cfg);
         updater.settingChanged();
         refreshTrayMenu();
+        sendSettings();
       },
     },
     { label: "Check for updates now", click: () => runUpdateCheck() },
@@ -786,6 +795,178 @@ function updateMenuLabel() {
 function sendUpdateState(state) {
   if (flyout && !flyout.isDestroyed()) flyout.webContents.send("usage://update", state);
   refreshTrayMenu();
+  sendSettings();
+}
+
+// ---- settings window -----------------------------------------------------------------
+
+function prefs() {
+  return { alert_threshold: cfg.alert_threshold, chips_show: cfg.chips_show };
+}
+
+function broadcastPrefs() {
+  for (const win of [flyout, chips]) {
+    if (win && !win.isDestroyed()) win.webContents.send("usage://prefs", prefs());
+  }
+}
+
+function settingsView() {
+  const keys = ["autostart", "poll_interval_secs", "chips_hidden", "chips_docked", "chips_show_network", "chips_show", "alert_threshold",
+    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel"];
+  return {
+    platform: process.platform,
+    version: app.getVersion(),
+    login_label: LOGIN_LABEL,
+    intervals: config.ALLOWED_INTERVALS,
+    thresholds: config.ALERT_THRESHOLDS,
+    settings: Object.fromEntries(keys.map((k) => [k, cfg[k]])),
+    update: updater.getState(),
+    phone: phone ? withQr(phone.status()) : null,
+  };
+}
+
+let qrCache = { link: null, url: null };
+function withQr(status) {
+  if (status.pairing) {
+    if (qrCache.link !== status.pairing.link) {
+      const qr = require("qrcode-generator")(0, "M");
+      qr.addData(status.pairing.link);
+      qr.make();
+      const svg = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+      qrCache = { link: status.pairing.link, url: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}` };
+    }
+    status.pairing.qr = qrCache.url;
+  }
+  return status;
+}
+
+function sendSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send("settings:state", settingsView());
+}
+
+function openSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    if (settingsWin.isMinimized()) settingsWin.restore();
+    settingsWin.show();
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = new BrowserWindow({
+    width: 640,
+    height: 760,
+    minWidth: 520,
+    minHeight: 480,
+    show: false,
+    title: "Settings - Usage Monitor",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a19" : "#fcfcfb",
+    autoHideMenuBar: true,
+    icon: ui("icon-256.png"),
+    webPreferences: {
+      preload: path.join(__dirname, "settings-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  settingsWin.setMenuBarVisibility(false);
+  settingsWin.loadFile(ui("settings.html"));
+  settingsWin.once("ready-to-show", () => settingsWin && settingsWin.show());
+  settingsWin.on("closed", () => {
+    settingsWin = null;
+    // A pairing code only lives while the window that shows it is open.
+    if (phone) phone.cancelPairing();
+  });
+}
+
+function bool(value) {
+  return typeof value === "boolean" ? value : null;
+}
+
+// Applies a patch from the settings window. Every field is checked; unknown ones are ignored.
+function applySettings(patch) {
+  if (!patch || typeof patch !== "object") return settingsView();
+  if (bool(patch.autostart) !== null) cfg.autostart = autostart.apply(patch.autostart);
+  if ("poll_interval_secs" in patch && config.ALLOWED_INTERVALS.includes(Number(patch.poll_interval_secs))) setPollInterval(Number(patch.poll_interval_secs));
+  if (bool(patch.chips_hidden) !== null && patch.chips_hidden !== cfg.chips_hidden) setChipsHidden(patch.chips_hidden);
+  if (IS_WINDOWS && bool(patch.chips_docked) !== null && patch.chips_docked !== cfg.chips_docked) setChipsDocked(patch.chips_docked);
+  if (bool(patch.chips_show_network) !== null) {
+    cfg.chips_show_network = patch.chips_show_network;
+    broadcastNet();
+  }
+  if (patch.chips_show && typeof patch.chips_show === "object") {
+    for (const key of config.CHIP_KEYS) if (bool(patch.chips_show[key]) !== null) cfg.chips_show[key] = patch.chips_show[key];
+  }
+  if (config.ALERT_THRESHOLDS.includes(Number(patch.alert_threshold))) cfg.alert_threshold = Number(patch.alert_threshold);
+  if (bool(patch.notify_on_limit_reached) !== null) cfg.notify_on_limit_reached = patch.notify_on_limit_reached;
+  if (bool(patch.forecast_alerts) !== null) cfg.forecast_alerts = patch.forecast_alerts;
+  if (patch.quiet_hours && typeof patch.quiet_hours === "object") {
+    cfg.quiet_hours = config.normalize({ quiet_hours: { ...cfg.quiet_hours, ...patch.quiet_hours } }).quiet_hours;
+  }
+  let updatesChanged = false;
+  if (bool(patch.auto_update) !== null && patch.auto_update !== cfg.auto_update) {
+    cfg.auto_update = patch.auto_update;
+    updatesChanged = true;
+  }
+  if (config.UPDATE_CHANNELS.includes(patch.update_channel) && patch.update_channel !== cfg.update_channel) {
+    cfg.update_channel = patch.update_channel;
+    updatesChanged = true;
+  }
+  let phoneChanged = false;
+  if (bool(patch.phone_enabled) !== null && patch.phone_enabled !== cfg.phone.enabled) {
+    cfg.phone.enabled = patch.phone_enabled;
+    phoneChanged = true;
+  }
+  const port = Number(patch.phone_port);
+  if (Number.isInteger(port) && port >= 1024 && port <= 65535 && port !== cfg.phone.port) {
+    cfg.phone.port = port;
+    phoneChanged = true;
+  }
+  config.save(cfg);
+  if (updatesChanged) updater.settingChanged();
+  if (phoneChanged && phone) phone.apply();
+  broadcastPrefs();
+  if (latest) broadcast(latest);
+  refreshTrayMenu();
+  const view = settingsView();
+  sendSettings();
+  return view;
+}
+
+// What a paired phone receives: the plan meters (with forecasts) and a few live readings.
+function phonePayload() {
+  let net = null;
+  try {
+    const s = netUsage.summary({ hour: true });
+    if (s) net = { state: s.state, rx_rate: s.rx_rate, tx_rate: s.tx_rate, hour: s.hour || null, top: (s.top || []).slice(0, 3) };
+  } catch {
+    net = null;
+  }
+  return {
+    v: 1,
+    app_version: app.getVersion(),
+    name: os.hostname(),
+    generated_at: new Date().toISOString(),
+    alert_threshold: cfg.alert_threshold,
+    providers: ((latest && latest.providers) || []).map((p) => ({
+      id: p.id,
+      display_name: p.display_name,
+      plan: p.plan || null,
+      status: { state: (p.status && p.status.state) || "unknown", hint: (p.status && (p.status.hint || p.status.message)) || null },
+      fetched_at: p.fetched_at || null,
+      windows: (p.windows || []).map((w) => ({
+        kind: w.kind,
+        label: w.label,
+        used_pct: Number.isFinite(w.used_pct) ? w.used_pct : null,
+        resets_at: w.resets_at || null,
+        forecast_at: w.forecast_at || null,
+        burn_per_hour: Number.isFinite(w.burn_per_hour) ? w.burn_per_hour : null,
+      })),
+    })),
+    system: latestSystem
+      ? { cpu: latestSystem.cpu, mem: latestSystem.mem, gpu: latestSystem.gpuPresent ? latestSystem.gpu : null, disk: latestSystem.disk, disk_rate: latestSystem.diskRate, space: latestSystem.space }
+      : null,
+    network: net,
+  };
 }
 
 async function runUpdateCheck() {
@@ -805,7 +986,8 @@ function startUpdater() {
     saveConfig: () => config.save(cfg),
     onState: sendUpdateState,
     // Restart for an update only while nobody is dragging a widget or working in Network usage.
-    canRestart: () => !dragState && !netUsage.isWindowFocused(),
+    canRestart: () => !dragState && !netUsage.isWindowFocused() && !(settingsWin && !settingsWin.isDestroyed() && settingsWin.isFocused()),
+    isQuiet: () => config.inQuietHours(cfg),
     beforeRestart: () => {
       app.isQuitting = true;
     },
@@ -908,6 +1090,7 @@ function createChips() {
     win.webContents.send("usage://chips-docked", !!cfg.chips_docked);
     win.webContents.send("usage://chips-popped", chipsPopped);
     win.webContents.send("usage://chips-fill", chipsFill);
+    win.webContents.send("usage://prefs", prefs());
     if (latest) win.webContents.send("usage://snapshot", latest);
     if (latestSystem) win.webContents.send("usage://system", latestSystem);
   });
@@ -1025,6 +1208,27 @@ function wireIpc() {
   });
   ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
   ipcMain.handle("usage://get-update", () => updater.getState());
+  ipcMain.handle("usage://get-prefs", () => prefs());
+  ipcMain.on("usage://open-settings", () => openSettings());
+  const fromSettings = (e) => !!(settingsWin && !settingsWin.isDestroyed() && e.sender === settingsWin.webContents);
+  ipcMain.handle("settings:get", (e) => (fromSettings(e) ? settingsView() : null));
+  ipcMain.handle("settings:set", (e, patch) => (fromSettings(e) ? applySettings(patch) : null));
+  ipcMain.handle("settings:phone", (e, op, arg) => {
+    if (!fromSettings(e) || !phone) return null;
+    if (op === "pair") phone.startPairing();
+    else if (op === "cancel") phone.cancelPairing();
+    else if (op === "remove" && typeof arg === "string") phone.removeDevice(arg);
+    return settingsView();
+  });
+  ipcMain.on("settings:check-updates", (e) => {
+    if (fromSettings(e)) runUpdateCheck();
+  });
+  ipcMain.on("settings:open-network", (e) => {
+    if (fromSettings(e)) netUsage.openWindow();
+  });
+  ipcMain.on("settings:open-logs", (e) => {
+    if (fromSettings(e)) shell.openPath(path.dirname(log.logFile())).catch(() => {});
+  });
   ipcMain.on("usage://update-action", () => {
     ignoreFlyoutBlur = true;
     updater.action();
@@ -1084,6 +1288,15 @@ if (!gotLock) {
       console.error("network monitor unavailable", err.message);
     }
 
+    history = new History();
+    phone = new PhoneLink({
+      getConfig: () => cfg,
+      saveConfig: () => config.save(cfg),
+      payload: phonePayload,
+      onChange: sendSettings,
+    });
+    phone.apply();
+
     createWindows();
     createTray();
     wireIpc();
@@ -1097,6 +1310,7 @@ if (!gotLock) {
       flyout.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
       sendFlyoutState();
       flyout.webContents.send("usage://update", updater.getState());
+      flyout.webContents.send("usage://prefs", prefs());
       if (latest) flyout.webContents.send("usage://snapshot", latest);
       if (flyoutStaysOpen()) showFlyout();
     });
@@ -1127,11 +1341,16 @@ if (!gotLock) {
 
     if (!latest) sendChipsLoading();
     poll = poller.start(cfg, (snap) => {
-      const { snapshot } = applyLocalResets(snap);
+      const { snapshot: fresh } = applyLocalResets(snap);
+      history.record(fresh);
+      const snapshot = history.annotate(fresh);
       latest = snapshot;
       broadcast(snapshot);
       alerts.evaluate(snapshot, {
         notifyOnLimit: cfg.notify_on_limit_reached,
+        threshold: cfg.alert_threshold,
+        forecastAlerts: cfg.forecast_alerts,
+        quiet: config.inQuietHours(cfg),
         onClick: () => showFlyout(),
       });
     });
@@ -1171,6 +1390,8 @@ app.on("before-quit", () => {
     try { config.save(cfg); } catch (err) { console.error("config write failed", err.message); }
   }
   if (poll) poll.stop();
+  if (history) history.flush();
+  if (phone) phone.stop();
   updater.stop();
   if (systemPoll) systemPoll.stop();
   netUsage.shutdown();

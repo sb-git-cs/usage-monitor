@@ -1,6 +1,10 @@
 const body = document.getElementById("body");
 const root = document.getElementById("root");
 const dockBtn = document.getElementById("dock");
+document.getElementById("settings").addEventListener("click", (e) => {
+  e.stopPropagation();
+  window.usage.openSettings();
+});
 document.getElementById("refresh").addEventListener("click", (e) => {
   e.stopPropagation();
   window.usage.refresh();
@@ -61,6 +65,10 @@ function render(snapshot) {
           <span class="pct">${pct}</span>
           <span class="eta" data-reset="${escapeHtml(w.resets_at || "")}">${formatEta(w.resets_at)}</span>
         </div>`);
+        if (w.forecast_at && Number.isFinite(w.used_pct)) {
+          const pace = Number.isFinite(w.burn_per_hour) ? ` (+${w.burn_per_hour}%/h)` : "";
+          extras.push(`<div class="forecast" title="Projected from the recent pace; the window resets ${escapeHtml(formatEta(w.resets_at) || "later")}">${escapeHtml(flyoutLabel(w))} reaches 100% around ${escapeHtml(formatClock(w.forecast_at))} at this pace${escapeHtml(pace)}</div>`);
+        }
       }
       parts.push(`</div>`);
       extras.forEach((html) => parts.push(html));
@@ -180,6 +188,12 @@ document.addEventListener("contextmenu", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") window.usage.hideFlyout();
 });
+window.usage.onPrefs((prefs) => {
+  if (!prefs) return;
+  setAlertThreshold(prefs.alert_threshold);
+  if (window.__last) render(window.__last);
+});
+window.usage.getPrefs().then((prefs) => prefs && setAlertThreshold(prefs.alert_threshold), () => {});
 window.usage.onSnapshot((s) => {
   window.__last = s;
   render(s);

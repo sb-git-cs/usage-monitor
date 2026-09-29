@@ -28,7 +28,7 @@ function chipValue(win) {
 
 function chipKey(snapshot) {
   const docked = bar.classList.contains("docked") ? "1" : "0";
-  const parts = (snapshot.providers || []).map((p) => {
+  const parts = shownProviders(snapshot).map((p) => {
     const win = UsageModels.currentWindow(p);
     const num = chipValue(win);
     const cls = win ? (alerting(win) ? "red" : "green") : "gray";
@@ -70,6 +70,22 @@ function showLoading() {
   requestAnimationFrame(fitBar);
 }
 
+// Settings: which chips to show and the "warn at" percentage.
+let prefs = { alert_threshold: 80, chips_show: {} };
+
+function shownProviders(snapshot) {
+  return (snapshot.providers || []).filter((p) => prefs.chips_show[p.id] !== false);
+}
+
+function applyPrefs(next) {
+  if (!next) return;
+  prefs = { alert_threshold: next.alert_threshold, chips_show: next.chips_show || {} };
+  setAlertThreshold(prefs.alert_threshold);
+  lastKey = "";
+  if (window.__last) render(window.__last);
+  renderSystem(lastSystem);
+}
+
 function render(snapshot) {
   if (!snapshot || !(snapshot.providers || []).length) {
     showLoading();
@@ -79,7 +95,7 @@ function render(snapshot) {
   if (key === lastKey) return;
   lastKey = key;
   const parts = [];
-  for (const p of snapshot.providers || []) {
+  for (const p of shownProviders(snapshot)) {
     const win = UsageModels.currentWindow(p);
     let cls = "gray";
     let num = "—";
@@ -88,7 +104,8 @@ function render(snapshot) {
       cls = alerting(win) ? "red" : "green";
     }
     const stale = p.status?.state === "stale";
-    parts.push(`<div class="pct-icon ${cls}${stale ? " stale" : ""}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.display_name)}${win ? ` - ${escapeHtml(win.label)}` : ""}${stale ? " (stale)" : ""}"><span class="who">${mark(p.id)}</span>${num}</div>`);
+    const pace = win && win.forecast_at && Number.isFinite(win.used_pct) ? ` - 100% around ${formatClock(win.forecast_at)} at this pace` : "";
+    parts.push(`<div class="pct-icon ${cls}${stale ? " stale" : ""}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.display_name)}${win ? ` - ${escapeHtml(win.label)}` : ""}${stale ? " (stale)" : ""}${escapeHtml(pace)}"><span class="who">${mark(p.id)}</span>${num}</div>`);
   }
   root.innerHTML = parts.join("");
   requestAnimationFrame(fitBar);
@@ -171,7 +188,9 @@ for (const [key, label] of systemFields) {
   el.append(netSpan("system-label", label), netSpan("system-value", "—"));
   systemRoot.append(el);
 }
+let lastSystem = {};
 function renderSystem(data = {}) {
+  lastSystem = data;
   const pct = (n) => Number.isFinite(n) && n >= 0 ? `${Math.round(Math.min(100, n))}%` : "—";
   const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GiB`;
   const titles = {
@@ -183,7 +202,7 @@ function renderSystem(data = {}) {
   };
   for (const [key] of systemFields) {
     const el = systemRoot.querySelector(`[data-metric="${key}"]`);
-    el.hidden = key === "gpu" && data.gpuPresent !== true;
+    el.hidden = prefs.chips_show[key] === false || (key === "gpu" && data.gpuPresent !== true);
     el.querySelector(".system-value").textContent = key === "disk" && data.diskRate != null ? NetFormat.formatRateShort(data.diskRate) : pct(data[key]);
     el.classList.toggle("busy", Number.isFinite(data[key]) && data[key] >= 80);
     el.title = titles[key];
@@ -194,6 +213,8 @@ function renderSystem(data = {}) {
 }
 renderSystem();
 window.usage.onSystem(renderSystem);
+window.usage.onPrefs(applyPrefs);
+window.usage.getPrefs().then(applyPrefs, () => {});
 systemRoot.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   window.usage.openTrayMenu();

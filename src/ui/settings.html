@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
+  <title>Settings</title>
+  <link rel="stylesheet" href="net.css" />
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="page-head">
+      <h1>Settings</h1>
+      <span class="version" id="version"></span>
+    </header>
+
+    <main class="settings" id="settings">
+      <section>
+        <h3>General</h3>
+        <label class="switch"><input type="checkbox" id="autostart" /><span id="autostartLabel">Start at login</span></label>
+        <label class="switch"><input type="checkbox" id="chipsVisible" /><span>Show the chips</span></label>
+        <label class="switch" id="dockRow"><input type="checkbox" id="chipsDocked" /><span>Snap the chips to the taskbar</span></label>
+        <div class="field inline-field">
+          <label for="interval">Refresh plan meters every</label>
+          <select id="interval"></select>
+        </div>
+      </section>
+
+      <section>
+        <h3>Alerts</h3>
+        <div class="field inline-field">
+          <label for="threshold">Warn when a plan window reaches</label>
+          <select id="threshold"></select>
+        </div>
+        <label class="switch"><input type="checkbox" id="notifyLimit" /><span>Notify when a limit is reached</span></label>
+        <label class="switch"><input type="checkbox" id="forecast" /><span>Warn when a window is on course to run out before it resets</span></label>
+        <p class="hint">Once a window is half used, the recent pace is used to project when it reaches 100%. The flyout shows the projection either way.</p>
+        <label class="switch"><input type="checkbox" id="quiet" /><span>Quiet hours</span></label>
+        <div class="field inline-field indent">
+          <label for="quietStart">From</label>
+          <input type="time" id="quietStart" />
+          <label for="quietEnd">to</label>
+          <input type="time" id="quietEnd" />
+        </div>
+        <p class="hint">During quiet hours plan, forecast and update notifications are not shown. Data cap notifications still are.</p>
+      </section>
+
+      <section>
+        <h3>Chips</h3>
+        <p class="hint">Choose what the taskbar strip shows.</p>
+        <div class="checks" id="chipChecks"></div>
+      </section>
+
+      <section>
+        <h3>Updates</h3>
+        <label class="switch"><input type="checkbox" id="autoUpdate" /><span>Install updates automatically</span></label>
+        <div class="field inline-field">
+          <span class="label-inline">Channel</span>
+          <label class="radio"><input type="radio" name="channel" value="stable" /> Stable</label>
+          <label class="radio"><input type="radio" name="channel" value="beta" /> Beta (pre-releases too)</label>
+        </div>
+        <p class="hint" id="channelHint"></p>
+        <p class="status-line" id="updateStatus"></p>
+        <div class="row-actions wrap">
+          <button class="btn" type="button" id="checkUpdates">Check now</button>
+          <button class="btn" type="button" id="openLogs">Open logs folder</button>
+        </div>
+      </section>
+
+      <section>
+        <h3>Phone</h3>
+        <label class="switch"><input type="checkbox" id="phoneEnabled" /><span>Share plan meters with my phone over this network</span></label>
+        <p class="hint">Off by default. The Usage Monitor Android app shows the plan meters, forecasts and live readings from this computer. Your logins stay here; the phone only receives the numbers, encrypted.</p>
+        <div id="phoneBody">
+          <p class="status-line" id="phoneStatus"></p>
+          <div class="field inline-field">
+            <label for="phonePort">Port</label>
+            <input type="number" id="phonePort" min="1024" max="65535" />
+          </div>
+          <div class="row-actions wrap">
+            <button class="btn primary" type="button" id="pair">Pair a phone…</button>
+          </div>
+          <div class="pairing" id="pairing" hidden>
+            <img id="pairQr" alt="Pairing QR code" width="208" height="208" />
+            <div class="pairing-text">
+              <p>In the Android app open <strong>Pair with computer</strong> and scan this code, or type the address and code:</p>
+              <div class="path-box" id="pairAddress"></div>
+              <div class="code" id="pairCode"></div>
+              <p class="hint" id="pairExpires"></p>
+              <button class="btn" type="button" id="cancelPair">Cancel</button>
+            </div>
+          </div>
+          <div class="list-title">Paired phones</div>
+          <ul class="app-list" id="devices"></ul>
+          <p class="hint">The first time, your firewall may ask whether Usage Monitor can accept connections. Allow it on private networks. To reach this computer away from home, use a VPN such as Tailscale; its address is offered too.</p>
+        </div>
+      </section>
+
+      <section>
+        <h3>Network usage</h3>
+        <p class="hint">Recording, history, data caps and blocking are set in the Network usage window.</p>
+        <button class="btn" type="button" id="openNetwork">Open Network usage…</button>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="settings.js"></script>
+</body>
+</html>

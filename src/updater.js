@@ -21,6 +21,7 @@ const log = require("./log");
 const REPO = "sb-git-cs/usage-monitor";
 const RELEASES_URL = `https://github.com/${REPO}/releases/latest`;
 const LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=15`;
 const TIMING = {
   first: 8000, // after launch, once the network is usually up
   retry: [60_000, 5 * 60_000, 15 * 60_000], // offline: back off, then wait for the next period
@@ -76,15 +77,30 @@ function installKind({ platform = process.platform, env = process.env, execPath 
 // ---- versions ------------------------------------------------------------------
 
 function versionParts(v) {
-  return String(v || "").trim().replace(/^v/i, "").split("-")[0].split(".").map((n) => (Number.isFinite(Number(n)) ? Number(n) : 0));
+  const [core, ...pre] = String(v || "").trim().replace(/^v/i, "").split("-");
+  return {
+    nums: core.split(".").map((n) => (Number.isFinite(Number(n)) ? Number(n) : 0)),
+    pre: pre.join("-").split(".").filter(Boolean),
+  };
 }
 
+// Semantic-version order: 1.3.0-beta.2 < 1.3.0-beta.10 < 1.3.0.
 function compareVersions(a, b) {
   const x = versionParts(a);
   const y = versionParts(b);
-  for (let i = 0; i < Math.max(x.length, y.length, 3); i++) {
-    const d = (x[i] || 0) - (y[i] || 0);
+  for (let i = 0; i < Math.max(x.nums.length, y.nums.length, 3); i++) {
+    const d = (x.nums[i] || 0) - (y.nums[i] || 0);
     if (d) return d > 0 ? 1 : -1;
+  }
+  if (!x.pre.length || !y.pre.length) return x.pre.length === y.pre.length ? 0 : x.pre.length ? -1 : 1;
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    if (x.pre[i] === undefined) return -1;
+    if (y.pre[i] === undefined) return 1;
+    const nx = /^\d+$/.test(x.pre[i]);
+    const ny = /^\d+$/.test(y.pre[i]);
+    if (nx && ny && Number(x.pre[i]) !== Number(y.pre[i])) return Number(x.pre[i]) > Number(y.pre[i]) ? 1 : -1;
+    if (nx !== ny) return nx ? -1 : 1;
+    if (x.pre[i] !== y.pre[i]) return x.pre[i] > y.pre[i] ? 1 : -1;
   }
   return 0;
 }
@@ -246,12 +262,30 @@ function downloadUrl(release, { platform = process.platform, arch = process.arch
   return safe(release && release.html_url) ? release.html_url : RELEASES_URL;
 }
 
+function beta() {
+  const cfg = ctx && ctx.getConfig();
+  return !!cfg && cfg.update_channel === "beta";
+}
+
+// Stable reads GitHub's "latest release"; beta also considers pre-releases.
 async function latestRelease() {
-  const res = await getJson(LATEST_API, { "User-Agent": `usage-monitor/${app.getVersion()}`, Accept: "application/vnd.github+json" });
-  if (res.status !== 200 || !res.json || typeof res.json.tag_name !== "string") throw new Error(`GitHub answered HTTP ${res.status}.`);
-  const version = res.json.tag_name.replace(/^v/i, "");
+  const headers = { "User-Agent": `usage-monitor/${app.getVersion()}`, Accept: "application/vnd.github+json" };
+  let release;
+  if (beta()) {
+    const res = await getJson(RELEASES_API, headers);
+    if (res.status !== 200 || !Array.isArray(res.json)) throw new Error(`GitHub answered HTTP ${res.status}.`);
+    release = res.json
+      .filter((r) => r && !r.draft && typeof r.tag_name === "string")
+      .sort((a, b) => compareVersions(b.tag_name, a.tag_name))[0];
+    if (!release) return { available: false };
+  } else {
+    const res = await getJson(LATEST_API, headers);
+    if (res.status !== 200 || !res.json || typeof res.json.tag_name !== "string") throw new Error(`GitHub answered HTTP ${res.status}.`);
+    release = res.json;
+  }
+  const version = release.tag_name.replace(/^v/i, "");
   if (compareVersions(version, app.getVersion()) <= 0) return { available: false };
-  return { available: true, version, url: downloadUrl(res.json) };
+  return { available: true, version, url: downloadUrl(release) };
 }
 
 function manualHint() {
@@ -297,6 +331,7 @@ async function gitFlow(interactive) {
 
 async function installerFlow(interactive) {
   const u = electronUpdater();
+  u.allowPrerelease = beta();
   const result = await u.checkForUpdates();
   setState({ checked_at: Date.now() });
   if (!result || !result.isUpdateAvailable) {
@@ -422,6 +457,10 @@ function quit() {
 }
 
 function notify(title, body, onClick) {
+  if (ctx && ctx.isQuiet && ctx.isQuiet()) {
+    log.info(`quiet hours, not shown: ${title}`);
+    return;
+  }
   try {
     if (!Notification.isSupported()) return;
     const n = new Notification({ title, body, silent: true });

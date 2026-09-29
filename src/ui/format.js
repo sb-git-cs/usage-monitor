@@ -41,8 +41,28 @@ function flyoutLabel(win) {
   return win.label;
 }
 
+// The "warn at" percentage from Settings; the main process sends it with usage://prefs.
+let alertThreshold = 80;
+
+function setAlertThreshold(value) {
+  const n = Number(value);
+  alertThreshold = Number.isFinite(n) && n > 0 && n <= 100 ? n : 80;
+}
+
+function formatClock(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const d = new Date(t);
+  let hours = d.getHours();
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+  const sameDay = new Date().toDateString() === d.toDateString();
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return `${sameDay ? "" : `${days[d.getDay()]} `}${hours}:${pad(d.getMinutes())} ${ampm}`;
+}
+
 function alerting(win) {
-  return Number.isFinite(win.used_pct) && win.used_pct >= 80;
+  return Number.isFinite(win.used_pct) && win.used_pct >= alertThreshold;
 }
 
 function formatUsedTotal(win, compact) {

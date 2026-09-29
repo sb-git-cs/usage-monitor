@@ -295,6 +295,7 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 .net-value.small { font-size: 12.5px; padding-top: 3px; }
 /* width 0 + min-width 100%: long app names never widen the flyout */
 .net-top { margin-top: 6px; font-size: 11px; color: #d1d5db; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 0; min-width: 100%; }
+.forecast { margin-top: 4px; font-size: 11px; color: #fcd34d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Version and automatic update status under the flyout cards. */
 .update-bar {
   display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 7px 2px 0;

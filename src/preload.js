@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld("usage", {
   dragTo: (sx, sy) => ipcRenderer.send("usage://drag-to", sx, sy),
   dragEnd: () => ipcRenderer.send("usage://drag-end"),
   onUpdate: (cb) => ipcRenderer.on("usage://update", (_e, state) => cb(state)),
+  onPrefs: (cb) => ipcRenderer.on("usage://prefs", (_e, prefs) => cb(prefs)),
+  getPrefs: () => ipcRenderer.invoke("usage://get-prefs"),
+  openSettings: () => ipcRenderer.send("usage://open-settings"),
   getUpdate: () => ipcRenderer.invoke("usage://get-update"),
   updateAction: () => ipcRenderer.send("usage://update-action"),
 });
