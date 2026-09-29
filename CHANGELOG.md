@@ -5,9 +5,8 @@
 ### Two-row chips and system readings
 
 - The chips strip is now two compact rows: each provider's mark with a short percentage, and download stacked over upload. Beside them are **CPU**, **MEM**, **GPU** (only when one is detected), **DISK** and **SPACE**. An unavailable reading shows a dash, and a value of 80% or more turns amber.
-- CPU and memory refresh every 2 seconds, GPU and disk activity every 5 seconds, and storage every 30 seconds. On Windows DISK is the busiest physical disk's active time and SPACE is the fullest volume; hover either for per-drive values. On macOS and Linux DISK shows read + write throughput, and GPU depends on driver support.
-- Docked on the Windows taskbar, the strip is resized to the taskbar height before it is placed and centered with an equal inset above and below. It previously refused to dock on a 48px taskbar and could sit off-center.
-- Memory is read from the operating system on Windows. The library call used elsewhere starts a PowerShell process on every call.
+- CPU and memory refresh every 2 seconds, GPU and disk activity every 5 seconds, and storage every 30 seconds. On Windows DISK is the busiest physical disk's active time and SPACE is the fullest volume; hover either for per-drive values. On Windows the GPU and disk readings come from a short PowerShell query every 5 seconds. On macOS and Linux DISK shows read + write throughput, and GPU depends on driver support.
+- Docked on the Windows taskbar, the strip is sized to the taskbar height and centered with an equal inset above and below, including on a 48px taskbar.
 
 ## 1.1.0 — 2026-09-28
 
