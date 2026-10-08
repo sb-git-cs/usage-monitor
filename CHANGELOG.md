@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.0 — 2026-10-08
+
+- **Pair a phone** on the flyout and in Settings shows a QR code and a typeable code immediately, and turns phone sharing on. The code lasts 10 minutes and stays on the flyout if Settings is closed. **Cancel** withdraws it.
+- Android home screen widgets come in **4×2**, **4×1**, **2×1** and **1×1**. All presets can grow or shrink in both directions and refresh automatically in the background.
+- Settings, the flyout and the Android app show which account each plan meter is reading. **Switch account** opens that tool's browser sign-in page; the meter follows the account signed in to its CLI. When Grok has more than one saved sign-in, pick the one the meters should follow. A paired phone can ask for the same switch; the computer asks you to confirm it.
+- **Cursor** and **GitHub Copilot** meters when that account is signed in on this computer. Cursor shows Included, Auto and API usage for the current billing cycle. Copilot shows the chat, completions and premium allowances the plan includes. A Free plan is shown with those allowances. The strip leaves either one off when it is not installed. Copilot is excluded from Android; Codex remains available on both platforms.
+- **Phone reads accounts directly.** On Android, **Accounts → Link sign-ins** asks the computer (you confirm there) to hand the phone its current Claude Code, Codex, Gemini, Grok and Cursor access tokens, so meters stay current away from the computer until each token expires. Refresh tokens never leave the computer. **Stop direct reading** in Settings → Phone, or on the phone, ends it.
+- **Sign in on the phone** to Claude Code, Codex, Grok Build or Cursor for meters that work without the computer at all. Each phone sign-in is separate from the computer's, stays encrypted with an Android Keystore key, and is used only to read usage. Gemini reads through the computer link.
+- Android Home is one compact list: each tool's main window as a bar and a large percentage, with one line for its reset or forecast and its next window. The computer's CPU, memory, GPU and disk are one line. Readings made on the phone are tagged **Direct** or **Phone**.
+- Phone sign-ins survive temporary renewal failures; concurrent background refreshes cannot rotate the same refresh token twice. Sign-in verifies the first usage report, and cancelled attempts cannot overwrite a newer sign-in.
+- Widgets retain cached percentages with an **Old** label and distinguish **Sign in** from **Retry**. Cached text readings and forecasts are preserved.
+- Android release builds shrink unused code and resources while preserving background worker and widget identities.
+- Cursor and Copilot reject missing or malformed quota values instead of displaying false 0% or 100% readings. Invalid Cursor billing dates no longer discard valid usage.
+- Revoking a phone or stopping direct reading also blocks token requests that are still in progress.
+- Updated desktop build dependencies to remove reported high and critical security vulnerabilities.
+
+This release publishes desktop downloads only. Android changes are included in the source;
+an Android APK is not attached.
+
 ## 1.3.0 — 2026-09-29
 
 ### Android app, settings window and forecasts

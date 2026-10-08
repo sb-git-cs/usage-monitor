@@ -33,6 +33,10 @@ contextBridge.exposeInMainWorld("usage", {
   onPrefs: (cb) => ipcRenderer.on("usage://prefs", (_e, prefs) => cb(prefs)),
   getPrefs: () => ipcRenderer.invoke("usage://get-prefs"),
   openSettings: () => ipcRenderer.send("usage://open-settings"),
+  pairPhone: () => ipcRenderer.invoke("usage://pair-phone"),
+  cancelPair: () => ipcRenderer.invoke("usage://pair-cancel"),
+  getPairing: () => ipcRenderer.invoke("usage://get-pairing"),
+  onPairing: (cb) => ipcRenderer.on("usage://pairing", (_e, status) => cb(status)),
   getUpdate: () => ipcRenderer.invoke("usage://get-update"),
   updateAction: () => ipcRenderer.send("usage://update-action"),
 });

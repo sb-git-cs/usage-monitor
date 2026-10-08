@@ -6,6 +6,8 @@ const CHIP_LABELS = [
   ["codex", "Codex"],
   ["gemini", "Gemini"],
   ["grok", "Grok Build"],
+  ["cursor", "Cursor"],
+  ["copilot", "Copilot"],
   ["network", "Network speed"],
   ["cpu", "CPU"],
   ["mem", "Memory"],
@@ -84,6 +86,8 @@ function renderPhone(phone) {
   body.hidden = !(phone && phone.enabled);
   if (!phone || !phone.enabled) {
     clearInterval(pairTimer);
+    $("pairing").hidden = true;
+    $("pair").hidden = false;
     return;
   }
   const status = $("phoneStatus");
@@ -101,8 +105,10 @@ function renderPhone(phone) {
   setValue($("phonePort"), phone.port);
 
   const pairing = phone.pairing;
+  const pairingWasHidden = $("pairing").hidden;
   $("pairing").hidden = !pairing;
   $("pair").hidden = !!pairing;
+  if (pairing && pairingWasHidden) requestAnimationFrame(() => $("pairing").scrollIntoView({ block: "nearest" }));
   clearInterval(pairTimer);
   if (pairing) {
     if ($("pairQr").dataset.link !== pairing.link) {
@@ -125,7 +131,7 @@ function renderPhone(phone) {
   } else {
     list.replaceChildren(...phone.devices.map((d) => {
       const li = el("li");
-      const name = el("span", null, `${d.name} · paired ${new Date(d.created_at).toLocaleDateString()} · last seen ${relative(d.last_seen)}`);
+      const name = el("span", null, `${d.name} · paired ${new Date(d.created_at).toLocaleDateString()} · last seen ${relative(d.last_seen)}${d.direct ? " · reads usage directly" : ""}`);
       const remove = el("button", "link", "Remove");
       remove.type = "button";
       remove.addEventListener("click", async () => {
@@ -133,7 +139,18 @@ function renderPhone(phone) {
         if (next) render(next);
         toast(`${d.name} can no longer read this computer's meters.`);
       });
-      li.append(name, remove);
+      li.append(name);
+      if (d.direct) {
+        const stop = el("button", "link", "Stop direct reading");
+        stop.type = "button";
+        stop.addEventListener("click", async () => {
+          const next = await api.phone("unlink", d.id);
+          if (next) render(next);
+          toast(`${d.name} no longer receives sign-in tokens. Tokens it already has expire on their own.`);
+        });
+        li.append(stop);
+      }
+      li.append(remove);
       return li;
     }));
   }
@@ -193,6 +210,59 @@ function render(next) {
     status.className = `status-line${u.status === "error" ? " error" : ""}`;
   }
   renderPhone(next.phone);
+  renderAccounts(next.accounts);
+}
+
+let accountsSeen = "";
+
+function renderAccounts(rows) {
+  const key = JSON.stringify(rows || []);
+  const root = $("accounts");
+  if (key === accountsSeen && root.children.length) return;
+  accountsSeen = key;
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    root.replaceChildren(el("p", "hint", "No tools to show yet."));
+    return;
+  }
+  root.replaceChildren(...list.map((row) => {
+    const block = el("div", "account");
+    const head = el("div", "account-head");
+    head.append(
+      el("span", "account-name", row.label),
+      el("span", "account-who", row.signed_in ? (row.account || "Signed in") : "Not signed in"),
+    );
+    block.append(head);
+    if (row.detail) block.append(el("p", "hint", row.detail));
+    if (row.choices && row.choices.length > 1) {
+      for (const choice of row.choices) {
+        const label = el("label", "radio");
+        const input = el("input");
+        input.type = "radio";
+        input.name = `account-${row.id}`;
+        input.checked = !!choice.active;
+        input.addEventListener("change", () => {
+          if (input.checked) switchAccount(row.id, choice.id);
+        });
+        label.append(input, el("span", null, choice.label));
+        block.append(label);
+      }
+    }
+    const button = el("button", "btn", row.signed_in ? "Switch account" : "Sign in");
+    button.type = "button";
+    button.addEventListener("click", () => switchAccount(row.id, null));
+    block.append(button);
+    if (row.login_command) block.append(el("p", "hint", `To update this meter's account, sign in with ${row.login_command}.`));
+    return block;
+  }));
+}
+
+async function switchAccount(id, accountId) {
+  const result = await api.account(id, accountId);
+  if (!result) return;
+  if (result.view) render(result.view);
+  if (result.message) toast(result.message);
+  else if (result.error) toast(result.error);
 }
 
 function bind() {

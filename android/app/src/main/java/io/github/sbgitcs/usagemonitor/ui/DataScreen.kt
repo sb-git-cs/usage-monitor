@@ -77,14 +77,14 @@ fun DataScreen(settings: Settings, resumes: Int) {
                     Figure("Upload", Format.rateShort(speed.second), Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(4.dp))
-                Note("Turn on the status bar speed in Settings, or add the Network speed tile to Quick Settings.")
+                Note("Live network speed · This phone")
             }
         }
         if (!access) {
             item {
                 Section("Allow Usage access") {
                     Note("Android keeps count of each app's mobile and Wi-Fi data. Usage Monitor needs Usage access to read those counts. Nothing leaves your phone.")
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(6.dp))
                     Button(onClick = {
                         openFirst(
                             context,
@@ -101,7 +101,7 @@ fun DataScreen(settings: Settings, resumes: Int) {
         item { CycleCard(settings, s) }
         item {
             Section("Apps") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(selected = period == 0, onClick = { period = 0 }, label = { Text("Today") })
                     FilterChip(selected = period == 1, onClick = { period = 1 }, label = { Text("This cycle") })
                 }
@@ -135,7 +135,7 @@ private fun CycleCard(settings: Settings, s: DataStatus) {
     val to = date.format(Instant.ofEpochMilli(s.cycleEnd).atZone(zone))
     Section("Billing cycle") {
         Note("$from to $to")
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         Row {
             Figure("Mobile", Format.bytes(s.cycle), Modifier.weight(1f))
             Figure("Wi-Fi", Format.bytes(s.cycleTotals.wifi), Modifier.weight(1f))
@@ -162,8 +162,8 @@ private fun CycleCard(settings: Settings, s: DataStatus) {
 @Composable
 private fun AppRow(app: AppData) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-            Column(Modifier.weight(1f).padding(end = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+            Column(Modifier.weight(1f).padding(end = 6.dp)) {
                 Text(app.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Note("Mobile ${Format.bytes(app.mobile)} · Wi-Fi ${Format.bytes(app.wifi)}")
             }

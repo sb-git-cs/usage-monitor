@@ -99,6 +99,30 @@ test("Grok updates the selected account and avoids refreshing a rotated token tw
   assert.equal(refreshes, 1);
 });
 
+test("Grok reads the saved account the user picked", async () => {
+  const stored = {
+    old: { key: "old-token", user_id: "old-user", email: "old@example.com", create_time: "2024-01-01" },
+    current: { key: "new-token", user_id: "new-user", email: "new@example.com", create_time: "2025-01-01" },
+  };
+  let auth = "";
+  const adapter = load("src/adapters/grok.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify(stored), writeFileSync() {}, renameSync() {} },
+    "../paths": { ...noPaths, grokAuth: () => "fake", fileExists: () => true },
+    "../http": {
+      getJson: async (_url, headers) => {
+        auth = headers.Authorization;
+        return { status: 200, json: { config: { creditUsagePercent: 1, currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end: "2099-01-01T00:00:00Z" } } } };
+      },
+      postForm: async () => ({ status: 404 }),
+      request: async () => ({ status: 404 }),
+    },
+  });
+  assert.equal((await adapter.fetchUsage({ accounts: { grok: "old-user" } })).status.state, "ok");
+  assert.match(auth, /Bearer old-token/);
+  await adapter.fetchUsage({});
+  assert.match(auth, /Bearer new-token/);
+});
+
 test("Grok monthly billing fallback is not mislabeled as a weekly quota", () => {
   const adapter = load("src/adapters/grok.js", {}, ["mapBilling"]);
   const result = adapter.mapBilling({ used: { val: 25 }, monthlyLimit: { val: 100 }, productUsage: [null, {}] });
@@ -150,4 +174,32 @@ test("Grok fills omitted REST usage from grok.com credits gRPC", async () => {
   assert.equal(result.status.state, "ok");
   assert.equal(result.windows[0].kind, "weekly");
   assert.equal(result.windows[0].used_pct, 34);
+});
+
+test("a linked phone gets only current access tokens, never refresh tokens", async () => {
+  const jwt = (exp) => `h.${Buffer.from(JSON.stringify({ exp })).toString("base64url")}.s`;
+  const future = Math.floor(Date.now() / 1000) + 3600;
+  const files = (json) => ({ readFileSync: () => JSON.stringify(json), statSync: () => ({ mtimeMs: 1 }) });
+
+  const codexAuth = { tokens: { access_token: jwt(future), refresh_token: "rt", account_id: "acct" } };
+  const codex = load("src/adapters/codex.js", { fs: files(codexAuth), "../paths": { ...noPaths, codexAuth: () => "auth.json" } });
+  const linked = [codex.linkToken()];
+  assert.deepEqual(linked[0], { access_token: codexAuth.tokens.access_token, account_id: "acct", expires_at: future * 1000 });
+  codexAuth.tokens.access_token = jwt(future - 7200);
+  assert.equal(codex.linkToken(), null, "an expired token is not handed out");
+
+  const grokAuth = { a: { key: jwt(future), refresh_token: "rt", user_id: 7, create_time: "2026" } };
+  const grok = load("src/adapters/grok.js", { fs: files(grokAuth), "../paths": { ...noPaths, grokAuth: () => "grok.json" } });
+  linked.push(grok.linkToken({}));
+  assert.deepEqual(linked[1], { access_token: grokAuth.a.key, user_id: "7", expires_at: future * 1000 });
+
+  const expiresAt = Date.now() + 3_600_000;
+  const claudeCreds = { claudeAiOauth: { accessToken: "at", refreshToken: "rt", expiresAt, subscriptionType: "max" } };
+  const claude = load("src/adapters/claude.js", { fs: files(claudeCreds), "../paths": { ...noPaths, fileExists: () => true, claudeCredentials: () => "c.json" } });
+  linked.push(await claude.linkToken());
+  assert.deepEqual(linked[2], { access_token: "at", expires_at: expiresAt, plan: "Max" });
+
+  for (const token of linked) {
+    assert.ok(!Object.values(token).includes("rt"), "refresh tokens stay on the computer");
+  }
 });

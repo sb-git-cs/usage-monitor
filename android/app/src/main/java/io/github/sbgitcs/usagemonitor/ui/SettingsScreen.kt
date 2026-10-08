@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -80,10 +79,16 @@ fun SettingsScreen(settings: Settings, computer: PairedComputer?, resumes: Int, 
     ScreenList {
         item { ComputerSection(settings, computer, onPair, onForget) }
         item {
+            Section("Home screen widgets") {
+                Note("Add a Plan, Data or Phone widget. Hold it and drag its edges to resize.")
+                Note("Refreshes about every 15 minutes, or every minute with network speed on. Android may delay background updates.")
+            }
+        }
+        item {
             Section("Status bar") {
                 SwitchRow(
                     "Show network speed",
-                    "Download and upload speed in the status bar, updated every second. It also keeps the widgets fresh. The Network speed tile in Quick Settings switches it too.",
+                    "Live download and upload speed. Also refreshes widgets every minute.",
                     speedOn,
                 ) { setSpeed(it) }
             }
@@ -122,23 +127,22 @@ private fun ComputerSection(settings: Settings, computer: PairedComputer?, onPai
     var confirm by remember { mutableStateOf(false) }
     Section("Computer") {
         if (computer == null) {
-            Note("Not paired. Pair with Usage Monitor on your computer to see its plan meters here and in the widget.")
-            Spacer(Modifier.height(12.dp))
+            Note("Not paired. Pair with Usage Monitor on your computer to see its plan meters here and in the home screen widgets.")
+            Spacer(Modifier.height(6.dp))
             Button(onClick = onPair) { Text("Pair") }
             return@Section
         }
-        Text(computer.name, style = MaterialTheme.typography.bodyLarge)
-        Note("${computer.addresses.joinToString(", ")} · port ${computer.port}")
+        Text("Paired with ${computer.name}", style = MaterialTheme.typography.bodyLarge)
         val readAt = settings.snapshotAt
         if (readAt > 0) Note("Last reading ${Format.ago(readAt, System.currentTimeMillis())}")
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onPair) { Text("Pair again") }
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = onPair) { Text("Switch computer") }
             TextButton(onClick = { confirm = true }) { Text("Forget") }
         }
     }
     if (confirm) {
-        AlertDialog(
+        CompactDialog(
             onDismissRequest = { confirm = false },
             title = { Text("Forget ${computer?.name ?: "the computer"}?") },
             text = { Text("This phone stops reading its plan meters. To remove the phone on the computer as well, use Settings › Phone there.") },
@@ -159,7 +163,7 @@ private fun DataPlanSection(settings: Settings) {
     var warn by remember { mutableFloatStateOf(settings.capWarnPct.toFloat()) }
     Section("Mobile data plan") {
         Note("Caps count mobile data only. Leave a cap empty for none.")
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         ValidatedField(
             label = "Billing cycle starts on day",
             initial = settings.billingDay.toString(),
@@ -191,7 +195,7 @@ private fun DataPlanSection(settings: Settings) {
             Widgets.refresh(context)
             true
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         Text("Warn at ${warn.roundToInt()}% of a cap", style = MaterialTheme.typography.bodyLarge)
         Slider(
             value = warn,
@@ -209,7 +213,7 @@ private fun AlertSection(settings: Settings) {
     var forecast by remember { mutableStateOf(settings.forecastAlerts) }
     var quiet by remember { mutableStateOf(settings.quietEnabled) }
     Section("Alerts") {
-        SwitchRow("Plan alerts", "When a plan window on the computer passes the desktop's warning level or runs out", plan) {
+        SwitchRow("Plan alerts", "At the warning level or when a plan window runs out", plan) {
             plan = it
             settings.planAlerts = it
         }
@@ -222,7 +226,7 @@ private fun AlertSection(settings: Settings) {
             settings.quietEnabled = it
         }
         if (quiet) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Column(Modifier.weight(1f)) {
                     ValidatedField("From", settings.quietStart, KeyboardType.Text) { text ->
                         val t = Settings.normalizeTime(text) ?: return@ValidatedField false
@@ -255,11 +259,11 @@ private fun UpdateSection(settings: Settings, resumes: Int) {
     var status by remember(resumes) { mutableStateOf(settings.updateStatus) }
     Section("Updates") {
         Note("Version ${BuildConfig.VERSION_NAME}")
-        SwitchRow("Install updates automatically", "Checks GitHub when the app opens and every 6 hours, like the desktop app", auto) {
+        SwitchRow("Install updates automatically", "Checks when you open the app and every 6 hours", auto) {
             auto = it
             settings.autoUpdate = it
         }
-        Text("Channel", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
+        Text("Channel", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 6.dp))
         for ((value, label) in listOf("stable" to "Stable releases", "beta" to "Beta releases too")) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -275,8 +279,8 @@ private fun UpdateSection(settings: Settings, resumes: Int) {
                 Text(label)
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Button(enabled = !checking, onClick = {
                 checking = true
                 scope.launch {
@@ -296,8 +300,8 @@ private fun UpdateSection(settings: Settings, resumes: Int) {
 
 @Composable
 private fun PermissionRow(title: String, detail: String, granted: Boolean, onAllow: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Note(detail)
         }
@@ -322,7 +326,7 @@ private fun ValidatedField(label: String, initial: String, keyboard: KeyboardTyp
         isError = bad,
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboard),
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
     )
 }
 

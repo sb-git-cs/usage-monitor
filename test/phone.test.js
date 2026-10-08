@@ -44,9 +44,21 @@ function request(port, { path = "/v1/snapshot", headers = {} } = {}) {
   });
 }
 
-function signed(code, time, path = "/v1/snapshot", extra = {}) {
+function signed(code, time, path = "/v1/snapshot", extra = {}, method = "GET") {
   const key = phone.masterKey(code);
-  return { "X-UM-Id": phone.deviceId(code), "X-UM-Time": String(time), "X-UM-Sig": phone.sign(key, "GET", path, time), ...extra };
+  return { "X-UM-Id": phone.deviceId(code), "X-UM-Time": String(time), "X-UM-Sig": phone.sign(key, method, path, time), ...extra };
+}
+
+function post(port, path, headers) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port, path, method: "POST", headers, agent: false }, (res) => {
+      let body = "";
+      res.on("data", (c) => (body += c));
+      res.on("end", () => resolve({ status: res.statusCode, body: body ? JSON.parse(body) : null }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 async function startLink(t, overrides = {}) {
@@ -118,4 +130,123 @@ test("removing a phone revokes it, and turning sharing off closes the port", asy
   cfg.phone.enabled = false;
   link.apply();
   await assert.rejects(request(port), /ECONNREFUSED/);
+});
+
+test("a paired phone can ask the computer to switch an account", async (t) => {
+  const asked = [];
+  const { link, port, clock } = await startLink(t, { onAccount: (provider, id) => asked.push([provider, id]) });
+  const code = link.startPairing().pairing.code;
+  const time = clock.get();
+  assert.equal((await request(port, { path: "/v1/ping", headers: signed(code, time, "/v1/ping") })).status, 200);
+  const path = "/v1/account/claude";
+  const res = await post(port, path, signed(code, time, path, {}, "POST"));
+  assert.equal(res.status, 200);
+  assert.deepEqual(phone.decrypt(phone.masterKey(code), time, res.body), { ok: true, provider: "claude", account: null });
+  assert.deepEqual(asked, [["claude", null]]);
+  const picked = "/v1/account/grok/user-1";
+  const second = await post(port, picked, signed(code, time, picked, {}, "POST"));
+  assert.deepEqual(phone.decrypt(phone.masterKey(code), time, second.body), { ok: true, provider: "grok", account: "user-1" });
+  assert.deepEqual(asked[1], ["grok", "user-1"]);
+  for (const tool of ["cursor", "copilot"]) {
+    const toolPath = `/v1/account/${tool}`;
+    const toolRes = await post(port, toolPath, signed(code, time, toolPath, {}, "POST"));
+    assert.deepEqual(phone.decrypt(phone.masterKey(code), time, toolRes.body), { ok: true, provider: tool, account: null });
+  }
+  assert.equal((await post(port, "/v1/account/nope", signed(code, time, "/v1/account/nope", {}, "POST"))).status, 404);
+  assert.equal((await post(port, path, signed(code, time, path))).status, 401, "a GET signature does not authorize the switch");
+  assert.equal(asked.length, 4);
+});
+
+test("tokens are served only after the computer allows direct reading, until it is stopped", async (t) => {
+  const asked = [];
+  let tokenCalls = 0;
+  const { link, cfg, port, clock } = await startLink(t, {
+    onLink: (device) => asked.push(device.id),
+    tokens: async () => {
+      tokenCalls++;
+      return { claude: { access_token: "at-1", expires_at: 123, plan: "Max" } };
+    },
+  });
+  const code = link.startPairing().pairing.code;
+  const id = phone.deviceId(code);
+  const key = phone.masterKey(code);
+  const time = clock.get();
+  assert.equal((await request(port, { path: "/v1/ping", headers: signed(code, time, "/v1/ping") })).status, 200);
+
+  assert.equal((await request(port, { path: "/v1/tokens", headers: signed(code, time, "/v1/tokens") })).status, 403);
+  assert.equal(tokenCalls, 0, "nothing is read before the computer allows it");
+
+  const linked = await post(port, "/v1/link", signed(code, time, "/v1/link", {}, "POST"));
+  assert.deepEqual(phone.decrypt(key, time, linked.body), { ok: true, direct: false });
+  assert.deepEqual(asked, [id], "the computer is asked to confirm");
+  assert.equal(cfg.phone.devices[0].direct, undefined, "asking alone grants nothing");
+
+  link.setDirect(id, true);
+  assert.equal(link.status().devices[0].direct, true);
+  const res = await request(port, { path: "/v1/tokens", headers: signed(code, time, "/v1/tokens") });
+  assert.equal(res.status, 200);
+  const body = phone.decrypt(key, time, res.body);
+  assert.deepEqual(body.tokens, { claude: { access_token: "at-1", expires_at: 123, plan: "Max" } });
+  assert.ok(!/at-1/.test(Buffer.from(res.body.data, "base64url").toString("latin1")), "tokens are encrypted on the wire");
+  assert.equal((await post(port, "/v1/link", signed(code, time, "/v1/link", {}, "POST"))).status, 200);
+  assert.equal(asked.length, 1, "an allowed phone is not asked about again");
+
+  const stopped = await post(port, "/v1/unlink", signed(code, time, "/v1/unlink", {}, "POST"));
+  assert.deepEqual(phone.decrypt(key, time, stopped.body), { ok: true, direct: false });
+  assert.equal((await request(port, { path: "/v1/tokens", headers: signed(code, time, "/v1/tokens") })).status, 403);
+  assert.equal((await request(port, { path: "/v1/tokens", headers: signed(code, time, "/v1/snapshot") })).status, 401, "a signature for another path is refused");
+});
+
+test("beginPairing turns sharing on without dropping the new code", () => {
+  const cfg = { phone: { enabled: false, port: 9, devices: [] } };
+  let pendingAtListen = "not-called";
+  const link = new phone.PhoneLink({
+    getConfig: () => cfg,
+    saveConfig: () => {},
+    payload: () => ({}),
+    createServer() {
+      return {
+        on() {},
+        listen(_port, _host, cb) {
+          pendingAtListen = link.pending;
+          cb();
+        },
+        close() {},
+        closeAllConnections() {},
+      };
+    },
+  });
+  const first = link.beginPairing();
+  assert.equal(cfg.phone.enabled, true);
+  assert.equal(link.listening, true);
+  assert.equal(pendingAtListen, null);
+  assert.match(first.pairing.code, /^(\w{5}-){3}\w{5}$/);
+  assert.equal(link.beginPairing().pairing.code, first.pairing.code);
+  link.cancelPairing();
+  assert.equal(link.status().pairing, null);
+  assert.notEqual(link.beginPairing().pairing.code, first.pairing.code);
+});
+
+test("a pending token response respects revoked direct reading and removed phones", async (t) => {
+  for (const revoke of ["unlink", "remove"]) {
+    let finishTokens;
+    let started;
+    const reading = new Promise((resolve) => { started = resolve; });
+    const { link, port, clock } = await startLink(t, {
+      tokens: () => new Promise((resolve) => { finishTokens = resolve; started(); }),
+    });
+    const code = link.startPairing().pairing.code;
+    const id = phone.deviceId(code);
+    const time = clock.get();
+    await request(port, { path: "/v1/ping", headers: signed(code, time, "/v1/ping") });
+    link.setDirect(id, true);
+    const pending = request(port, { path: "/v1/tokens", headers: signed(code, time, "/v1/tokens") });
+    await reading;
+    if (revoke === "unlink") link.setDirect(id, false);
+    else link.removeDevice(id);
+    finishTokens({ claude: { access_token: "must-not-be-sent" } });
+    const response = await pending;
+    assert.equal(response.status, revoke === "unlink" ? 403 : 401);
+    assert.equal(response.body.data, undefined, "revoked requests receive no encrypted token payload");
+  }
 });

@@ -68,17 +68,23 @@
       </section>
 
       <section>
+        <h3>Signed-in accounts</h3>
+        <p class="hint">Switch account opens the provider's sign-in page in your browser. The meters read the tool's saved login on this computer; to change them, sign in through that tool as well. When more than one sign-in is saved, pick the account the meters should follow.</p>
+        <div id="accounts"></div>
+      </section>
+
+      <section>
         <h3>Phone</h3>
         <label class="switch"><input type="checkbox" id="phoneEnabled" /><span>Share plan meters with my phone over this network</span></label>
-        <p class="hint">Off by default. The Usage Monitor Android app shows the plan meters, forecasts and live readings from this computer. Your logins stay here; the phone only receives the numbers, encrypted.</p>
+        <p class="hint">Pair a phone turns sharing on and shows a QR code and a code to type, here and on the flyout. The code works for 10 minutes for one phone, and it stays available if this window closes. Cancel withdraws it. Your logins stay on this computer unless you allow a phone to read usage directly; it then gets current access tokens only, never refresh tokens. The phone can ask to switch an account or read directly; you confirm both here. Everything it receives is encrypted.</p>
+        <div class="row-actions wrap">
+          <button class="btn primary" type="button" id="pair">Pair a phone…</button>
+        </div>
         <div id="phoneBody">
           <p class="status-line" id="phoneStatus"></p>
           <div class="field inline-field">
             <label for="phonePort">Port</label>
             <input type="number" id="phonePort" min="1024" max="65535" />
-          </div>
-          <div class="row-actions wrap">
-            <button class="btn primary" type="button" id="pair">Pair a phone…</button>
           </div>
           <div class="pairing" id="pairing" hidden>
             <img id="pairQr" alt="Pairing QR code" width="208" height="208" />

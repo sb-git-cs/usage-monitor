@@ -4,7 +4,7 @@ const { normalizeNet } = require("./net/settings");
 
 const ALLOWED_INTERVALS = [5, 15, 30, 60];
 const ALERT_THRESHOLDS = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
-const CHIP_KEYS = ["claude", "codex", "gemini", "grok", "cpu", "mem", "gpu", "disk", "space"];
+const CHIP_KEYS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "cpu", "mem", "gpu", "disk", "space"];
 const UPDATE_CHANNELS = ["stable", "beta"];
 const PHONE_PORT = 47329;
 
@@ -35,6 +35,7 @@ const DEFAULTS = {
   chips_show: Object.fromEntries(CHIP_KEYS.map((k) => [k, true])),
   update_channel: "stable",
   phone: { enabled: false, port: PHONE_PORT, devices: [] },
+  accounts: {},
   adapters: {
     claude: { refresh_tokens: true },
     gemini: { refresh_tokens: true },
@@ -70,6 +71,7 @@ function normalize(parsed) {
   cfg.chips_show = Object.fromEntries(CHIP_KEYS.map((k) => [k, raw.chips_show?.[k] !== false]));
   cfg.update_channel = UPDATE_CHANNELS.includes(cfg.update_channel) ? cfg.update_channel : "stable";
   cfg.phone = normalizePhone(raw.phone);
+  cfg.accounts = normalizeAccounts(raw.accounts);
   // Taskbar docking relies on the Windows taskbar; elsewhere the widgets float.
   if (process.platform !== "win32") {
     cfg.chips_docked = false;
@@ -93,6 +95,18 @@ function normalizeQuietHours(raw) {
   };
 }
 
+const ACCOUNT_IDS = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+
+function normalizeAccounts(raw) {
+  const src = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  for (const id of ACCOUNT_IDS) {
+    const value = src[id];
+    if (typeof value === "string" && /^[A-Za-z0-9_.:@-]{1,200}$/.test(value)) out[id] = value;
+  }
+  return out;
+}
+
 function normalizePhone(raw) {
   const p = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const port = Number(p.port);
@@ -104,6 +118,7 @@ function normalizePhone(raw) {
       name: typeof d.name === "string" && d.name.trim() ? d.name.trim().slice(0, 60) : "Phone",
       created_at: Number.isFinite(d.created_at) ? d.created_at : Date.now(),
       last_seen: Number.isFinite(d.last_seen) ? d.last_seen : null,
+      direct: d.direct === true,
     }));
   return {
     enabled: p.enabled === true,

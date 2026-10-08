@@ -2,6 +2,7 @@ const fs = require("fs");
 const { grokAuth, cliOnPath, fileExists } = require("../paths");
 const { windowOf, emptyProvider } = require("../models");
 const { getJson, postForm, request } = require("../http");
+const { jwtExpMs } = require("../jwt");
 
 const BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const GRPC_CREDITS_URL = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
@@ -16,23 +17,16 @@ function probe() {
   };
 }
 
-function pickEntry(json) {
+function pickEntry(json, preferredId) {
   const values = Object.values(json || {});
   const withKey = values.filter((v) => v && v.key);
   if (!withKey.length) return null;
+  if (preferredId) {
+    const chosen = withKey.find((v) => v.user_id === preferredId || v.email === preferredId);
+    if (chosen) return chosen;
+  }
   withKey.sort((a, b) => String(b.create_time || "").localeCompare(String(a.create_time || "")));
   return withKey[0];
-}
-
-function jwtExpMs(token) {
-  try {
-    const parts = String(token).split(".");
-    if (parts.length < 2) return null;
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-    return payload.exp ? payload.exp * 1000 : null;
-  } catch {
-    return null;
-  }
 }
 
 function cliHeaders(token, entry) {
@@ -317,7 +311,7 @@ async function fetchUsage(cfg) {
       hint: "Run: grok login",
     });
   }
-  const entry = pickEntry(json);
+  const entry = pickEntry(json, cfg && cfg.accounts && cfg.accounts.grok);
   const topKey = Object.keys(json || {}).find((k) => json[k] === entry);
   if (!entry) {
     return emptyProvider("grok", "Grok Build", {
@@ -385,4 +379,19 @@ async function fetchUsage(cfg) {
   return mapBilling(body);
 }
 
-module.exports = { id: "grok", displayName: "Grok Build", probe, fetchUsage };
+// The current access token for a phone that reads usage directly; the refresh token stays here.
+function linkToken(cfg) {
+  let json;
+  try {
+    json = JSON.parse(fs.readFileSync(grokAuth(), "utf8"));
+  } catch {
+    return null;
+  }
+  const entry = pickEntry(json, cfg && cfg.accounts && cfg.accounts.grok);
+  if (!entry) return null;
+  const exp = Date.parse(entry.expires_at || "") || jwtExpMs(entry.key);
+  if (exp && exp <= Date.now()) return null;
+  return { access_token: entry.key, user_id: entry.user_id ? String(entry.user_id) : null, expires_at: exp || null };
+}
+
+module.exports = { id: "grok", displayName: "Grok Build", probe, fetchUsage, linkToken };

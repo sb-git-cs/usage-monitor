@@ -42,6 +42,28 @@ function antigravityToken() {
   return path.join(geminiHome(), "antigravity-cli", "antigravity-oauth-token");
 }
 
+function cursorDir() {
+  return path.join(appData(), "Cursor");
+}
+
+function cursorAuth() {
+  if (process.platform === "win32") return path.join(cursorDir(), "auth.json");
+  if (process.platform === "darwin") return path.join(home(), ".cursor", "auth.json");
+  const config = process.env.XDG_CONFIG_HOME || path.join(home(), ".config");
+  return path.join(config, "cursor", "auth.json");
+}
+
+function cursorStateDb() {
+  return path.join(cursorDir(), "User", "globalStorage", "state.vscdb");
+}
+
+function ghHosts() {
+  const files = [path.join(home(), ".config", "gh", "hosts.yml")];
+  if (process.platform === "win32") files.push(path.join(appData(), "GitHub CLI", "hosts.yml"));
+  if (process.platform === "darwin") files.push(path.join(home(), "Library", "Application Support", "GitHub CLI", "hosts.yml"));
+  return files;
+}
+
 function agyBinaryCandidates() {
   const local = localAppData();
   return [
@@ -130,6 +152,10 @@ module.exports = {
   geminiHome,
   geminiOAuth,
   antigravityToken,
+  cursorDir,
+  cursorAuth,
+  cursorStateDb,
+  ghHosts,
   agyBinaryCandidates,
   localAppData,
   netDataDir,

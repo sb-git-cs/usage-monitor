@@ -4,6 +4,8 @@ const http = require("node:http");
 const { load } = require("./helpers");
 const { request } = require("../src/http");
 
+const PLAN_IDS = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+
 function provider(id, used = 50) {
   return { id, display_name: id, status: { state: "ok" }, windows: [{ kind: "daily", label: "Pro", used_pct: used }], fetched_at: new Date().toISOString() };
 }
@@ -11,14 +13,14 @@ function provider(id, used = 50) {
 test("polls coalesce concurrent refreshes and deliver fresh data despite cache write failure", async () => {
   let calls = 0;
   const mocks = { "./cache": { loadSnapshot: () => null, saveSnapshot() { throw new Error("disk full"); } } };
-  for (const id of ["claude", "codex", "gemini", "grok"]) mocks[`./adapters/${id}`] = {
+  for (const id of PLAN_IDS) mocks[`./adapters/${id}`] = {
     fetchUsage: async () => { calls++; await new Promise((r) => setTimeout(r, 5)); return provider(id); },
   };
   const poller = load("src/poller.js", mocks);
   const [first, second] = await Promise.all([poller.pollOnce({}), poller.pollOnce({})]);
-  assert.equal(calls, 4);
+  assert.equal(calls, PLAN_IDS.length);
   assert.equal(first, second);
-  assert.equal(first.providers.length, 4);
+  assert.equal(first.providers.length, PLAN_IDS.length);
 });
 
 test("timed-out adapters cannot overlap refresh operations, and late results are consumed", async () => {
@@ -26,7 +28,7 @@ test("timed-out adapters cannot overlap refresh operations, and late results are
   let calls = 0;
   let snapshot = null;
   const mocks = { "./cache": { loadSnapshot: () => snapshot, saveSnapshot: (s) => { snapshot = s; } } };
-  for (const id of ["claude", "codex", "gemini", "grok"]) mocks[`./adapters/${id}`] = {
+  for (const id of PLAN_IDS) mocks[`./adapters/${id}`] = {
     fetchUsage: async () => provider(id),
   };
   mocks["./adapters/claude"].fetchUsage = () => { calls++; return new Promise((r) => { release = r; }); };
@@ -44,13 +46,13 @@ test("rate limiting backs off empty readings without misrepresenting them as sta
   let snapshot;
   let calls = 0;
   const mocks = { "./cache": { loadSnapshot: () => snapshot, saveSnapshot: (s) => { snapshot = s; } } };
-  for (const id of ["claude", "codex", "gemini", "grok"]) mocks[`./adapters/${id}`] = {
+  for (const id of PLAN_IDS) mocks[`./adapters/${id}`] = {
     fetchUsage: async () => { calls++; return { ...provider(id), windows: [], status: { state: "fetch_failed" }, _rateLimited: true }; },
   };
   const poller = load("src/poller.js", mocks);
   await poller.pollOnce({});
   const next = await poller.pollOnce({});
-  assert.equal(calls, 4);
+  assert.equal(calls, PLAN_IDS.length);
   assert.equal(next.providers[0].status.state, "fetch_failed");
 });
 

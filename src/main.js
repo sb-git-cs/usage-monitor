@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, ipcMain, shell, screen } = require("electron");
+const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, ipcMain, shell, screen, dialog } = require("electron");
 const path = require("path");
 const os = require("os");
 const config = require("./config");
@@ -13,6 +13,12 @@ const netUsage = require("./net");
 const systemUsage = require("./system");
 const { History } = require("./history");
 const { PhoneLink } = require("./phone");
+const accounts = require("./accounts");
+const claude = require("./adapters/claude");
+const codex = require("./adapters/codex");
+const gemini = require("./adapters/gemini");
+const grok = require("./adapters/grok");
+const cursor = require("./adapters/cursor");
 const { formatRateShort } = require("./net/format");
 
 const IS_WINDOWS = process.platform === "win32";
@@ -573,7 +579,7 @@ function showFlyout(bounds) {
   flyout.show();
   flyout.focus();
   broadcastNet();
-  showClickAway();
+  sendPairing();
   if (chips && !cfg.chips_hidden) keepWidgetOnTop(chips, cfg.chips_docked);
 }
 
@@ -822,10 +828,116 @@ function settingsView() {
     settings: Object.fromEntries(keys.map((k) => [k, cfg[k]])),
     update: updater.getState(),
     phone: phone ? withQr(phone.status()) : null,
+    accounts: accounts.list(),
   };
 }
 
+function present(snapshot) {
+  if (!snapshot) return snapshot;
+  return { ...snapshot, providers: (snapshot.providers || []).map((provider) => accounts.decorate(provider)) };
+}
+
+const ACCOUNT_TOOLS = Object.keys(accounts.TOOLS);
+
+async function beginAccountSwitch(provider, accountId) {
+  if (!ACCOUNT_TOOLS.includes(provider)) return { ok: false, error: "Unknown tool" };
+  const row = accounts.list().find((item) => item.id === provider);
+  if (accountId) {
+    if (!accounts.select(provider, accountId)) return { ok: false, error: "That account is not saved on this computer." };
+    cfg.accounts[provider] = accountId;
+    config.save(cfg);
+    if (latest) {
+      latest = present(latest);
+      broadcast(latest);
+    }
+    if (poll) poll.refresh();
+    sendSettings();
+    return { ok: true, view: settingsView(), message: `${row ? row.label : "The meters"} will use that account.` };
+  }
+  const opened = await accounts.openLogin(provider);
+  if (!opened.ok) return opened;
+  return { ok: true, view: settingsView(), message: `Sign-in opened in your browser. To change the account the meters read, also sign in with ${row ? row.login_command : "the tool"}.` };
+}
+
+function askAccountSwitch(provider, accountId) {
+  if (!ACCOUNT_TOOLS.includes(provider)) return;
+  if (accountId && !accounts.hasChoice(provider, accountId)) return;
+  const row = accounts.list().find((item) => item.id === provider);
+  const name = row ? row.label : provider;
+  const choice = accountId && row && row.choices.find((item) => item.id === accountId);
+  const parent = settingsWin && !settingsWin.isDestroyed()
+    ? settingsWin
+    : flyout && !flyout.isDestroyed() ? flyout : null;
+  const options = {
+    type: "question",
+    buttons: ["Switch", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    title: "Usage Monitor",
+    message: choice
+      ? `Your phone asked to use ${choice.label} for ${name}.`
+      : `Your phone asked to switch the ${name} account. Sign-in opens on this computer.`,
+    detail: choice
+      ? "The meters on this computer will follow that saved sign-in."
+      : "The provider's sign-in page opens in your browser. To change the meters, also sign in through the tool on this computer.",
+  };
+  const box = parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options);
+  box.then((result) => {
+    if (result.response === 0) return beginAccountSwitch(provider, accountId);
+  }).catch(() => {});
+}
+
+function askDirectReading(device) {
+  const parent = settingsWin && !settingsWin.isDestroyed()
+    ? settingsWin
+    : flyout && !flyout.isDestroyed() ? flyout : null;
+  const options = {
+    type: "question",
+    buttons: ["Allow", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    title: "Usage Monitor",
+    message: `Let ${device.name} read your plan usage directly?`,
+    detail: "The phone receives this computer's current Claude Code, Codex, Gemini, Grok and Cursor access tokens, "
+      + "so its meters keep updating away from this computer until each token expires. It uses them only to read usage. "
+      + "Sign-in refresh tokens stay here. Stop it any time in Settings → Phone.",
+  };
+  const box = parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options);
+  box.then((result) => {
+    if (result.response === 0 && phone) phone.setDirect(device.id, true);
+  }).catch(() => {});
+}
+
+// Access tokens for a phone allowed to read usage directly. Copilot is not metered on phones.
+async function phoneTokens() {
+  const tools = { claude, codex, gemini, grok, cursor };
+  const tokens = {};
+  await Promise.all(Object.entries(tools).map(async ([id, adapter]) => {
+    try {
+      const token = await adapter.linkToken(cfg);
+      if (token && token.access_token) tokens[id] = token;
+    } catch {
+      /* that tool is not signed in */
+    }
+  }));
+  return tokens;
+}
+
+function refreshAccounts() {
+  const preferred = cfg && cfg.accounts;
+  accounts.refresh(preferred).then(() => {
+    if (latest) {
+      latest = present(latest);
+      broadcast(latest);
+    }
+    sendSettings();
+  }).catch(() => {});
+}
+
 let qrCache = { link: null, url: null };
+function pairingActive() {
+  return !!(phone && phone.status().pairing);
+}
 function withQr(status) {
   if (status.pairing) {
     if (qrCache.link !== status.pairing.link) {
@@ -840,11 +952,30 @@ function withQr(status) {
   return status;
 }
 
+function sendPairing() {
+  const status = phone ? withQr(phone.status()) : null;
+  if (flyout && !flyout.isDestroyed()) flyout.webContents.send("usage://pairing", status);
+  if (!flyout || flyout.isDestroyed() || !flyout.isVisible()) return;
+  // A code on screen has to stay visible while the phone is scanned, so clicks on the
+  // desktop must not dismiss the flyout. The flyout still hides from its own controls.
+  if ((status && status.pairing) || (cfg && cfg.flyout_docked)) hideClickAway();
+  else showClickAway();
+}
+
+function beginPairing() {
+  if (!phone) return null;
+  const wasOff = !cfg.phone.enabled;
+  const status = withQr(phone.beginPairing());
+  if (wasOff) config.save(cfg);
+  return status;
+}
+
 function sendSettings() {
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send("settings:state", settingsView());
 }
 
 function openSettings() {
+  refreshAccounts();
   if (settingsWin && !settingsWin.isDestroyed()) {
     if (settingsWin.isMinimized()) settingsWin.restore();
     settingsWin.show();
@@ -873,8 +1004,8 @@ function openSettings() {
   settingsWin.once("ready-to-show", () => settingsWin && settingsWin.show());
   settingsWin.on("closed", () => {
     settingsWin = null;
-    // A pairing code only lives while the window that shows it is open.
-    if (phone) phone.cancelPairing();
+    // The code keeps working for its 10 minutes. Put it on the flyout so it stays on screen.
+    if (pairingActive()) showFlyout();
   });
 }
 
@@ -953,6 +1084,10 @@ function phonePayload() {
       plan: p.plan || null,
       status: { state: (p.status && p.status.state) || "unknown", hint: (p.status && (p.status.hint || p.status.message)) || null },
       fetched_at: p.fetched_at || null,
+      account: typeof p.account === "string" ? p.account : null,
+      accounts: Array.isArray(p.accounts)
+        ? p.accounts.filter((item) => item && typeof item.id === "string" && typeof item.label === "string").map((item) => ({ id: item.id, label: item.label, active: !!item.active }))
+        : [],
       windows: (p.windows || []).map((w) => ({
         kind: w.kind,
         label: w.label,
@@ -1044,9 +1179,9 @@ function createWindows() {
   flyout.loadFile(ui("flyout.html"));
   flyout.setAlwaysOnTop(true, cfg.flyout_docked || cfg.flyout_pinned ? "pop-up-menu" : "floating");
   flyout.on("blur", () => {
-    if (ignoreFlyoutBlur || (cfg && cfg.flyout_docked)) return;
+    if (ignoreFlyoutBlur || (cfg && cfg.flyout_docked) || pairingActive()) return;
     setTimeout(() => {
-      if (ignoreFlyoutBlur || (cfg && cfg.flyout_docked)) return;
+      if (ignoreFlyoutBlur || (cfg && cfg.flyout_docked) || pairingActive()) return;
       if (flyout && flyout.isFocused()) return;
       hideFlyout(true);
     }, 180);
@@ -1210,15 +1345,26 @@ function wireIpc() {
   ipcMain.handle("usage://get-update", () => updater.getState());
   ipcMain.handle("usage://get-prefs", () => prefs());
   ipcMain.on("usage://open-settings", () => openSettings());
+  ipcMain.handle("usage://pair-phone", () => beginPairing());
+  ipcMain.handle("usage://pair-cancel", () => {
+    if (phone) phone.cancelPairing();
+    return phone ? withQr(phone.status()) : null;
+  });
+  ipcMain.handle("usage://get-pairing", () => (phone ? withQr(phone.status()) : null));
   const fromSettings = (e) => !!(settingsWin && !settingsWin.isDestroyed() && e.sender === settingsWin.webContents);
   ipcMain.handle("settings:get", (e) => (fromSettings(e) ? settingsView() : null));
   ipcMain.handle("settings:set", (e, patch) => (fromSettings(e) ? applySettings(patch) : null));
   ipcMain.handle("settings:phone", (e, op, arg) => {
     if (!fromSettings(e) || !phone) return null;
-    if (op === "pair") phone.startPairing();
+    if (op === "pair") beginPairing();
     else if (op === "cancel") phone.cancelPairing();
     else if (op === "remove" && typeof arg === "string") phone.removeDevice(arg);
+    else if (op === "unlink" && typeof arg === "string") phone.setDirect(arg, false);
     return settingsView();
+  });
+  ipcMain.handle("settings:account", (e, provider, accountId) => {
+    if (!fromSettings(e)) return null;
+    return beginAccountSwitch(provider, typeof accountId === "string" && accountId ? accountId : null);
   });
   ipcMain.on("settings:check-updates", (e) => {
     if (fromSettings(e)) runUpdateCheck();
@@ -1293,7 +1439,13 @@ if (!gotLock) {
       getConfig: () => cfg,
       saveConfig: () => config.save(cfg),
       payload: phonePayload,
-      onChange: sendSettings,
+      tokens: phoneTokens,
+      onChange: () => {
+        sendSettings();
+        sendPairing();
+      },
+      onAccount: askAccountSwitch,
+      onLink: askDirectReading,
     });
     phone.apply();
 
@@ -1312,6 +1464,7 @@ if (!gotLock) {
       flyout.webContents.send("usage://update", updater.getState());
       flyout.webContents.send("usage://prefs", prefs());
       if (latest) flyout.webContents.send("usage://snapshot", latest);
+      sendPairing();
       if (flyoutStaysOpen()) showFlyout();
     });
     const revive = (win) => {
@@ -1340,10 +1493,11 @@ if (!gotLock) {
     screen.on("display-added", displaysChanged);
 
     if (!latest) sendChipsLoading();
+    refreshAccounts();
     poll = poller.start(cfg, (snap) => {
       const { snapshot: fresh } = applyLocalResets(snap);
       history.record(fresh);
-      const snapshot = history.annotate(fresh);
+      const snapshot = present(history.annotate(fresh));
       latest = snapshot;
       broadcast(snapshot);
       alerts.evaluate(snapshot, {
@@ -1368,6 +1522,7 @@ if (!gotLock) {
       if (dragState) return;
       recoverChipsIfNeeded();
     }, 800);
+    setInterval(refreshAccounts, 60_000);
     if (process.platform === "linux") setInterval(refreshTrayMenu, 3000);
     setInterval(broadcastNet, 1000);
     setInterval(() => {

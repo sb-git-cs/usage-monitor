@@ -39,7 +39,7 @@ object Scheduler {
     fun refreshNow(context: Context) {
         WorkManager.getInstance(context).enqueueUniqueWork(
             "refresh-now",
-            ExistingWorkPolicy.REPLACE,
+            ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<RefreshWorker>().build(),
         )
     }

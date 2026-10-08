@@ -7,10 +7,10 @@ Thanks for helping improve Usage Monitor. Bug reports, ideas and pull requests a
 Open a [bug report](https://github.com/sb-git-cs/usage-monitor/issues/new?template=bug_report.yml) with:
 
 - Your OS and version, and whether you run a packaged build or `npm start`
-- Which provider (Claude Code, Codex, Gemini, Grok) or which part of Network usage is affected
+- Which provider (Claude Code, Codex, Gemini, Grok, Cursor, Copilot) or which part of Network usage is affected
 - What the chip, flyout or window showed, and what you expected
 
-Never paste tokens or the contents of `~/.claude`, `~/.codex`, `~/.gemini` or `~/.grok`.
+Never paste tokens or the contents of `~/.claude`, `~/.codex`, `~/.gemini`, `~/.grok`, Cursor's `auth.json`, or GitHub CLI `hosts.yml`.
 
 ## Development setup
 

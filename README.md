@@ -2,7 +2,7 @@
 
 # Usage Monitor
 
-**See how much of your Claude Code, Codex, Gemini and Grok plan you've used — and which apps are eating your bandwidth — without leaving your taskbar.**
+**See how much of your Claude Code, Codex, Gemini, Grok, Cursor and GitHub Copilot plan you've used — and which apps are eating your bandwidth — without leaving your taskbar.**
 
 [![Checks](https://github.com/sb-git-cs/usage-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/sb-git-cs/usage-monitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -35,7 +35,7 @@ npm install
 npm run setup   # installs any missing CLIs (Windows), then starts the app
 ```
 
-Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `grok`) and the chips fill in within seconds. Needs [Node.js](https://nodejs.org/) 22.13+. Prefer an installer? Download one from [**Releases**](https://github.com/sb-git-cs/usage-monitor/releases/latest) (Windows `.exe`, macOS `.dmg`, Linux `.AppImage`). Either way, [updates install automatically](#automatic-updates).
+Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `grok`, and Cursor or `gh auth login` when you use those) and the chips fill in within seconds. Needs [Node.js](https://nodejs.org/) 22.13+. Prefer an installer? Download one from [**Releases**](https://github.com/sb-git-cs/usage-monitor/releases/latest) (Windows `.exe`, macOS `.dmg`, Linux `.AppImage`). Either way, [updates install automatically](#automatic-updates).
 
 > If Usage Monitor saves you from a surprise rate limit, please ⭐ **star the repo** — it helps other developers find it.
 
@@ -113,7 +113,7 @@ Open **Settings…** from the right-click menu, or the ⚙ button in the flyout.
 | Notifications | Limit warnings, forecast warnings, and quiet hours (for example 22:00 to 07:00) when nothing is shown. |
 | Chips | Which providers and system readings the chips strip shows, and whether network speed is on it. |
 | Updates | Install updates automatically, the **Stable** or **Beta** channel, and **Check now**. |
-| Phone | Share this computer's plan meters with the Android app: turn it on, scan the QR code with the phone, see and remove paired phones. |
+| Phone | Share this computer's plan meters with the Android app. **Pair a phone** shows a QR code and a code immediately. See and remove paired phones. |
 
 ## Android app
 
@@ -121,17 +121,17 @@ Download `UsageMonitor-<version>.apk` from [**Releases**](https://github.com/sb-
 
 | Screen | What it shows |
 | --- | --- |
-| **Plans** | Your computer's Claude Code, Codex, Gemini and Grok Build meters, reset times and forecasts, plus its CPU, memory, GPU, disk and network. Read over your Wi-Fi every 30 seconds while the app is open. |
+| **Plans** | Your computer's Claude Code, Codex, Gemini, Grok Build and Cursor meters, reset times and forecasts, plus its CPU, memory, GPU, disk and network. Read over your Wi-Fi every 30 seconds while the app is open. GitHub Copilot remains available in the desktop app. |
 | **Data** | Live download and upload speed; mobile and Wi-Fi data today and this billing cycle; data per app. Needs **Usage access**, which the app asks for. |
 | **Phone** | CPU clock per core, memory, storage, battery level, temperature and current, heat status. |
 | **Settings** | Pairing, status bar speed, data plan (billing day, monthly and daily caps, warning level), alerts and quiet hours, updates, permissions. |
 
-- **Widgets**: *Plan meters*, *Data usage* and *Phone status*. They refresh every 15 minutes in the background, every minute while the status bar speed is on, and whenever you open the app.
+- **Widgets**: *Plan meters*, *Data usage* and *Phone status*, each at **4×2**, **4×1**, **2×1** and **1×1**. The 4×2 ones can also be resized. They refresh every 15 minutes in the background, every minute while the status bar speed is on, and whenever you open the app.
 - **Status bar speed**: the current speed as the notification icon, updated every second, with today's data in the notification. Switch it from Settings or the **Network speed** Quick Settings tile.
 - **Alerts**: plan warning, limit reached and forecast (like the desktop), and your mobile data cap at the warning level and when used up. Quiet hours apply.
 - **Updates itself**: checks GitHub when opened and every six hours, verifies the download's SHA-256 and that it is signed with the same key, then installs it. Android asks you to allow installing updates once, and to confirm the first update; from Android 12 later ones install on their own.
 
-**Pairing.** On the computer, open **Settings → Phone**, turn on sharing and click **Pair a phone…**; the code is good for 10 minutes while the window stays open. In the app, tap **Pair** and scan the QR code (or type the address and code). The phone and computer must be on the same network. The phone keeps a key derived from the code; the computer answers only signed requests from paired phones and encrypts every reply. Your CLI logins never leave the computer. See [`docs/phone-protocol.md`](docs/phone-protocol.md).
+**Pairing.** On the computer, click **Pair** on the flyout, or **Pair a phone…** in **Settings → Phone**. Sharing turns on, and a QR code and a code appear immediately. The code is good for 10 minutes for one phone, including after Settings closes; **Cancel** withdraws it. In the app, tap **Pair** and scan the QR code (or type the address and code). The phone and computer must be on the same network. The phone keeps a key derived from the code; the computer answers only signed requests from paired phones and encrypts every reply. Your CLI logins stay on the computer unless you allow a phone to read usage directly (the phone asks; you confirm here). It then receives only current access tokens, never refresh tokens, and you can stop it in **Settings → Phone**. The phone can also sign in to Claude Code, Codex, Grok Build or Cursor itself. See [`docs/phone-protocol.md`](docs/phone-protocol.md) and [`docs/phone-accounts.md`](docs/phone-accounts.md).
 
 **Honest limits.** Android doesn't let apps read how busy the CPU is, so the app shows how fast the cores run against their top speed. Android's data counts are kept in 2-hour blocks, so "today" can include a little of the evening before. Widgets can't refresh more often than every 15 minutes on their own. Away from the computer's network the Plans screen and widget show the last reading.
 
@@ -146,8 +146,10 @@ Download `UsageMonitor-<version>.apk` from [**Releases**](https://github.com/sb-
   - [Codex](https://github.com/openai/codex) (`codex`)
   - [Antigravity CLI](https://antigravity.google/) (`agy`) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`)
   - [Grok Build](https://grok.com/) (`grok`)
+  - [Cursor](https://cursor.com/) (signed in in the app, or `cursor-agent login`)
+  - [GitHub Copilot](https://github.com/features/copilot) (signed in to GitHub in the editor, or `gh auth login`)
 
-You do not need all four. A missing login shows as gray with a sign-in hint. On macOS, Claude Code keeps its login in the Keychain; Usage Monitor reads it there (macOS may ask once to allow access) and never rewrites it.
+You do not need every tool. A missing login shows as gray with a sign-in hint. Cursor and Copilot stay off the strip until that app or login is on this computer; a signed-in Free plan is shown with the allowance it includes. Settings shows the account each meter is reading, and **Switch account** opens the provider's sign-in page in your browser. Meters read the tool's saved local login, so also sign in through that tool to change the metered account; Settings shows the command. Choosing a saved Grok account changes the meter immediately. On macOS, Claude Code keeps its login in the Keychain; Usage Monitor reads it there (macOS may ask once to allow access) and never rewrites it.
 
 ## Install
 
@@ -170,7 +172,7 @@ Builds are unsigned. On macOS, open the app with right-click → **Open** the fi
 
 To publish a release, bump `version` in `package.json`, add a section to [`CHANGELOG.md`](CHANGELOG.md) and commit, then either push a matching tag (`git tag v1.1.1 && git push origin v1.1.1`) or open **Actions → Release → Run workflow** and tick **publish**. The workflow tests, builds all three platforms, creates the tag if needed and attaches the installers plus the update metadata (`latest.yml`, `latest-linux.yml`, `latest-mac.yml`, `*.blockmap`) to a GitHub release. Installed copies pick the release up on their next check.
 
-Sign in to the CLIs once (`claude`, `codex login`, `agy`, `grok`) so the meters can read usage. A packaged copy still uses those same local logins; it does not replace the CLIs.
+Sign in to the tools once (`claude`, `codex login`, `agy`, `grok`, and Cursor or `gh auth login` when you use those) so the meters can read usage. A packaged copy still uses those same local logins; it does not replace the tools.
 
 ### From source
 
@@ -196,6 +198,8 @@ claude
 codex login
 agy
 grok
+cursor-agent login
+gh auth login
 ```
 
 Usage Monitor only:
@@ -279,9 +283,9 @@ The screenshots in `docs/screenshots` are produced by `npm run screenshots`, whi
 - Runs only on your computer; nothing about network usage leaves it
 - The network monitor stores byte counts per app per minute, and domains/addresses only for apps where you turn on connection recording. It never reads packet contents
 - Reverse DNS for recorded addresses is off by default; when on, lookups go to your DNS server
-- Reads the credentials the CLIs already wrote (`~/.claude`, `.codex`, `.gemini`, `.grok`; on Windows also the Credential Manager entry `gemini:antigravity`; on macOS the Keychain item `Claude Code-credentials`)
+- Reads the credentials the tools already wrote (`~/.claude`, `.codex`, `.gemini`, `.grok`; Cursor's `auth.json` and the `cursorAuth/cachedEmail` entry in its editor database; GitHub CLI `hosts.yml` or, on Windows, the Credential Manager entry `git:https://github.com`; on Windows also the Credential Manager entry `gemini:antigravity`; on macOS the Keychain item `Claude Code-credentials`). Those reads are read-only.
 - Polls each provider’s usage endpoint; never sends prompts, files, or chat history
-- Phone sharing is off until you turn it on. When on, the computer listens on your local network (port 47329) and answers only phones paired with a code shown on its screen, with encrypted plan meters and system readings. Remove a phone in **Settings → Phone**
+- Phone sharing is off until you turn it on or click **Pair a phone**. When on, the computer listens on your local network (port 47329) and answers only phones paired with a code shown on its screen, with encrypted plan meters and system readings. Remove a phone in **Settings → Phone**
 - The Android app reads your phone's data counts with Usage access and keeps them on the phone. It only contacts your paired computer and GitHub (for updates)
 - Update checks only contact GitHub: `git fetch` for a clone, the release feed and files for an installed copy, and the public releases API for portable/zip/macOS copies. No personal data is sent
 - Settings, logs (`logs/main.log`) and caches stay under `%APPDATA%\UsageMonitor` and `%LOCALAPPDATA%\UsageMonitor` (Windows), `~/Library/Application Support/UsageMonitor` (macOS), or `~/.config/UsageMonitor` and `~/.local/share/UsageMonitor` (Linux). Network records are in `network.db` there unless you choose another folder
@@ -290,7 +294,7 @@ The screenshots in `docs/screenshots` are produced by `npm run screenshots`, whi
 
 | Symptom | What to try |
 | --- | --- |
-| Gray company mark | Open that CLI once and sign in (`claude`, `codex login`, `agy`, `grok`). If the CLI is missing, run `npm run setup`. |
+| Gray company mark | Open that tool once and sign in (`claude`, `codex login`, `agy`, `grok`, `cursor-agent login`, `gh auth login`). If a coding CLI is missing, run `npm run setup`. |
 | No chips on the taskbar | Right-click flyout → **Show chips on taskbar**. They sit in an empty gap, not over the clock. |
 | Chips jump or leave a gap on the taskbar | Right-click → **Snap chips to taskbar**, then drag the dotted grip to the gap you want. They stay there instead of re-snapping on every refresh. |
 | Chips vanish while the app is still running | The strip should show **loading…** and recover on its own. If they still go missing, click the Usage Monitor tray icon, or right-click → **Show chips**. |

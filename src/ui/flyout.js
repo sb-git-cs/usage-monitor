@@ -27,7 +27,7 @@ function applyFlyoutState(state) {
   root.classList.toggle("docked", !!state.docked);
 }
 
-bindDrag(root);
+bindDrag(root, "button, select, a, .icon-btn, .interval, .pct-icon, .tb-item, .provider, .net-card, .pair-card");
 window.usage.onFlyoutState(applyFlyoutState);
 window.usage.getFlyoutState().then(applyFlyoutState);
 
@@ -45,6 +45,7 @@ function render(snapshot) {
     const hint = statusText(p);
     parts.push(`<section class="provider accent-${escapeHtml(p.id)}" data-id="${escapeHtml(p.id)}">
       <div class="p-head"><span class="p-name">${mark(p.id)}<span>${escapeHtml(p.display_name)}</span></span><span class="p-plan">${escapeHtml(p.plan || "")}${p.status && p.status.state === "stale" ? '<span class="badge">stale</span>' : ""}</span></div>`);
+    if (p.account) parts.push(`<div class="p-account">${escapeHtml(p.account)}</div>`);
     if (hint && !(p.windows && p.windows.length)) {
       parts.push(`<div class="hint">${escapeHtml(hint)}</div>`);
     } else {
@@ -188,6 +189,71 @@ document.addEventListener("contextmenu", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") window.usage.hideFlyout();
 });
+
+// ---- phone pairing -------------------------------------------------------------------
+
+const pairCard = document.getElementById("pairCard");
+const pairBtn = document.getElementById("pair");
+let pairTimer = null;
+
+function renderPairing(phone) {
+  const pairing = phone && phone.pairing;
+  pairBtn.classList.toggle("active", !!pairing);
+  if (!pairing) {
+    clearInterval(pairTimer);
+    const img = document.getElementById("pairQr");
+    if (img) img.remove();
+    if (!pairCard.hidden) {
+      pairCard.hidden = true;
+      requestAnimationFrame(fitFlyout);
+    }
+    return;
+  }
+  const wasHidden = pairCard.hidden;
+  pairCard.hidden = false;
+  let img = document.getElementById("pairQr");
+  if (!img) {
+    img = document.createElement("img");
+    img.id = "pairQr";
+    img.alt = "Pairing QR code";
+    img.width = 188;
+    img.height = 188;
+    pairCard.insertBefore(img, pairCard.firstChild);
+  }
+  if (img.dataset.link !== pairing.link) {
+    img.src = pairing.qr || "";
+    img.dataset.link = pairing.link;
+  }
+  document.getElementById("pairCode").textContent = pairing.code;
+  const where = phone.addresses && phone.addresses.length
+    ? phone.addresses.map((a) => `${a}:${phone.port}`).join("   ")
+    : "No network address found";
+  document.getElementById("pairAddress").textContent = where;
+  const state = document.getElementById("pairState");
+  state.textContent = phone.error || (phone.listening ? "" : "Starting…");
+  state.hidden = !state.textContent;
+  const tick = () => {
+    const left = Math.max(0, pairing.expires_at - Date.now());
+    document.getElementById("pairExpires").textContent = left
+      ? `Works for ${Math.ceil(left / 60000)} more minute${left > 60000 ? "s" : ""}, for one phone.`
+      : "This code has expired. Click Pair again for a new one.";
+  };
+  clearInterval(pairTimer);
+  tick();
+  pairTimer = setInterval(tick, 5000);
+  if (wasHidden) requestAnimationFrame(fitFlyout);
+}
+
+pairBtn.addEventListener("click", async (e) => {
+  e.stopPropagation();
+  renderPairing(await window.usage.pairPhone());
+});
+document.getElementById("pairCancel").addEventListener("click", async (e) => {
+  e.stopPropagation();
+  renderPairing(await window.usage.cancelPair());
+});
+window.usage.onPairing(renderPairing);
+window.usage.getPairing().then(renderPairing, () => {});
 window.usage.onPrefs((prefs) => {
   if (!prefs) return;
   setAlertThreshold(prefs.alert_threshold);

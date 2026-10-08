@@ -9,7 +9,7 @@ test("new settings are validated and never share nested defaults", () => {
     quiet_hours: { enabled: "yes", start: "25:00", end: "06:30" },
     chips_show: { gpu: false, claude: "no" },
     update_channel: "nightly",
-    phone: { enabled: true, port: 80, devices: [{ id: "zz", key: "k" }, { id: "0123456789abcdef", key: "A".repeat(43), name: "  Pixel 8  " }] },
+    phone: { enabled: true, port: 80, devices: [{ id: "zz", key: "k" }, { id: "0123456789abcdef", key: "A".repeat(43), name: "  Pixel 8  ", direct: "yes" }] },
   });
   assert.equal(cfg.alert_threshold, 80, "only the offered steps are accepted");
   assert.deepEqual(cfg.quiet_hours, { enabled: false, start: "22:00", end: "06:30" });
@@ -20,13 +20,20 @@ test("new settings are validated and never share nested defaults", () => {
   assert.equal(cfg.phone.enabled, true);
   assert.equal(cfg.phone.devices.length, 1);
   assert.equal(cfg.phone.devices[0].name, "Pixel 8");
+  assert.equal(cfg.phone.devices[0].direct, false, "only an explicit true allows direct reading");
   cfg.quiet_hours.enabled = true;
   cfg.chips_show.cpu = false;
   cfg.phone.devices.push({});
+  cfg.accounts.grok = "changed";
   const fresh = config.normalize({});
   assert.equal(fresh.quiet_hours.enabled, false);
   assert.equal(fresh.chips_show.cpu, true);
+  assert.equal(fresh.chips_show.cursor, true);
+  assert.equal(fresh.chips_show.copilot, true);
   assert.equal(fresh.phone.devices.length, 0);
+  assert.deepEqual(fresh.accounts, {});
+  assert.equal("changed" in fresh.accounts, false);
+  assert.deepEqual(config.normalize({ accounts: { grok: "user-1", cursor: "person@example.com", claude: "../x", extra: "no" } }).accounts, { grok: "user-1", cursor: "person@example.com" });
 });
 
 test("quiet hours handle ranges that wrap past midnight", () => {

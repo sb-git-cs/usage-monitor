@@ -2,7 +2,7 @@
 <html class="fit">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src data:" />
   <link rel="stylesheet" href="shared.css" />
 </head>
 <body>
@@ -19,9 +19,20 @@
         <button class="icon-btn" id="network" title="Network usage">⇅</button>
         <button class="icon-btn" id="dock" title="Snap to taskbar">▤</button>
         <button class="icon-btn" id="refresh" title="Refresh now">↻</button>
+        <button class="pair-btn" id="pair" type="button" title="Pair a phone">Pair</button>
         <button class="icon-btn" id="settings" title="Settings">⚙</button>
       </div>
     </div>
+    <section class="pair-card" id="pairCard" hidden>
+      <div class="pair-copy">
+        <p>Scan this in the Android app, or type the code.</p>
+        <div class="pair-code" id="pairCode"></div>
+        <div class="pair-address" id="pairAddress"></div>
+        <p class="hint" id="pairState"></p>
+        <p class="hint" id="pairExpires"></p>
+        <button class="link-btn" id="pairCancel" type="button">Cancel</button>
+      </div>
+    </section>
     <div id="body"></div>
     <section class="net-card" id="net" hidden title="Open Network usage">
       <div class="p-head">

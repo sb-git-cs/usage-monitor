@@ -31,6 +31,8 @@ const snapshot = {
     { id: "codex", display_name: "Codex", status: { state: "ok" }, plan: "Plus", windows: [win("five_hour", "5h", 18, 182), win("weekly", "Weekly", 33, 5 * 1440)] },
     { id: "gemini", display_name: "Gemini", status: { state: "ok" }, plan: "Google AI Pro", windows: [win("five_hour", "5h", 12, 250), win("weekly", "Weekly", 28, 5 * 1440)] },
     { id: "grok", display_name: "Grok Build", status: { state: "ok" }, plan: "SuperGrok", windows: [win("weekly", "Weekly", 55, 3 * 1440 + 60), win("credits", "Credits $12.40", null, 0)] },
+    { id: "cursor", display_name: "Cursor", status: { state: "ok" }, plan: "Pro", account: "cursor@example.com", windows: [win("monthly", "Included", 42, 12 * 1440), win("monthly", "Auto", 18, 12 * 1440)] },
+    { id: "copilot", display_name: "Copilot", status: { state: "ok" }, plan: "Pro", account: "octocat", windows: [win("monthly", "Chat", 36, 10 * 1440), win("monthly", "Premium", 64, 10 * 1440)] },
   ],
 };
 
@@ -342,7 +344,7 @@ async function main() {
       .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
     </style></head><body>
       <h1>Usage Monitor</h1>
-      <div class="sub">Plan meters for Claude Code, Codex, Gemini and Grok Build, plus per-app network usage. Windows, macOS and Linux. Numbers are % used.</div>
+      <div class="sub">Plan meters for Claude Code, Codex, Gemini, Grok Build, Cursor and GitHub Copilot, plus per-app network usage. Windows, macOS and Linux. Numbers are % used.</div>
       <div class="sec" style="left:48px; top:150px">
         <h2>1. FLYOUT</h2>
         <img src="${flyout.name}" width="${flyout.width}" height="${flyout.height}">

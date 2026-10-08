@@ -1,7 +1,7 @@
 {
   "name": "usage-monitor",
-  "version": "1.3.0",
-  "description": "Plan meters for Claude Code, Codex, Gemini and Grok Build, plus per-app network usage, for Windows, macOS and Linux",
+  "version": "1.4.0",
+  "description": "Plan meters for Claude Code, Codex, Gemini, Grok Build, Cursor and GitHub Copilot, plus per-app network usage, for Windows, macOS and Linux",
   "main": "src/main.js",
   "private": true,
   "license": "MIT",
@@ -10,6 +10,8 @@
     "codex",
     "gemini-cli",
     "grok",
+    "cursor",
+    "github-copilot",
     "usage-monitor",
     "rate-limit",
     "quota",
@@ -51,7 +53,7 @@
   },
   "devDependencies": {
     "electron": "44.4.5",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "26.17.0"
   },
   "build": {
     "appId": "local.usage-monitor",

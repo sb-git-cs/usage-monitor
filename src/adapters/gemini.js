@@ -385,6 +385,12 @@ async function fetchFromHost(host, token, loadBody) {
   return { failed: true, status: [models, quota, summary].find((r) => r.status !== 200)?.status, plan };
 }
 
+function ideType(creds) {
+  return creds.source === "file" && fileExists(geminiOAuth()) && !fileExists(antigravityToken())
+    ? "IDE_UNSPECIFIED"
+    : "ANTIGRAVITY";
+}
+
 async function fetchUsage(cfg) {
   const p = probe();
   let creds;
@@ -409,9 +415,7 @@ async function fetchUsage(cfg) {
 
   const loadBody = {
     metadata: {
-      ideType: creds.source === "file" && fileExists(geminiOAuth()) && !fileExists(antigravityToken())
-        ? "IDE_UNSPECIFIED"
-        : "ANTIGRAVITY",
+      ideType: ideType(creds),
       platform: "PLATFORM_UNSPECIFIED",
       pluginType: "GEMINI",
     },
@@ -466,4 +470,20 @@ async function fetchUsage(cfg) {
   });
 }
 
-module.exports = { id: "gemini", displayName: DISPLAY, probe, fetchUsage };
+// The current access token for a phone that reads usage directly; the refresh token stays here.
+async function linkToken(cfg) {
+  let creds;
+  try {
+    creds = await getCreds(cfg);
+  } catch {
+    return null;
+  }
+  if (!accessValid(creds)) return null;
+  return {
+    access_token: creds.access_token,
+    expires_at: creds.expiry_epoch ? Math.round(creds.expiry_epoch * 1000) : null,
+    ide_type: ideType(creds),
+  };
+}
+
+module.exports = { id: "gemini", displayName: DISPLAY, probe, fetchUsage, linkToken };

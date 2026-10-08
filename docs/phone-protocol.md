@@ -4,11 +4,11 @@ How the Android app reads plan meters from Usage Monitor on a computer. The comp
 
 ## Turning it on
 
-Settings → Phone → **Share plan meters with my phone over this network**. Off by default. When on, the app listens on TCP port 47329 (changeable) on every IPv4 interface. Nothing is served without a valid signature.
+**Pair** on the flyout, or **Pair a phone…** in Settings → Phone, turns sharing on and shows a code at once. The checkbox **Share plan meters with my phone over this network** does the same without a code. Off by default. When on, the app listens on TCP port 47329 (changeable) on every IPv4 interface. Nothing is served without a valid signature.
 
 ## Pairing
 
-**Pair a phone…** creates a 20-character code from `ABCDEFGHJKMNPQRSTVWXYZ23456789` (about 98 bits), shown as `XXXXX-XXXXX-XXXXX-XXXXX` and in a QR code:
+**Pair a phone…** (Settings or the flyout) creates a 20-character code from `ABCDEFGHJKMNPQRSTVWXYZ23456789` (about 98 bits), shown at once as `XXXXX-XXXXX-XXXXX-XXXXX` and as a QR code. Closing Settings leaves the code on the flyout. **Cancel** withdraws it. A second click keeps the same code until it expires:
 
 ```
 usagemonitor://pair?h=192.168.1.20,100.101.102.103&p=47329&c=ABCDE-FGHJK-MNPQR-STVWX&n=Studio+PC
@@ -36,6 +36,39 @@ X-UM-Name: phone name (optional, used when pairing)
 ```
 
 Wrong or missing signatures get `401`; more than 20 failures a minute from one address get `429`.
+
+```
+POST /v1/account/<tool>          ask the computer to open that tool's sign-in
+POST /v1/account/<tool>/<id>     ask the computer to meter a saved sign-in
+```
+
+`<tool>` is `claude`, `codex`, `gemini`, `grok`, `cursor` or `copilot`. `<id>` is the saved account id from the snapshot (letters, digits and `_. : @ -`). The signature uses `POST` as the method. The computer confirms before it switches, and answers `{ ok: true, provider, account }` immediately. The snapshot's `account` is the email or name the meter is reading, and `accounts` lists saved sign-ins when there is more than one. Cursor and Copilot are included in the snapshot when that login is present on the computer.
+
+### Direct reading
+
+```
+POST /v1/link      ask to read usage directly; answers { ok: true, direct }
+POST /v1/unlink    stop; answers { ok: true, direct: false }
+GET  /v1/tokens    current access tokens, once allowed; 403 until then
+```
+
+`/v1/link` answers at once and, if the phone is not yet allowed, asks on the computer (**Allow** / **Cancel**). Allowing sets `direct: true` on that paired device; **Stop direct reading** in Settings → Phone, `/v1/unlink` or **Remove** clears it. `/v1/tokens` plaintext:
+
+```json
+{
+  "v": 1,
+  "generated_at": "2026-10-01T10:00:00.000Z",
+  "tokens": {
+    "claude": { "access_token": "…", "expires_at": 1790000000000, "plan": "Max 20x" },
+    "codex":  { "access_token": "…", "account_id": "…", "expires_at": 1790000000000 },
+    "gemini": { "access_token": "…", "expires_at": 1790000000000, "ide_type": "ANTIGRAVITY" },
+    "grok":   { "access_token": "…", "user_id": "…", "expires_at": 1790000000000 },
+    "cursor": { "access_token": "…", "expires_at": 1790000000000 }
+  }
+}
+```
+
+Only current access tokens are sent, never refresh tokens, so the phone cannot rotate a tool's sign-in on the computer; an expired token is left out. A tool that is not signed in is absent. Copilot is never included. The phone fetches tokens at most every 10 minutes, keeps them encrypted with an Android Keystore key, and uses them only while the computer's own reading is not current.
 
 ## Responses
 

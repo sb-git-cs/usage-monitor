@@ -22,4 +22,9 @@
 .pairing-text p { margin: 0 0 8px; }
 .code { font: 600 18px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 0.06em; margin: 4px 0 6px; user-select: text; }
 #phoneBody[hidden] { display: none; }
+.account { padding: 10px 0; border-top: 1px solid var(--border); }
+.account:first-child { border-top: 0; padding-top: 0; }
+.account-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.account-who { color: var(--muted); font-size: 12px; text-align: right; }
+.account .btn { margin-top: 8px; }
 [hidden] { display: none !important; }

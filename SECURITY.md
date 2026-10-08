@@ -14,4 +14,4 @@ Only the latest release and `main` receive security fixes.
 
 ## Scope
 
-In scope: token handling, the Windows network helper and its named pipe, firewall rule management, the updater, and rendering of provider data in the UI. Vulnerabilities in the CLIs themselves (Claude Code, Codex, Gemini, Grok) should go to their vendors.
+In scope: token handling, the Windows network helper and its named pipe, firewall rule management, the updater, and rendering of provider data in the UI. Vulnerabilities in the tools themselves (Claude Code, Codex, Gemini, Grok, Cursor, GitHub Copilot) should go to their vendors.

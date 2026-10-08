@@ -6,6 +6,8 @@ import io.github.sbgitcs.usagemonitor.net.DataPlan
 import io.github.sbgitcs.usagemonitor.net.Format
 import io.github.sbgitcs.usagemonitor.update.UpdateManifest
 import io.github.sbgitcs.usagemonitor.update.Versions
+import io.github.sbgitcs.usagemonitor.widget.WidgetTier
+import io.github.sbgitcs.usagemonitor.widget.widgetTier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -57,7 +59,7 @@ class LogicTest {
     @Test
     fun snapshotParsesMetersForecastsAndMissingValues() {
         val json = """{"v":1,"app_version":"1.3.0","name":"Studio PC","generated_at":"2026-09-29T10:00:00.000Z","alert_threshold":70,
-          "providers":[{"id":"claude","display_name":"Claude Code","plan":"Max 20x","status":{"state":"ok","hint":null},
+          "providers":[{"id":"claude","display_name":"Claude Code","plan":"Max 20x","account":"a@example.com","accounts":[{"id":"u1","label":"a@example.com","active":true}],"status":{"state":"ok","hint":null},
             "windows":[{"kind":"weekly","label":"Weekly","used_pct":91,"resets_at":"2026-10-02T10:00:00.000Z","forecast_at":null,"burn_per_hour":null},
                        {"kind":"five_hour","label":"5h","used_pct":62.5,"resets_at":"2026-09-29T12:10:00.000Z","forecast_at":"2026-09-29T11:20:00.000Z","burn_per_hour":28.5}]},
             {"id":"grok","display_name":"Grok Build","plan":null,"status":{"state":"logged_out","hint":"Run grok login"},"windows":[]}],
@@ -66,6 +68,10 @@ class LogicTest {
         assertEquals(70, s.alertThreshold)
         assertEquals("Studio PC", s.name)
         val claude = s.providers.first()
+        assertEquals("a@example.com", claude.account)
+        assertEquals("u1", claude.accounts.single().id)
+        assertTrue(claude.accounts.single().active)
+        assertNull(s.providers[1].account)
         assertEquals("5h", claude.currentWindow()!!.label)
         assertEquals(28.5, claude.currentWindow()!!.burnPerHour!!, 0.0)
         assertTrue(claude.currentWindow()!!.forecastAt!! < claude.currentWindow()!!.resetsAt!!)
@@ -113,5 +119,20 @@ class LogicTest {
         assertNull(Settings.normalizeTime("seven"))
         assertEquals("Signed out on the computer", Format.state("logged_out"))
         assertNull(Format.state("ok"))
+    }
+
+    @Test
+    fun widgetTiersMatchTheHomeScreenSizes() {
+        assertEquals(WidgetTier.ONE, widgetTier(40f, 40f))
+        assertEquals(WidgetTier.ONE, widgetTier(70f, 102f))
+        assertEquals(WidgetTier.WIDE, widgetTier(110f, 40f))
+        assertEquals(WidgetTier.WIDE, widgetTier(130f, 57f))
+        assertEquals(WidgetTier.WIDE, widgetTier(130f, 200f))
+        assertEquals(WidgetTier.STRIP, widgetTier(250f, 40f))
+        assertEquals(WidgetTier.STRIP, widgetTier(276f, 57f))
+        assertEquals(WidgetTier.STRIP, widgetTier(400f, 100f))
+        assertEquals(WidgetTier.LARGE, widgetTier(250f, 110f))
+        assertEquals(WidgetTier.LARGE, widgetTier(276f, 130f))
+        assertEquals(WidgetTier.LARGE, widgetTier(500f, 400f))
     }
 }

@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import io.github.sbgitcs.usagemonitor.data.PairedComputer
 import io.github.sbgitcs.usagemonitor.data.Settings
+import io.github.sbgitcs.usagemonitor.direct.PlanReadings
 import io.github.sbgitcs.usagemonitor.pairing.DesktopClient
 import io.github.sbgitcs.usagemonitor.pairing.NotPairedException
 import io.github.sbgitcs.usagemonitor.pairing.PairingInfo
@@ -86,9 +87,10 @@ fun PairScreen(settings: Settings, incoming: PairingInfo?, onPaired: (PairedComp
                 runCatching {
                     val client = DesktopClient(settings)
                     val computer = client.pair(info)
-                    // Readings from a computer paired before must not show under the new one.
+                    // Readings and sign-ins from a computer paired before must not carry over to the new one.
                     settings.snapshotJson = null
                     settings.snapshotAt = 0
+                    PlanReadings.dropLinked(context, settings)
                     runCatching { client.refresh() }
                     computer
                 }
@@ -110,7 +112,8 @@ fun PairScreen(settings: Settings, incoming: PairingInfo?, onPaired: (PairedComp
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Pair with your computer") },
+                title = { Text("Pair computer", style = MaterialTheme.typography.titleLarge) },
+                expandedHeight = 52.dp,
                 navigationIcon = {
                     IconButton(onClick = onCancel) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
@@ -122,19 +125,19 @@ fun PairScreen(settings: Settings, incoming: PairingInfo?, onPaired: (PairedComp
                 .padding(padding)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             if (incoming != null) {
                 Text("Pair with ${incoming.name}?", style = MaterialTheme.typography.titleMedium)
                 Note("Usage Monitor on ${incoming.name} (${incoming.addresses.joinToString(", ")}) will share its plan meters and system readings with this phone.")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(enabled = !busy, onClick = { pair(incoming) }) { Text("Pair") }
                     TextButton(onClick = onCancel) { Text("Cancel") }
                 }
             } else {
-                Note("On the computer, open Usage Monitor's Settings, go to Phone, turn on sharing and click Pair a phone. It shows a QR code and a code, good for 10 minutes while that window stays open. The phone must be on the same network as the computer.")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Note("On the computer, click Pair on the Usage Monitor flyout, or Pair a phone in Settings. A QR code and a code appear immediately and work for 10 minutes. The phone must be on the same network as the computer. Scan the QR code, or type the address and code.")
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(selected = mode == 0, onClick = { mode = 0 }, label = { Text("Scan the QR code") })
                     FilterChip(selected = mode == 1, onClick = { mode = 1 }, label = { Text("Type the code") })
                 }
@@ -147,7 +150,7 @@ fun PairScreen(settings: Settings, incoming: PairingInfo?, onPaired: (PairedComp
             if (busy) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text("Pairing…")
                 }
             }
@@ -171,7 +174,7 @@ private fun ScanPane(busy: Boolean, onLink: (PairingInfo) -> Unit, onError: (Str
         if (!granted) ask.launch(Manifest.permission.CAMERA)
     }
     if (!granted) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Note(if (denied) "Camera access is off. Allow it, or type the code instead." else "The camera reads the QR code on the computer's screen.")
             Button(onClick = { ask.launch(Manifest.permission.CAMERA) }) { Text("Allow camera") }
         }
@@ -199,7 +202,7 @@ private fun ManualPane(busy: Boolean, onSubmit: (PairingInfo) -> Unit) {
     var address by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
     var bad by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedTextField(
             value = address,
             onValueChange = {

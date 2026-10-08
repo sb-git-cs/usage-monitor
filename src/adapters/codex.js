@@ -2,6 +2,7 @@ const fs = require("fs");
 const { codexAuth, cliOnPath, fileExists } = require("../paths");
 const { windowOf, emptyProvider } = require("../models");
 const { getJson } = require("../http");
+const { jwtExpMs } = require("../jwt");
 
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 
@@ -173,4 +174,19 @@ async function fetchUsage() {
   return mapWham(res.json);
 }
 
-module.exports = { id: "codex", displayName: "Codex", probe, fetchUsage };
+// The current access token for a phone that reads usage directly; the refresh token stays here.
+function linkToken() {
+  let auth;
+  try {
+    auth = JSON.parse(fs.readFileSync(codexAuth(), "utf8"));
+  } catch {
+    return null;
+  }
+  const tokens = (auth && auth.tokens) || {};
+  if (!tokens.access_token) return null;
+  const exp = jwtExpMs(tokens.access_token);
+  if (exp && exp <= Date.now()) return null;
+  return { access_token: tokens.access_token, account_id: tokens.account_id || null, expires_at: exp };
+}
+
+module.exports = { id: "codex", displayName: "Codex", probe, fetchUsage, linkToken };

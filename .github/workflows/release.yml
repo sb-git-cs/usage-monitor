@@ -98,6 +98,9 @@ jobs:
           distribution: temurin
           java-version: 17
           cache: gradle
+      - name: Verify Android even when release signing is unavailable
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest lintRelease
       - name: Build the signed APK
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -115,7 +118,7 @@ jobs:
           trap 'rm -f "$ANDROID_KEYSTORE_PATH"' EXIT
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$ANDROID_KEYSTORE_PATH"
           cd android
-          ./gradlew --no-daemon testReleaseUnitTest releaseBundle
+          ./gradlew --no-daemon releaseBundle
           ls -la app/build/dist
       - uses: actions/upload-artifact@v7
         with:
@@ -166,11 +169,15 @@ jobs:
               echo "| Android 10+ | \`UsageMonitor-*.apk\` (updates itself; pairs with the desktop app for the plan meters) |"
             fi
             echo
-            echo "Builds are unsigned. Windows SmartScreen: **More info → Run anyway**. macOS: right-click the app → **Open** the first time."
+            if ! ls installers/*.apk >/dev/null 2>&1; then
+              echo "This release publishes desktop downloads only. Android changes are available in the source; no APK is attached."
+              echo
+            fi
+            echo "Desktop builds are unsigned. Windows SmartScreen: **More info → Run anyway**. macOS: right-click the app → **Open** the first time."
             echo
             echo "**Updates:** from 1.1.0 on, the Windows installer and the Linux AppImage update themselves (at launch, after the computer wakes and every six hours). The portable exe, zip/tar.gz folders and the macOS app show a notification with a download link. Copies older than 1.1.0 need one manual update. Keep \`latest*.yml\` and \`*.blockmap\` attached to this release: installed copies read them."
             echo
-            echo "After installing, sign in once to the CLIs you want metered: \`claude\`, \`codex login\`, \`agy\`, \`grok\`."
+            echo "After installing, sign in once to the CLIs you want metered: \`claude\`, \`codex login\`, \`agy\`, \`grok\`, \`cursor-agent login\`, \`gh auth login\`."
             echo
             # The matching CHANGELOG.md section, if there is one.
             awk -v v="$version" 'index($0, "## " v " ") == 1 { found = 1; print "## What changed"; next } /^## / && found { exit } found' repo/CHANGELOG.md

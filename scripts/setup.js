@@ -24,6 +24,8 @@ Sign in once to each coding CLI you use (install them with their own instruction
   codex login     https://github.com/openai/codex
   agy or gemini   https://antigravity.google/ or https://github.com/google-gemini/gemini-cli
   grok            https://grok.com/
+  cursor-agent login   https://cursor.com/
+  gh auth login   https://github.com/features/copilot
 
 Network usage needs no setup on macOS or Linux.
 `);

@@ -8,8 +8,10 @@ import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
+import androidx.glance.LocalSize
 import androidx.glance.appwidget.GlanceAppWidget
-import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.SizeMode
+import androidx.glance.appwidget.lazy.LazyColumn
 import androidx.glance.appwidget.provideContent
 import androidx.glance.currentState
 import androidx.glance.layout.Column
@@ -26,10 +28,13 @@ import io.github.sbgitcs.usagemonitor.net.DataStatus
 import io.github.sbgitcs.usagemonitor.net.DataUsage
 import io.github.sbgitcs.usagemonitor.net.Format
 import io.github.sbgitcs.usagemonitor.net.SpeedMeter
+import io.github.sbgitcs.usagemonitor.ui.Tab
 import java.time.ZonedDateTime
 
 /** Mobile and Wi-Fi data today and this billing cycle, against the caps set in the app. */
 class DataWidget : GlanceAppWidget() {
+    override val sizeMode = SizeMode.Exact
+
     private class Model(val status: DataStatus?, val monthlyCap: Long, val dailyCap: Long, val warnAt: Double, val projected: Long?, val speed: Pair<Double, Double>?)
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -57,28 +62,61 @@ class DataWidget : GlanceAppWidget() {
 
     @Composable
     private fun Content(model: Model) {
+        val tier = widgetTier(LocalSize.current.width.value, LocalSize.current.height.value)
+        if (tier == WidgetTier.LARGE) {
+            Large(model)
+            return
+        }
+        val status = model.status
+        if (status == null) {
+            OneCell("Set up", "Data access", Tab.Data)
+            return
+        }
+        val mobile = WidgetStat("Mobile", Format.bytes(status.today))
+        val wifi = WidgetStat("Wi-Fi", Format.bytes(status.todayTotals.wifi))
+        val cycle = WidgetStat("Cycle", Format.bytes(status.cycle))
+        val down = WidgetStat("Down", model.speed?.let { Format.rateShort(it.first) } ?: "—")
+        when (tier) {
+            WidgetTier.ONE -> {
+                if (model.dailyCap > 0) OneCell(Format.percent(status.today * 100.0 / model.dailyCap), "Daily cap", Tab.Data)
+                else OneCell(mobile.value, mobile.label, Tab.Data)
+            }
+            WidgetTier.WIDE -> WideStats(listOf(mobile, wifi), Tab.Data)
+            WidgetTier.STRIP -> StripStats(listOf(mobile, wifi, cycle, down), Tab.Data)
+            WidgetTier.LARGE -> Unit
+        }
+    }
+
+    @Composable
+    private fun Large(model: Model) {
         val speed = model.speed?.let { "↓ ${Format.rateShort(it.first)}  ↑ ${Format.rateShort(it.second)}" }
-        WidgetFrame("Data", speed) {
+        WidgetFrame("Data · This phone", speed, Tab.Data) {
             val status = model.status
             if (status == null) {
                 Text("Open Usage Monitor and allow Usage access to see data use.", style = smallStyle())
                 return@WidgetFrame
             }
-            Row(modifier = GlanceModifier.fillMaxWidth()) {
-                Figure("Mobile today", Format.bytes(status.today), GlanceModifier.defaultWeight())
-                Figure("Wi-Fi today", Format.bytes(status.todayTotals.wifi), GlanceModifier.defaultWeight())
-            }
-            Spacer(GlanceModifier.height(6.dp))
-            if (model.dailyCap > 0) {
-                val pct = status.today * 100.0 / model.dailyCap
-                MeterRow("Today's cap", "${Format.bytes(status.today)} of ${Format.bytes(model.dailyCap)}", pct, WidgetColors.forPercent(pct, model.warnAt))
-            }
-            val projected = model.projected?.let { "on pace for ${Format.bytes(it)}" }
-            if (model.monthlyCap > 0) {
-                val pct = status.cycle * 100.0 / model.monthlyCap
-                MeterRow("Mobile this cycle", "${Format.bytes(status.cycle)} of ${Format.bytes(model.monthlyCap)}", pct, WidgetColors.forPercent(pct, model.warnAt), projected)
-            } else {
-                Text("This cycle: mobile ${Format.bytes(status.cycle)} · Wi-Fi ${Format.bytes(status.cycleTotals.wifi)}", style = smallStyle(), maxLines = 1)
+            LazyColumn {
+                item {
+                    Column {
+                        Row(modifier = GlanceModifier.fillMaxWidth()) {
+                            Figure("Mobile today", Format.bytes(status.today), GlanceModifier.defaultWeight())
+                            Figure("Wi-Fi today", Format.bytes(status.todayTotals.wifi), GlanceModifier.defaultWeight())
+                        }
+                        Spacer(GlanceModifier.height(4.dp))
+                    }
+                }
+                if (model.dailyCap > 0) item {
+                    val pct = status.today * 100.0 / model.dailyCap
+                    MeterRow("Today's cap", "${Format.bytes(status.today)} of ${Format.bytes(model.dailyCap)}", pct, WidgetColors.forPercent(pct, model.warnAt))
+                }
+                if (model.monthlyCap > 0) item {
+                    val pct = status.cycle * 100.0 / model.monthlyCap
+                    MeterRow("Mobile this cycle", "${Format.bytes(status.cycle)} of ${Format.bytes(model.monthlyCap)}", pct, WidgetColors.forPercent(pct, model.warnAt),
+                        model.projected?.let { "on pace for ${Format.bytes(it)}" })
+                } else item {
+                    Text("This cycle: mobile ${Format.bytes(status.cycle)} · Wi-Fi ${Format.bytes(status.cycleTotals.wifi)}", style = smallStyle(), maxLines = 2)
+                }
             }
         }
     }
@@ -92,6 +130,6 @@ class DataWidget : GlanceAppWidget() {
     }
 }
 
-class DataWidgetReceiver : GlanceAppWidgetReceiver() {
+class DataWidgetReceiver : RefreshingWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = DataWidget()
 }

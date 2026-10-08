@@ -81,6 +81,8 @@ async function check(file) {
       assert.match(result.text, /5h reaches 100% around \d{1,2}:\d\d [AP]M at this pace \(\+40%\/h\)/, "burn-rate forecast line");
       const gear = await win.webContents.executeJavaScript(`(() => { const b = document.getElementById('settings'); const r = b.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b; })()`);
       assert.equal(gear, true, "the settings button receives clicks");
+      assert.equal(await win.webContents.executeJavaScript(`document.getElementById('pair').textContent`), "Pair");
+      assert.equal(await win.webContents.executeJavaScript(`document.querySelector('img')`), null, "the QR image is added only while pairing");
       assert.equal(result.update, `v1.1.0 ${hostile} Check now`, "update status renders as text with its action");
       win.webContents.send("usage://update", { current: "1.1.0", status: "downloading", latest: "1.2.0", progress: 42, auto: true });
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -190,14 +192,21 @@ async function checkSettings() {
       alert_threshold: 80, notify_on_limit_reached: true, forecast_alerts: true, quiet_hours: { enabled: true, start: "22:00", end: "07:00" },
       auto_update: true, update_channel: "stable" },
     update: { kind: "installer", status: "up-to-date", current: "1.3.0", checked_at: Date.now() - 120000, auto: true },
+    accounts: [
+      { id: "grok", label: "Grok Build", signed_in: true, account: hostile, login_command: "grok login",
+        choices: [{ id: "first", label: "First account", active: true }, { id: "second", label: "Second account", active: false }] },
+      { id: "codex", label: "Codex", signed_in: false, account: null, login_command: "codex login", choices: [] },
+    ],
     phone: { enabled: true, listening: true, error: null, port: 47329, addresses: ["192.168.1.20"], name: "desk",
       devices: [{ id: "0123456789abcdef", name: hostile, created_at: Date.now() - 86400000, last_seen: Date.now() - 60000 }],
       pairing: { code: "ABCDE-FGHJK-MNPQR-STVWX", link: "usagemonitor://pair?x", expires_at: Date.now() + 540000,
         qr: `data:image/svg+xml;base64,${Buffer.from(qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true })).toString("base64")}` } },
   };
   const patches = [];
+  const accountActions = [];
   ipcMain.handle("settings:get", () => view);
   ipcMain.handle("settings:set", (_e, patch) => { patches.push(patch); return view; });
+  ipcMain.handle("settings:account", (_e, provider, accountId) => { accountActions.push({ provider, accountId }); return { ok: true }; });
   const win = new BrowserWindow({ show: false, width: 640, height: 1400, webPreferences: {
     preload: path.join(source, "settings-preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
   } });
@@ -233,6 +242,25 @@ async function checkSettings() {
     assert.equal(result.code, "ABCDE-FGHJK-MNPQR-STVWX");
     assert.ok(result.qr > 0, "the pairing QR code loads under the CSP");
     assert.equal(result.phoneStatus, "Listening on 192.168.1.20:47329.");
+    const accountPanel = await win.webContents.executeJavaScript(`({
+      account: document.querySelector('#accounts .account-who').textContent,
+      buttons: [...document.querySelectorAll('#accounts button')].map(b => b.textContent),
+      instructions: document.querySelector('#accounts .hint').textContent,
+      injected: !!document.querySelector('#accounts img'),
+    })`);
+    assert.equal(accountPanel.account, hostile, "account identities render as text");
+    assert.equal(accountPanel.injected, false);
+    assert.deepEqual(accountPanel.buttons, ["Switch account", "Sign in"]);
+    assert.match(accountPanel.instructions, /grok login/);
+    await win.webContents.executeJavaScript(`document.querySelector('#accounts button').click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(accountActions.at(-1), { provider: "grok", accountId: null });
+    await win.webContents.executeJavaScript(`document.querySelectorAll('#accounts button')[1].click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(accountActions.at(-1), { provider: "codex", accountId: null });
+    await win.webContents.executeJavaScript(`(() => { const radio = document.querySelectorAll('#accounts input')[1]; radio.checked = true; radio.dispatchEvent(new Event('change')); })()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(accountActions.at(-1), { provider: "grok", accountId: "second" });
     await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('threshold'); s.value = '70'; s.dispatchEvent(new Event('change')); })()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(patches.at(-1), { alert_threshold: 70 });
@@ -242,7 +270,7 @@ async function checkSettings() {
     while (!renderedFrame && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.ok(renderedFrame && !renderedFrame.isEmpty(), "settings must produce a rendered frame");
     fs.writeFileSync(path.join(output, "settings.png"), renderedFrame.toPNG());
-    console.log("settings: rendering, CSP, escaping, QR and saving passed");
+    console.log("settings: rendering, CSP, escaping, account actions, QR and saving passed");
   } finally { win.destroy(); }
 }
 
@@ -316,6 +344,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("usage://get-flyout-state", () => ({ docked: false, pinned: false }));
   ipcMain.handle("usage://get-update", () => null);
   ipcMain.handle("usage://get-prefs", () => ({ alert_threshold: 80, chips_show: {} }));
+  ipcMain.handle("usage://get-pairing", () => null);
+  ipcMain.handle("usage://pair-phone", () => null);
+  ipcMain.handle("usage://pair-cancel", () => null);
   ipcMain.handle("net:state", () => netState);
   ipcMain.handle("net:icon", () => null);
   ipcMain.handle("net:series", () => netSeries);

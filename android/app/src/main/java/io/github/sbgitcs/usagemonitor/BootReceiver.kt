@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import io.github.sbgitcs.usagemonitor.service.SpeedService
+import io.github.sbgitcs.usagemonitor.work.Scheduler
 
 /**
  * After a restart or an update, brings back the status bar speed if it was on. Starting the
@@ -13,6 +14,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
             runCatching { SpeedService.sync(context) }
+            Scheduler.refreshNow(context)
         }
     }
 }

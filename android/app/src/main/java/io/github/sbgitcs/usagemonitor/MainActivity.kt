@@ -16,6 +16,7 @@ import io.github.sbgitcs.usagemonitor.pairing.PairingInfo
 import io.github.sbgitcs.usagemonitor.pairing.PairingLink
 import io.github.sbgitcs.usagemonitor.service.SpeedService
 import io.github.sbgitcs.usagemonitor.ui.App
+import io.github.sbgitcs.usagemonitor.ui.Tab
 import io.github.sbgitcs.usagemonitor.ui.UsageMonitorTheme
 import io.github.sbgitcs.usagemonitor.widget.Widgets
 import io.github.sbgitcs.usagemonitor.work.Scheduler
@@ -25,6 +26,7 @@ class MainActivity : ComponentActivity() {
 
     /** A pairing link opened from the camera app, waiting for the user to confirm it. */
     private val incoming = mutableStateOf<PairingInfo?>(null)
+    private val requestedTab = mutableStateOf<Tab?>(null)
     private var incomingLink: String? = null
 
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -42,7 +44,8 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             UsageMonitorTheme {
-                App(settings, incoming.value, onIncomingHandled = { accept(null) })
+                App(settings, incoming.value, onIncomingHandled = { accept(null) },
+                    requestedTab = requestedTab.value, onNavigationHandled = { requestedTab.value = null })
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !settings.askedNotifications &&
@@ -81,6 +84,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handle(intent: Intent?) {
+        requestedTab.value = Tab.entries.firstOrNull { it.name == intent?.getStringExtra(WIDGET_TAB) }
         val data = intent?.data ?: return
         if (data.scheme != "usagemonitor") return
         if (PairingLink.parse(data.toString()) == null) {
@@ -95,7 +99,8 @@ class MainActivity : ComponentActivity() {
         incoming.value = link?.let { PairingLink.parse(it) }
     }
 
-    private companion object {
-        const val PAIR_LINK = "pair_link"
+    companion object {
+        const val WIDGET_TAB = "widget_tab"
+        private const val PAIR_LINK = "pair_link"
     }
 }

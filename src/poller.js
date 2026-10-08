@@ -2,10 +2,12 @@ const claude = require("./adapters/claude");
 const codex = require("./adapters/codex");
 const gemini = require("./adapters/gemini");
 const grok = require("./adapters/grok");
-const { PROVIDERS, applyLocalResets } = require("./models");
+const cursor = require("./adapters/cursor");
+const copilot = require("./adapters/copilot");
+const { PROVIDERS, OPTIONAL_PROVIDERS, applyLocalResets } = require("./models");
 const cache = require("./cache");
 
-const adapters = { claude, codex, gemini, grok };
+const adapters = { claude, codex, gemini, grok, cursor, copilot };
 const backoffUntil = {};
 const pending = {};
 let activePoll = null;
@@ -88,7 +90,10 @@ async function collect(cfg) {
   const snapshot = {
     generated_at: new Date().toISOString(),
     poll_interval_secs: cfg.poll_interval_secs || 5,
-    providers: results,
+    providers: results.filter((provider) => {
+      const state = provider.status && provider.status.state;
+      return !(OPTIONAL_PROVIDERS.has(provider.id) && state === "not_installed");
+    }),
   };
   const { snapshot: next } = applyLocalResets(snapshot);
   try { cache.saveSnapshot(next); } catch (err) { console.error("cache write failed", err.message); }

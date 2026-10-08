@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("settingsApi", {
   get: () => ipcRenderer.invoke("settings:get"),
   set: (patch) => ipcRenderer.invoke("settings:set", patch),
   phone: (op, arg) => ipcRenderer.invoke("settings:phone", op, arg),
+  account: (provider, accountId) => ipcRenderer.invoke("settings:account", provider, accountId || null),
   checkUpdates: () => ipcRenderer.send("settings:check-updates"),
   openNetwork: () => ipcRenderer.send("settings:open-network"),
   openLogs: () => ipcRenderer.send("settings:open-logs"),

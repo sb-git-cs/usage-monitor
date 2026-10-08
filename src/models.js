@@ -5,7 +5,12 @@ const PROVIDERS = [
   { id: "codex", displayName: "Codex" },
   { id: "gemini", displayName: "Gemini" },
   { id: "grok", displayName: "Grok Build" },
+  { id: "cursor", displayName: "Cursor" },
+  { id: "copilot", displayName: "Copilot" },
 ];
+
+// These stay off the strip until the app is installed or a login is present.
+const OPTIONAL_PROVIDERS = new Set(["cursor", "copilot"]);
 
 function percentage(value) {
   if (typeof value !== "number" && typeof value !== "string") return null;
@@ -91,6 +96,7 @@ function applyLocalResets(snapshot) {
 const UsageModels = {
   ALERT_USED_PCT,
   PROVIDERS,
+  OPTIONAL_PROVIDERS,
   windowOf,
   remainingPct,
   percentage,

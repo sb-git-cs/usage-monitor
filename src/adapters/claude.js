@@ -263,4 +263,20 @@ async function fetchUsage(cfg) {
   return mapUsage(res.json, creds.oauth);
 }
 
-module.exports = { id: "claude", displayName: "Claude Code", probe, fetchUsage };
+// The current access token for a phone that reads usage directly. Never refreshed here, and the
+// refresh token stays on this computer, so Claude Code's own sign-in is not rotated.
+async function linkToken() {
+  let creds;
+  try {
+    creds = await loadCreds(fileExists(claudeCredentials()));
+  } catch {
+    return null;
+  }
+  const oauth = creds && creds.oauth;
+  if (!oauth || !oauth.accessToken) return null;
+  const exp = Number(oauth.expiresAt) || null;
+  if (exp && exp <= Date.now()) return null;
+  return { access_token: oauth.accessToken, expires_at: exp, plan: planLabel(oauth) };
+}
+
+module.exports = { id: "claude", displayName: "Claude Code", probe, fetchUsage, linkToken };

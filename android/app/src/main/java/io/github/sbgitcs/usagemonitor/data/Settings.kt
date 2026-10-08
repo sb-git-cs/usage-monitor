@@ -28,10 +28,26 @@ class Settings(context: Context) {
             p.edit().putString("computer", raw).apply()
         }
 
-    /** Unpairs: drops the key and everything read from that computer. */
+    /** Unpairs: drops the key and everything read from that computer. Linked sign-ins are dropped by the caller. */
     fun forgetComputer() {
-        p.edit().remove("computer").remove("last_address").remove("snapshot").remove("snapshot_at").remove("last_error").apply()
+        p.edit().remove("computer").remove("last_address").remove("snapshot").remove("snapshot_at").remove("last_error")
+            .remove("direct_link").remove("tokens_at").apply()
     }
+
+    /** Direct reading with the computer's sign-ins: "off", "asked" (waiting for the computer to allow it) or "on". */
+    var directLink: String
+        get() = p.getString("direct_link", "off") ?: "off"
+        set(v) = p.edit().putString("direct_link", v).apply()
+
+    /** When the computer's access tokens were last fetched. */
+    var tokensAt: Long
+        get() = p.getLong("tokens_at", 0)
+        set(v) = p.edit().putLong("tokens_at", v).apply()
+
+    /** Usage read directly by this phone, as snapshot providers JSON. Holds no sign-in data. */
+    var directJson: String?
+        get() = p.getString("direct", null)
+        set(v) = p.edit().putString("direct", v).apply()
 
     var lastAddress: String?
         get() = p.getString("last_address", null)

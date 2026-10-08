@@ -22,7 +22,7 @@ import io.github.sbgitcs.usagemonitor.net.DataPlan
 import io.github.sbgitcs.usagemonitor.net.DataUsage
 import io.github.sbgitcs.usagemonitor.net.Format
 import io.github.sbgitcs.usagemonitor.net.SpeedMeter
-import io.github.sbgitcs.usagemonitor.widget.Widgets
+import io.github.sbgitcs.usagemonitor.work.Scheduler
 import java.time.ZonedDateTime
 
 /**
@@ -43,8 +43,8 @@ class SpeedService : Service() {
             if (ticks % 60 == 0) {
                 // NetworkStatsManager queries are binder calls; keep them off the main thread.
                 Thread { todayText = runCatching { today() }.getOrDefault("") }.start()
-                // Widgets have no timer of their own below 30 minutes; refresh them while this runs.
-                if (ticks > 0) Widgets.refresh(this@SpeedService)
+                // Fetch fresh desktop readings as well as redrawing phone/data widgets.
+                Scheduler.refreshNow(this@SpeedService)
             }
             ticks++
             getSystemService(NotificationManager::class.java)?.notify(ID, build(rx, tx))

@@ -1,8 +1,12 @@
 // Shares the plan meters with a paired phone over the local network. Off until the user
-// turns it on in Settings. Protocol (docs/phone-protocol.md):
+// turns it on, or clicks Pair a phone (that turns it on). Protocol (docs/phone-protocol.md):
 //   Pairing: the desktop shows a 20-character code, in a QR code with its addresses. Both
 //   sides derive the device id and keys from the code, so the code never crosses the network.
-//   Requests: GET with X-UM-Id, X-UM-Time and X-UM-Sig (HMAC-SHA256 of method, path and time).
+//   Requests: X-UM-Id, X-UM-Time and X-UM-Sig (HMAC-SHA256 of method, path and time).
+//   GET /v1/ping and GET /v1/snapshot read the computer. POST /v1/account/<tool> asks it to
+//   open that tool's sign-in; POST /v1/account/<tool>/<id> selects a saved sign-in.
+//   POST /v1/link asks to read usage directly (confirmed here), POST /v1/unlink stops it, and
+//   GET /v1/tokens then returns current access tokens; refresh tokens never leave this computer.
 //   Responses: AES-256-GCM, with the request time as additional data, so a recorded answer
 //   cannot be replayed later and nobody else on the network can read the meters.
 const crypto = require("crypto");
@@ -86,11 +90,14 @@ function localAddresses(interfaces = os.networkInterfaces()) {
 // ---- server -----------------------------------------------------------------------
 
 class PhoneLink {
-  constructor({ getConfig, saveConfig, payload, onChange = () => {}, now = Date.now, createServer = http.createServer, hostname = os.hostname() } = {}) {
+  constructor({ getConfig, saveConfig, payload, tokens = async () => ({}), onChange = () => {}, onAccount = () => {}, onLink = () => {}, now = Date.now, createServer = http.createServer, hostname = os.hostname() } = {}) {
     this.getConfig = getConfig;
     this.saveConfig = saveConfig;
     this.payload = payload;
+    this.tokens = tokens;
     this.onChange = onChange;
+    this.onAccount = onAccount;
+    this.onLink = onLink;
     this.now = now;
     this.createServer = createServer;
     this.hostname = hostname;
@@ -154,6 +161,17 @@ class PhoneLink {
     return this.status();
   }
 
+  // Sharing starts here when it was off. apply() runs before the code is created, because
+  // starting the listener clears any code already waiting. A repeat call keeps the current
+  // code so a second click does not invalidate a QR code already on screen.
+  beginPairing() {
+    if (!this.cfg.enabled) this.cfg.enabled = true;
+    this.apply();
+    if (!this.pending || this.now() > this.pending.expires) return this.startPairing();
+    this.onChange();
+    return this.status();
+  }
+
   cancelPairing() {
     this.pending = null;
     this.onChange();
@@ -162,6 +180,15 @@ class PhoneLink {
   removeDevice(id) {
     const phone = this.cfg;
     phone.devices = phone.devices.filter((d) => d.id !== id);
+    this.saveConfig();
+    this.onChange();
+  }
+
+  // Lets a paired phone read usage directly with this computer's sign-ins, or stops it.
+  setDirect(id, direct) {
+    const device = this.cfg.devices.find((d) => d.id === id);
+    if (!device || device.direct === direct) return;
+    device.direct = direct;
     this.saveConfig();
     this.onChange();
   }
@@ -184,7 +211,7 @@ class PhoneLink {
       port: this.cfg.port,
       addresses,
       name: this.hostname,
-      devices: this.cfg.devices.map(({ id, name, created_at, last_seen }) => ({ id, name, created_at, last_seen })),
+      devices: this.cfg.devices.map(({ id, name, created_at, last_seen, direct }) => ({ id, name, created_at, last_seen, direct: !!direct })),
       pairing,
     };
   }
@@ -234,19 +261,55 @@ class PhoneLink {
       res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify(body));
     };
-    if (req.method !== "GET" || !["/v1/ping", "/v1/snapshot"].includes(url.pathname)) return reply(404, { error: "not found" });
+    const accountRoute = /^\/v1\/account\/(claude|codex|gemini|grok|cursor|copilot)(?:\/([A-Za-z0-9_.:@-]{1,200}))?$/.exec(url.pathname);
+    const reading = req.method === "GET" && ["/v1/ping", "/v1/snapshot", "/v1/tokens"].includes(url.pathname);
+    const switching = req.method === "POST" && accountRoute;
+    const linking = req.method === "POST" && ["/v1/link", "/v1/unlink"].includes(url.pathname);
+    if (!reading && !switching && !linking) return reply(404, { error: "not found" });
     if (this.tooManyFailures(ip)) return reply(429, { error: "too many attempts" });
     const auth = this.authenticate(req, url.pathname);
     if (!auth) {
       this.fail(ip);
       return reply(401, { error: "not paired" });
     }
+    req.resume();
     const wasSeen = auth.device.last_seen;
     auth.device.last_seen = this.now();
     // Save right away for a new pairing; otherwise at most every 10 minutes.
     if (!wasSeen || this.now() - wasSeen > 10 * 60_000) {
       this.saveConfig();
       this.onChange();
+    }
+    if (switching) {
+      const provider = accountRoute[1];
+      const account = accountRoute[2] || null;
+      reply(200, encrypt(auth.key, auth.time, { ok: true, provider, account }));
+      try { this.onAccount(provider, account); } catch { /* a dialog failure must not take the link down */ }
+      return;
+    }
+    if (linking) {
+      // Linking is confirmed on this computer; stopping needs no confirmation.
+      if (url.pathname === "/v1/unlink") this.setDirect(auth.device.id, false);
+      reply(200, encrypt(auth.key, auth.time, { ok: true, direct: !!auth.device.direct }));
+      if (url.pathname === "/v1/link" && !auth.device.direct) {
+        try { this.onLink(auth.device); } catch { /* a dialog failure must not take the link down */ }
+      }
+      return;
+    }
+    if (url.pathname === "/v1/tokens") {
+      if (!auth.device.direct) return reply(403, { error: "direct reading is off" });
+      Promise.resolve()
+        .then(() => this.tokens())
+        .then((tokens) => {
+          // Token readers may renew a sign-in asynchronously; access can be revoked meanwhile.
+          const device = this.cfg.devices.find((d) => d.id === auth.device.id && d.key === auth.device.key);
+          if (!device) return reply(401, { error: "not paired" });
+          if (!this.cfg.enabled || !device.direct) return reply(403, { error: "direct reading is off" });
+          if (res.destroyed) return;
+          reply(200, encrypt(auth.key, auth.time, { v: 1, generated_at: new Date(this.now()).toISOString(), tokens: tokens || {} }));
+        })
+        .catch(() => reply(500, { error: "tokens unavailable" }));
+      return;
     }
     const body = url.pathname === "/v1/ping" ? { ok: true, name: this.hostname } : this.payload();
     reply(200, encrypt(auth.key, auth.time, body));

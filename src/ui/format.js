@@ -79,12 +79,22 @@ const MARKS = {
   gemini:
     "M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81",
   grok: "M6.469 8.776 16.512 23h-4.464L2.005 8.776H6.47zm-.004 7.9 2.233 3.164L6.467 23H2l4.465-6.324zM22 2.582V23h-3.659V7.764L22 2.582zM22 1l-9.952 14.095-2.233-3.163L17.533 1H22z",
+  cursor: "M5 3.2 19.8 12 12.4 14.5 10.5 21.4 5 3.2z",
+  copilot: "M12 2.2 14.3 9.7 21.8 12 14.3 14.3 12 21.8 9.7 14.3 2.2 12 9.7 9.7 12 2.2z",
+};
+
+const MARK_TITLES = {
+  claude: "Anthropic",
+  codex: "OpenAI",
+  gemini: "Google Gemini",
+  grok: "xAI",
+  cursor: "Cursor",
+  copilot: "GitHub Copilot",
 };
 
 function mark(id) {
   const d = MARKS[id] || MARKS.grok;
-  const title =
-    id === "claude" ? "Anthropic" : id === "codex" ? "OpenAI" : id === "gemini" ? "Google Gemini" : "xAI";
+  const title = MARK_TITLES[id] || "Usage";
   return `<svg class="brand-mark" viewBox="0 0 24 24" fill-rule="evenodd" aria-hidden="true" focusable="false"><title>${title}</title><path fill="currentColor" d="${d}"/></svg>`;
 }
 
@@ -92,6 +102,8 @@ function letter(id) {
   if (id === "claude") return "C";
   if (id === "codex") return "X";
   if (id === "gemini") return "M";
+  if (id === "cursor") return "R";
+  if (id === "copilot") return "P";
   return "G";
 }
 
