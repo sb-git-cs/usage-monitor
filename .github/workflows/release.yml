@@ -141,6 +141,16 @@ jobs:
           pattern: installers-*
           path: installers
           merge-multiple: true
+      - name: Match release filenames to update manifests
+        run: |
+          for file in installers/*; do
+            name="$(basename "$file")"
+            normalized="${name// /-}"
+            if [ "$name" != "$normalized" ]; then
+              test ! -e "installers/$normalized" || { echo "::error::Duplicate release asset $normalized"; exit 1; }
+              mv -- "$file" "installers/$normalized"
+            fi
+          done
       - run: ls -la installers
       - name: Check update metadata
         run: |
