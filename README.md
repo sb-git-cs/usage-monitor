@@ -118,6 +118,8 @@ Open **Settings…** from the right-click menu, or the ⚙ button in the flyout.
 ## Android app
 
 Download `UsageMonitor-<version>.apk` from [**Releases**](https://github.com/sb-git-cs/usage-monitor/releases/latest) on an Android 10+ phone and open it (Android asks once to allow installs from your browser).
+Version 1.4.0 publishes desktop downloads only; build Android from source using the
+[Android build instructions](android/README.md).
 
 | Screen | What it shows |
 | --- | --- |
@@ -126,7 +128,7 @@ Download `UsageMonitor-<version>.apk` from [**Releases**](https://github.com/sb-
 | **Phone** | CPU clock per core, memory, storage, battery level, temperature and current, heat status. |
 | **Settings** | Pairing, status bar speed, data plan (billing day, monthly and daily caps, warning level), alerts and quiet hours, updates, permissions. |
 
-- **Widgets**: *Plan meters*, *Data usage* and *Phone status*, each at **4×2**, **4×1**, **2×1** and **1×1**. The 4×2 ones can also be resized. They refresh every 15 minutes in the background, every minute while the status bar speed is on, and whenever you open the app.
+- **Widgets**: *Plan meters*, *Data usage* and *Phone status*, each at **4×2**, **4×1**, **2×1** and **1×1**. Every preset can be resized in both directions. They refresh every 15 minutes in the background, every minute while the status bar speed is on, and whenever you open the app.
 - **Status bar speed**: the current speed as the notification icon, updated every second, with today's data in the notification. Switch it from Settings or the **Network speed** Quick Settings tile.
 - **Alerts**: plan warning, limit reached and forecast (like the desktop), and your mobile data cap at the warning level and when used up. Quiet hours apply.
 - **Updates itself**: checks GitHub when opened and every six hours, verifies the download's SHA-256 and that it is signed with the same key, then installs it. Android asks you to allow installing updates once, and to confirm the first update; from Android 12 later ones install on their own.

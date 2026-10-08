@@ -10,7 +10,7 @@
 
 All three new regression tests failed before the fixes and pass afterwards. Desktop tests: 127 passed, one Windows-specific skip, zero failures. Source Electron UI checks passed. Android verification: 70 tests passed; lint zero errors and 14 existing warnings; optimized 1.4.0 build succeeded. Packaged UI and publication results are recorded in `docs/handoff.md`.
 
-The owner selected desktop downloads only for this release. No Android signing key was created and no repository secrets were changed. Existing mobile source changes are retained and tested; live provider consent and complete token-lifetime acceptance remain unverified.
+The owner selected desktop downloads only for this release. No Android signing key was created and no repository secrets were changed. At the owner's later request, the optimized development update was installed on the connected phone, preserving pairing and widgets; all five tabs passed native checks. Existing Grok authorization produced a current phone reading. No new provider consent or complete token-lifetime acceptance was performed. This does not establish live Claude authorization: that meter currently uses cached computer data.
 
 ## Mobile authentication and widgets (2026-10-02)
 
