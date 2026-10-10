@@ -52,7 +52,7 @@
     "node": ">=22.13.0"
   },
   "devDependencies": {
-    "electron": "44.4.5",
+    "electron": "44.6.0",
     "electron-builder": "26.17.0"
   },
   "build": {
@@ -150,6 +150,6 @@
   "dependencies": {
     "electron-updater": "6.8.10",
     "qrcode-generator": "2.0.4",
-    "systeminformation": "5.33.14"
+    "systeminformation": "5.33.15"
   }
 }
