@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import io.github.sbgitcs.usagemonitor.data.PairedComputer
 import io.github.sbgitcs.usagemonitor.data.Settings
 import io.github.sbgitcs.usagemonitor.direct.PlanReadings
+import io.github.sbgitcs.usagemonitor.model.DesktopSnapshot
 import io.github.sbgitcs.usagemonitor.model.MeterConnection
 import io.github.sbgitcs.usagemonitor.model.PlanWindow
 import io.github.sbgitcs.usagemonitor.model.Provider
@@ -109,8 +110,24 @@ fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Uni
         if (computer != null && direct > 0) "$direct direct" else null,
     ).joinToString(" · ")
 
+    PlansContent(status, busy, shown, warnAt, now, snapshot, view.computerCached, error, unpaired,
+        onRefresh = { scope.launch { refresh(true) } }, onPair = onPair, onSelect = { selected = it.id })
+    shown.firstOrNull { it.id == selected }?.let { p ->
+        CompactDialog(onDismissRequest = { selected = null },
+            title = { Text(if (p.plan != null) "${p.name} · ${p.plan}" else p.name) },
+            text = { ProviderDetails(settings, p, warnAt, now) },
+            confirmButton = { TextButton(onClick = { selected = null }) { Text("Close") } },
+            dismissButton = { TextButton(onClick = { selected = null; onAccounts() }) { Text("Accounts") } })
+    }
+}
+
+/** The Home tab for a given reading: header, any problem, the meters and the computer's load. */
+@Composable
+fun PlansContent(status: String, busy: Boolean, shown: List<Provider>, warnAt: Double, now: Long,
+                 snapshot: DesktopSnapshot?, cached: Boolean, error: String?, unpaired: Boolean,
+                 onRefresh: () -> Unit, onPair: () -> Unit, onSelect: (Provider) -> Unit) {
     ScreenList {
-        item { DashboardHeader(status, busy, onRefresh = { scope.launch { refresh(true) } }) }
+        item { DashboardHeader(status, busy, onRefresh = onRefresh) }
         if (unpaired || (snapshot == null && error != null)) item {
             Section(if (unpaired) "Pair again" else "Computer not reached") {
                 error?.let { Note(it, color = MaterialTheme.colorScheme.error) }
@@ -125,13 +142,13 @@ fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Uni
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 shown.forEachIndexed { i, p ->
                     if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    UsageRow(p, warnAt, now) { selected = p.id }
+                    UsageRow(p, warnAt, now) { onSelect(p) }
                 }
             }
         }
         snapshot?.system?.let { sys ->
             item {
-                Section(if (view.computerCached) "${snapshot.name} · last reading" else snapshot.name) {
+                Section(if (cached) "${snapshot.name} · last reading" else snapshot.name) {
                     val parts = listOfNotNull(
                         sys.cpu?.let { "CPU ${Format.percent(it)}" },
                         sys.mem?.let { "RAM ${Format.percent(it)}" },
@@ -139,19 +156,12 @@ fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Uni
                         sys.space?.let { "Disk ${Format.percent(it)} full" },
                     )
                     if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
-                    snapshot.network?.takeIf { it.state == "running" && !view.computerCached }?.let { n ->
+                    snapshot.network?.takeIf { it.state == "running" && !cached }?.let { n ->
                         Note("Network ↓ ${Format.rateShort(n.rxRate)}  ↑ ${Format.rateShort(n.txRate)}")
                     }
                 }
             }
         }
-    }
-    shown.firstOrNull { it.id == selected }?.let { p ->
-        CompactDialog(onDismissRequest = { selected = null },
-            title = { Text(if (p.plan != null) "${p.name} · ${p.plan}" else p.name) },
-            text = { ProviderDetails(settings, p, warnAt, now) },
-            confirmButton = { TextButton(onClick = { selected = null }) { Text("Close") } },
-            dismissButton = { TextButton(onClick = { selected = null; onAccounts() }) { Text("Accounts") } })
     }
 }
 

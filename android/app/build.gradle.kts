@@ -79,12 +79,21 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
 tasks.withType<Test>().configureEach {
     // Shared with the desktop tests: both sides must derive the same keys.
     systemProperty("phoneVectors", rootProject.file("../test/fixtures/phone-vectors.json").absolutePath)
+    // Screenshots render only on request: -PscreenshotsDir=../docs/screenshots/android
+    val screenshots = providers.gradleProperty("screenshotsDir").orNull
+    if (screenshots == null) {
+        exclude("**/ScreenshotsTest*")
+    } else {
+        systemProperty("screenshotsDir", rootProject.file(screenshots).absolutePath)
+        outputs.upToDateWhen { false }
+    }
 }
 
 dependencies {
@@ -108,6 +117,10 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    testImplementation(composeBom)
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
 // Writes the release APK and latest-android.json (what installed copies read to update) to

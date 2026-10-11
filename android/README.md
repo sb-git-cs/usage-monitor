@@ -43,6 +43,18 @@ The APK lands in `android/app/build/outputs/apk/debug/app-debug.apk`. The verifi
 build is also available at `../dist/UsageMonitor-1.3.0-android-debug.apk` (Android 10+).
 See `../docs/handoff.md` for test results, checksum and the remaining phone acceptance checks.
 
+### Screenshots
+
+`ScreenshotsTest` renders the Home, Data and Phone screens, light and dark, with demo data on the
+JVM (Robolectric) into `../docs/screenshots/android`:
+
+```sh
+./gradlew testDebugUnitTest --tests '*ScreenshotsTest*' -PscreenshotsDir=../docs/screenshots/android
+```
+
+It is skipped by a plain `testDebugUnitTest`. Without a local SDK, push the UI change to a branch:
+the *Android screenshots* workflow renders the images and commits them to that branch.
+
 ## Layout
 
 | Path | What it holds |

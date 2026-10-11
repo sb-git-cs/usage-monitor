@@ -51,7 +51,6 @@ enum class Tab(val label: String, val title: String) {
     Settings("Settings", "Settings"),
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Unit,
         requestedTab: Tab? = null, onNavigationHandled: () -> Unit = {}) {
@@ -60,7 +59,6 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
     var tab by rememberSaveable { mutableStateOf(Tab.Plans) }
     var pairing by rememberSaveable { mutableStateOf(false) }
     var computer by remember { mutableStateOf(settings.computer) }
-    val navigationHeight = if (LocalDensity.current.fontScale > 1.15f) 72.dp else 64.dp
     // Bumped on every return to the app, so permission states are read again.
     var resumes by remember { mutableIntStateOf(0) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { resumes++ }
@@ -90,6 +88,35 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
         return
     }
 
+    AppScaffold(tab, onTab = { tab = it }) {
+        when (tab) {
+            Tab.Plans -> PlansScreen(settings, computer, onPair = { pairing = true }, onAccounts = { tab = Tab.Accounts })
+            Tab.Data -> DataScreen(settings, resumes)
+            Tab.Phone -> DeviceScreen()
+            Tab.Accounts -> AccountsScreen(settings, computer, onPair = { pairing = true })
+            Tab.Settings -> SettingsScreen(
+                settings = settings,
+                computer = computer,
+                resumes = resumes,
+                onPair = { pairing = true },
+                onForget = {
+                    scope.launch {
+                        PlanReadings.dropLinked(context, settings)
+                        settings.forgetComputer()
+                        computer = null
+                        io.github.sbgitcs.usagemonitor.widget.Widgets.refresh(context)
+                    }
+                },
+            )
+        }
+    }
+}
+
+/** The top bar and the tab bar around [content]. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppScaffold(tab: Tab, onTab: (Tab) -> Unit, content: @Composable () -> Unit) {
+    val navigationHeight = if (LocalDensity.current.fontScale > 1.15f) 72.dp else 64.dp
     Scaffold(
         topBar = { TopAppBar(title = { Text(tab.title, style = MaterialTheme.typography.titleLarge) }, expandedHeight = 52.dp) },
         bottomBar = {
@@ -101,7 +128,7 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
-                        onClick = { tab = t },
+                        onClick = { onTab(t) },
                         icon = {
                             when (t) {
                                 Tab.Plans -> Icon(Icons.Filled.Home, contentDescription = null)
@@ -117,27 +144,6 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
             }
         },
     ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
-            when (tab) {
-                Tab.Plans -> PlansScreen(settings, computer, onPair = { pairing = true }, onAccounts = { tab = Tab.Accounts })
-                Tab.Data -> DataScreen(settings, resumes)
-                Tab.Phone -> DeviceScreen()
-                Tab.Accounts -> AccountsScreen(settings, computer, onPair = { pairing = true })
-                Tab.Settings -> SettingsScreen(
-                    settings = settings,
-                    computer = computer,
-                    resumes = resumes,
-                    onPair = { pairing = true },
-                    onForget = {
-                        scope.launch {
-                            PlanReadings.dropLinked(context, settings)
-                            settings.forgetComputer()
-                            computer = null
-                            io.github.sbgitcs.usagemonitor.widget.Widgets.refresh(context)
-                        }
-                    },
-                )
-            }
-        }
+        Box(Modifier.padding(padding).fillMaxSize()) { content() }
     }
 }

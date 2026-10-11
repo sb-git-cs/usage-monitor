@@ -121,9 +121,16 @@ Download `UsageMonitor-<version>.apk` from [**Releases**](https://github.com/sb-
 Version 1.4.0 publishes desktop downloads only; build Android from source using the
 [Android build instructions](android/README.md).
 
+<p align="center">
+  <img src="docs/screenshots/android/home.png" width="200" alt="Android Home: plan meters for each tool and the computer's load">
+  <img src="docs/screenshots/android/home-dark.png" width="200" alt="Android Home in dark mode">
+  <img src="docs/screenshots/android/data.png" width="200" alt="Android Data: live speed, today, billing cycle and data per app">
+  <img src="docs/screenshots/android/phone.png" width="200" alt="Android Phone: battery, memory, storage and CPU clocks">
+</p>
+
 | Screen | What it shows |
 | --- | --- |
-| **Plans** | Your computer's Claude Code, Codex, Gemini, Grok Build and Cursor meters, reset times and forecasts, plus its CPU, memory, GPU, disk and network. Read over your Wi-Fi every 30 seconds while the app is open. GitHub Copilot remains available in the desktop app. |
+| **Home** | Your computer's Claude Code, Codex, Gemini, Grok Build and Cursor meters, reset times and forecasts, plus its CPU, memory, GPU, disk and network. Read over your Wi-Fi every 30 seconds while the app is open. GitHub Copilot remains available in the desktop app. |
 | **Data** | Live download and upload speed; mobile and Wi-Fi data today and this billing cycle; data per app. Needs **Usage access**, which the app asks for. |
 | **Phone** | CPU clock per core, memory, storage, battery level, temperature and current, heat status. |
 | **Settings** | Pairing, status bar speed, data plan (billing day, monthly and daily caps, warning level), alerts and quiet hours, updates, permissions. |
@@ -135,7 +142,7 @@ Version 1.4.0 publishes desktop downloads only; build Android from source using 
 
 **Pairing.** On the computer, click **Pair** on the flyout, or **Pair a phone…** in **Settings → Phone**. Sharing turns on, and a QR code and a code appear immediately. The code is good for 10 minutes for one phone, including after Settings closes; **Cancel** withdraws it. In the app, tap **Pair** and scan the QR code (or type the address and code). The phone and computer must be on the same network. The phone keeps a key derived from the code; the computer answers only signed requests from paired phones and encrypts every reply. Your CLI logins stay on the computer unless you allow a phone to read usage directly (the phone asks; you confirm here). It then receives only current access tokens, never refresh tokens, and you can stop it in **Settings → Phone**. The phone can also sign in to Claude Code, Codex, Grok Build or Cursor itself. See [`docs/phone-protocol.md`](docs/phone-protocol.md) and [`docs/phone-accounts.md`](docs/phone-accounts.md).
 
-**Honest limits.** Android doesn't let apps read how busy the CPU is, so the app shows how fast the cores run against their top speed. Android's data counts are kept in 2-hour blocks, so "today" can include a little of the evening before. Widgets can't refresh more often than every 15 minutes on their own. Away from the computer's network the Plans screen and widget show the last reading.
+**Honest limits.** Android doesn't let apps read how busy the CPU is, so the app shows how fast the cores run against their top speed. Android's data counts are kept in 2-hour blocks, so "today" can include a little of the evening before. Widgets can't refresh more often than every 15 minutes on their own. Away from the computer's network the Home screen and widget show the last reading.
 
 **Building it.** `cd android && ./gradlew assembleDebug` (JDK 17 and the Android SDK). Release APKs are built and signed by the Release workflow; see [`android/README.md`](android/README.md) for the signing key.
 
@@ -273,12 +280,13 @@ npm test                      # unit tests, including network parsers, store, en
 npm run test:ui               # real Electron windows offscreen, including the network window
 node scripts/probe-capture.js # macOS/Linux: live capture of a curl download
 npm run screenshots           # regenerate docs/screenshots from the real UI with demo data
+(cd android && ./gradlew testDebugUnitTest --tests '*ScreenshotsTest*' -PscreenshotsDir=../docs/screenshots/android)  # phone screenshots
 npm audit --audit-level=high
 npm run dist
 cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug   # Android app (JDK 17, Android SDK)
 ```
 
-The screenshots in `docs/screenshots` are produced by `npm run screenshots`, which renders the real flyout, chips and network window offscreen with demo data (no real logins, usage or paths). The tests use synthetic credentials, responses and network samples. The UI smoke test uses hidden offscreen Electron windows and saves images under `.qa/`; it does not enable autostart or read your CLI logins. CI runs on Windows, macOS and Linux: unit and UI tests everywhere, the live capture probe on macOS and Linux, a compile and self-test of the Windows helper with Windows PowerShell 5.1, and an unpacked build per platform. See [`docs/review.md`](docs/review.md) for the defect list and [`docs/handoff.md`](docs/handoff.md) for release verification and remaining acceptance checks.
+The screenshots in `docs/screenshots` are produced by `npm run screenshots`, which renders the real flyout, chips and network window offscreen with demo data (no real logins, usage or paths). The phone images in `docs/screenshots/android` come from `ScreenshotsTest`, which renders the real Home, Data and Phone screens, light and dark, with Robolectric and demo data; the *Android screenshots* workflow regenerates and commits them when the phone UI changes on a branch. The tests use synthetic credentials, responses and network samples. The UI smoke test uses hidden offscreen Electron windows and saves images under `.qa/`; it does not enable autostart or read your CLI logins. CI runs on Windows, macOS and Linux: unit and UI tests everywhere, the live capture probe on macOS and Linux, a compile and self-test of the Windows helper with Windows PowerShell 5.1, and an unpacked build per platform. See [`docs/review.md`](docs/review.md) for the defect list and [`docs/handoff.md`](docs/handoff.md) for release verification and remaining acceptance checks.
 
 ## Privacy
 

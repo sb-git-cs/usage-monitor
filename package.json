@@ -36,6 +36,7 @@
     "url": "https://github.com/sb-git-cs/usage-monitor/issues"
   },
   "scripts": {
+    "pretest": "install-electron",
     "test": "node --test test/*.test.js",
     "test:ui": "electron scripts/ui-smoke.js",
     "start": "node scripts/start.js",
