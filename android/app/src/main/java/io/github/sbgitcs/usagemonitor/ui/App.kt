@@ -1,7 +1,6 @@
 package io.github.sbgitcs.usagemonitor.ui
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -93,9 +92,7 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
         return
     }
 
-    AppScaffold(tab, onTab = { tab = it; insights = false },
-        title = if (insights) "Insights" else tab.title,
-        actions = { TextButton(onClick = { insights = !insights }) { Text(if (insights) "Back" else "Insights") } }) {
+    AppScaffold(tab, onTab = { tab = it; insights = false }, insights = insights, onInsights = { insights = !insights }) {
         if (insights) {
             InsightsScreen(settings, onDisplayChanged, onAccounts = { insights = false; tab = Tab.Accounts })
         } else when (tab) {
@@ -121,14 +118,15 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
     }
 }
 
-/** The top bar and the tab bar around [content]. */
+/** The top bar with its Insights button, and the tab bar, around [content]. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppScaffold(tab: Tab, onTab: (Tab) -> Unit, title: String = tab.title,
-                actions: @Composable RowScope.() -> Unit = {}, content: @Composable () -> Unit) {
+fun AppScaffold(tab: Tab, onTab: (Tab) -> Unit, insights: Boolean = false, onInsights: () -> Unit = {},
+                content: @Composable () -> Unit) {
     val navigationHeight = if (LocalDensity.current.fontScale > 1.15f) 72.dp else 64.dp
     Scaffold(
-        topBar = { TopAppBar(title = { Text(title, style = MaterialTheme.typography.titleLarge) }, actions = actions, expandedHeight = 52.dp) },
+        topBar = { TopAppBar(title = { Text(if (insights) "Insights" else tab.title, style = MaterialTheme.typography.titleLarge) },
+            actions = { TextButton(onClick = onInsights) { Text(if (insights) "Back" else "Insights") } }, expandedHeight = 52.dp) },
         bottomBar = {
             NavigationBar(
                 modifier = Modifier.windowInsetsPadding(NavigationBarDefaults.windowInsets).height(navigationHeight),
