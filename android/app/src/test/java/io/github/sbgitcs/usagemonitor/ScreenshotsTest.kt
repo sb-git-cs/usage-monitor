@@ -1,5 +1,6 @@
 package io.github.sbgitcs.usagemonitor
 
+import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
@@ -42,7 +43,8 @@ private const val GB = 1024 * MB
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [35], qualifiers = "w393dp-h852dp-xhdpi")
+// A plain Application: the app's own schedules WorkManager jobs, which are not needed here.
+@Config(sdk = [35], qualifiers = "w393dp-h852dp-xhdpi", application = Application::class)
 open class ScreenshotsTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
@@ -128,7 +130,7 @@ open class ScreenshotsTest {
 }
 
 /** The same screens in dark mode. */
-@Config(sdk = [35], qualifiers = "w393dp-h852dp-xhdpi-night")
+@Config(sdk = [35], qualifiers = "w393dp-h852dp-night-xhdpi", application = Application::class)
 class ScreenshotsTestDark : ScreenshotsTest() {
     override val suffix = "-dark"
 }
