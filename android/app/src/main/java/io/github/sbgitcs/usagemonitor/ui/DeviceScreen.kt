@@ -32,7 +32,12 @@ fun DeviceScreen() {
     WhileVisible(Unit, 2000) {
         r = withContext(Dispatchers.IO) { runCatching { DeviceStats.read(context) }.getOrNull() }
     }
-    val readings = r ?: return
+    r?.let { DeviceContent(it) }
+}
+
+/** The Phone tab for one set of readings. */
+@Composable
+fun DeviceContent(readings: DeviceReadings) {
     val columns = if (LocalDensity.current.fontScale > 1.3f) 2 else 3
 
     ScreenList {

@@ -45,7 +45,6 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
 /** Live speed, mobile and Wi-Fi data today and this billing cycle, and the apps that used it. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DataScreen(settings: Settings, resumes: Int) {
     val context = LocalContext.current
@@ -69,6 +68,20 @@ fun DataScreen(settings: Settings, resumes: Int) {
         apps = a
     }
 
+    DataContent(settings, access, speed, status, apps, period, onPeriod = { period = it }, onOpenAccess = {
+        openFirst(
+            context,
+            Intent(AndroidSettings.ACTION_USAGE_ACCESS_SETTINGS, Uri.parse("package:${context.packageName}")),
+            Intent(AndroidSettings.ACTION_USAGE_ACCESS_SETTINGS),
+        )
+    })
+}
+
+/** The Data tab for given readings: live speed, today, the billing cycle and the apps that used data. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DataContent(settings: Settings, access: Boolean, speed: Pair<Double, Double>, status: DataStatus?, apps: List<AppData>,
+                period: Int, onPeriod: (Int) -> Unit, onOpenAccess: () -> Unit) {
     ScreenList {
         item {
             Section("Right now") {
@@ -85,13 +98,7 @@ fun DataScreen(settings: Settings, resumes: Int) {
                 Section("Allow Usage access") {
                     Note("Android keeps count of each app's mobile and Wi-Fi data. Usage Monitor needs Usage access to read those counts. Nothing leaves your phone.")
                     Spacer(Modifier.height(6.dp))
-                    Button(onClick = {
-                        openFirst(
-                            context,
-                            Intent(AndroidSettings.ACTION_USAGE_ACCESS_SETTINGS, Uri.parse("package:${context.packageName}")),
-                            Intent(AndroidSettings.ACTION_USAGE_ACCESS_SETTINGS),
-                        )
-                    }) { Text("Open Usage access") }
+                    Button(onClick = onOpenAccess) { Text("Open Usage access") }
                 }
             }
             return@ScreenList
@@ -102,8 +109,8 @@ fun DataScreen(settings: Settings, resumes: Int) {
         item {
             Section("Apps") {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(selected = period == 0, onClick = { period = 0 }, label = { Text("Today") })
-                    FilterChip(selected = period == 1, onClick = { period = 1 }, label = { Text("This cycle") })
+                    FilterChip(selected = period == 0, onClick = { onPeriod(0) }, label = { Text("Today") })
+                    FilterChip(selected = period == 1, onClick = { onPeriod(1) }, label = { Text("This cycle") })
                 }
                 if (apps.isEmpty()) Note("No data used yet.")
             }

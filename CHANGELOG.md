@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Android screenshots in the README: Home (light and dark), Data and Phone, rendered from the real screens with demo data by `ScreenshotsTest` and kept current by the *Android screenshots* workflow.
+- Electron 44.7.0 and systeminformation 5.33.15.
+- `npm test` installs the Electron binary first. Electron 44 downloads it on first use, and parallel test files could race to unpack it on Windows.
+
 ## 1.4.0 — 2026-10-08
 
 - **Pair a phone** on the flyout and in Settings shows a QR code and a typeable code immediately, and turns phone sharing on. The code lasts 10 minutes and stays on the flyout if Settings is closed. **Cancel** withdraws it.
