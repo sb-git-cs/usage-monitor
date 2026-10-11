@@ -48,9 +48,9 @@ private val appType = Typography(
 
 /** A consistent palette in both system light and dark mode. */
 @Composable
-fun UsageMonitorTheme(content: @Composable () -> Unit) {
+fun UsageMonitorTheme(mode: String = "system", content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) darkColors else lightColors,
+        colorScheme = if (mode == "dark" || (mode == "system" && isSystemInDarkTheme())) darkColors else lightColors,
         typography = appType,
         shapes = Shapes(small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(12.dp),
             large = RoundedCornerShape(16.dp), extraLarge = RoundedCornerShape(20.dp)),

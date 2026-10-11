@@ -160,6 +160,41 @@ class DirectReadingTest {
         assertEquals(2_000_000L, next.expiresAt)
     }
 
+    @Test fun omittedOrNullRefreshTokensPreserveTheSavedGrantForEveryRenewableProvider() {
+        for (provider in listOf("claude", "codex", "grok")) {
+            val previous = Credential(provider, TokenVault.PHONE, "old", "saved-refresh", 0, userId = "saved-user")
+            val next = PhoneSignIn.renew(previous, Http { _, _, _, _ ->
+                HttpReply(200, """{"access_token":"new","refresh_token":null,"expires_in":3600}""".toByteArray())
+            })!!
+            assertEquals(provider, "saved-refresh", next.refreshToken)
+            assertNotNull("$provider token expiry must be tracked", next.expiresAt)
+            if (provider == "grok") assertEquals("saved-user", next.userId)
+        }
+    }
+
+    @Test fun nonStringAccessTokensAreRejectedInsteadOfBeingSavedAsAuthorization() {
+        for (provider in listOf("claude", "codex", "grok")) {
+            for (token in listOf("true", "123", "{}", "[]")) {
+                val previous = Credential(provider, TokenVault.PHONE, "old", "refresh", 0)
+                assertThrows(java.io.IOException::class.java) {
+                    PhoneSignIn.renew(previous, Http { _, _, _, _ ->
+                        HttpReply(200, """{"access_token":$token,"expires_in":3600}""".toByteArray())
+                    })
+                }
+            }
+        }
+    }
+
+    @Test fun codexAccountIdFallsBackToTheAccessTokenWhenTheIdTokenIsNotReturned() {
+        val enc = Base64.getUrlEncoder().withoutPadding()
+        val access = "h." + enc.encodeToString("""{"exp":2000,"https://api.openai.com/auth":{"chatgpt_account_id":"acct-2"}}""".toByteArray()) + ".s"
+        val previous = Credential("codex", TokenVault.PHONE, "old", "refresh", 0, accountId = "acct-1")
+        val next = PhoneSignIn.renew(previous, Http { _, _, _, _ ->
+            HttpReply(200, """{"access_token":"$access"}""".toByteArray())
+        })!!
+        assertEquals("acct-2", next.accountId)
+    }
+
     @Test fun renewalIsDueEarlierForCodex() {
         assertTrue(PhoneSignIn.dueForRenewal(Credential("codex", TokenVault.PHONE, "a", expiresAt = now + 3_600_000), now))
         assertFalse(PhoneSignIn.dueForRenewal(Credential("grok", TokenVault.PHONE, "a", expiresAt = now + 3_600_000), now))

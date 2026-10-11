@@ -28,11 +28,12 @@ object Alerts {
                 if (p.state != "ok") continue
                 for (w in p.windows) {
                     val used = w.usedPct ?: continue
-                    val window = "${p.id}|${w.kind}|${w.label}|${w.resetsAt ?: 0}"
+                    if (w.resetsAt != null && w.resetsAt <= System.currentTimeMillis()) continue
+                    val window = "${p.id}|${io.github.sbgitcs.usagemonitor.data.InsightHistory.accountRef(p.account)}|${w.kind}|${w.label}|${w.resetsAt ?: 0}"
                     if (used >= 100) due += Alert("plan-full|$window", p.name, "${w.label} limit reached")
                     else if (used >= snapshot.alertThreshold) due += Alert("plan-warn|$window", p.name, "${w.label} is ${used.roundToInt()}% used")
                     val forecast = w.forecastAt
-                    if (settings.forecastAlerts && forecast != null && w.resetsAt != null && used >= FORECAST_MIN_USED && used < 100) {
+                    if (settings.forecastAlerts && forecast != null && w.resetsAt != null && forecast > System.currentTimeMillis() && forecast < w.resetsAt && used >= FORECAST_MIN_USED && used < 100) {
                         due += Alert("plan-forecast|$window", p.name, "${w.label} is ${used.roundToInt()}% used. At this pace it reaches 100% around ${clock(forecast)}, before it resets at ${clock(w.resetsAt)}.")
                     }
                 }
@@ -53,10 +54,12 @@ object Alerts {
                 else if (pct >= warn) due += Alert("day-warn|${data.day}", "Mobile data today at ${pct.roundToInt()}%", "${Format.bytes(data.today)} of ${Format.bytes(daily)} used today.")
             }
         }
-        val quiet = settings.inQuietHours()
+        val quiet = settings.inQuietHours() || settings.snoozeUntil > System.currentTimeMillis()
         for (a in due) {
             if (settings.alreadyFired(a.key)) continue
             settings.markFired(a.key)
+            val allowed = androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+            settings.recordEvent(a.title, a.text, if (quiet) "Suppressed" else if (!allowed) "Permission denied" else "Delivery requested")
             if (!quiet) Notifications.show(context, Notifications.ALERTS, a.key.hashCode(), a.title, a.text)
         }
     }

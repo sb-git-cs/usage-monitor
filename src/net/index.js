@@ -109,6 +109,7 @@ function wireProvider() {
   provider.on("sample", (sample) => {
     try {
       engine.ingest(sample);
+      if (ctx.onTraffic) ctx.onTraffic(sample);
     } catch (err) {
       console.error("network sample failed", err.message);
     }
@@ -217,6 +218,7 @@ function toast(text) {
 
 function notifyCap({ key, name, limit, period, blocked }) {
   sendState();
+  if (ctx.onEvent && ctx.onEvent("Data cap reached", "An app reached its configured network cap. Open Network usage for details.") === false) return;
   if (!Notification.isSupported()) return;
   const when = period === "daily" ? " for today" : period === "monthly" ? " for this month" : "";
   const n = new Notification({

@@ -1,6 +1,7 @@
 package io.github.sbgitcs.usagemonitor.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -19,6 +20,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,11 +55,13 @@ enum class Tab(val label: String, val title: String) {
 
 @Composable
 fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Unit,
-        requestedTab: Tab? = null, onNavigationHandled: () -> Unit = {}) {
+        requestedTab: Tab? = null, onNavigationHandled: () -> Unit = {}, onDisplayChanged: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableStateOf(Tab.Plans) }
     var pairing by rememberSaveable { mutableStateOf(false) }
+    var insights by rememberSaveable { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = insights) { insights = false }
     var computer by remember { mutableStateOf(settings.computer) }
     // Bumped on every return to the app, so permission states are read again.
     var resumes by remember { mutableIntStateOf(0) }
@@ -66,6 +70,7 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
         requestedTab?.let {
             tab = it
             pairing = false
+            insights = false
             onNavigationHandled()
         }
     }
@@ -88,8 +93,12 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
         return
     }
 
-    AppScaffold(tab, onTab = { tab = it }) {
-        when (tab) {
+    AppScaffold(tab, onTab = { tab = it; insights = false },
+        title = if (insights) "Insights" else tab.title,
+        actions = { TextButton(onClick = { insights = !insights }) { Text(if (insights) "Back" else "Insights") } }) {
+        if (insights) {
+            InsightsScreen(settings, onDisplayChanged, onAccounts = { insights = false; tab = Tab.Accounts })
+        } else when (tab) {
             Tab.Plans -> PlansScreen(settings, computer, onPair = { pairing = true }, onAccounts = { tab = Tab.Accounts })
             Tab.Data -> DataScreen(settings, resumes)
             Tab.Phone -> DeviceScreen()
@@ -115,10 +124,11 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
 /** The top bar and the tab bar around [content]. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppScaffold(tab: Tab, onTab: (Tab) -> Unit, content: @Composable () -> Unit) {
+fun AppScaffold(tab: Tab, onTab: (Tab) -> Unit, title: String = tab.title,
+                actions: @Composable RowScope.() -> Unit = {}, content: @Composable () -> Unit) {
     val navigationHeight = if (LocalDensity.current.fontScale > 1.15f) 72.dp else 64.dp
     Scaffold(
-        topBar = { TopAppBar(title = { Text(tab.title, style = MaterialTheme.typography.titleLarge) }, expandedHeight = 52.dp) },
+        topBar = { TopAppBar(title = { Text(title, style = MaterialTheme.typography.titleLarge) }, actions = actions, expandedHeight = 52.dp) },
         bottomBar = {
             NavigationBar(
                 modifier = Modifier.windowInsetsPadding(NavigationBarDefaults.windowInsets).height(navigationHeight),

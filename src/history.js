@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { cacheDir } = require("./paths");
+const { digest, identity } = require("./insights");
 
 const FILE = "usage-history.json";
 const MIN_GAP_MS = 60_000;
@@ -18,8 +19,8 @@ const MIN_POINTS = 3;
 // Slower than this is noise from rounding in the providers' percentages.
 const MIN_RATE_PER_HOUR = 0.5;
 
-function keyOf(providerId, win) {
-  return `${providerId}|${win.kind}|${win.label || ""}`;
+function keyOf(providerId, win, account) {
+  return `${providerId}|${win.kind}|${win.label || ""}${account ? `|${digest(account)}` : ""}`;
 }
 
 function lookback(kind) {
@@ -104,7 +105,7 @@ class History {
       if (!provider || provider.status?.state !== "ok") continue;
       for (const win of provider.windows || []) {
         if (!Number.isFinite(win.used_pct)) continue;
-        const key = keyOf(provider.id, win);
+        const key = keyOf(provider.id, win, identity(provider));
         let s = this.series.get(key);
         // A new reset time means a new window; the old trend no longer applies.
         if (!s || (win.resets_at && s.resets_at && win.resets_at !== s.resets_at) || (s.points.length && win.used_pct < s.points[s.points.length - 1].used - 1)) {
@@ -135,7 +136,7 @@ class History {
       providers: snapshot.providers.map((p) => ({
         ...p,
         windows: (p.windows || []).map((w) => {
-          const f = p.status?.state === "ok" || p.status?.state === "stale" ? forecast(this.series.get(keyOf(p.id, w))?.points, w, now) : null;
+          const f = p.status?.state === "ok" ? forecast(this.series.get(keyOf(p.id, w, identity(p)))?.points, w, now) : null;
           const { forecast_at, burn_per_hour, ...rest } = w;
           return f ? { ...rest, forecast_at: f.at, burn_per_hour: f.rate_per_hour } : rest;
         }),

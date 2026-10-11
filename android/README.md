@@ -86,6 +86,8 @@ remains available alongside Claude, Gemini, Grok and Cursor.
 
 ## Home and accounts
 
+In **1.5.0**, **Insights** in the toolbar adds observed quota charts (24h/7d/30d), JSON history export, saved warning events with one-hour snooze, provider/permission diagnostics and a redacted support export. Theme, text scaling and Home provider visibility are adjustable there. History retains up to 31 days, separates known accounts using pseudonymous references, and starts new segments at reset. Cached readings are excluded; quota percentages are not token counts or costs. The existing Data tab keeps Android's mobile/Wi-Fi billing-cycle totals, caps and projections.
+
 **Home** is one compact list: each tool's main window as a bar and a large percentage, and
 one line with its reset (or when it runs out at this pace) and its next window. Tap a row for
 every window, the account and computer account switching. The header names the computer and

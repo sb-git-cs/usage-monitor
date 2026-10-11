@@ -49,6 +49,7 @@ class PhoneSignInTest {
             http().send(method, url, emptyMap(), body)
         }, { fields = query(it.url!!) }) { "  authorization-code#${fields.getValue("state")}  " }
         assertTrue(exchanged)
+        assertEquals(43, fields["state"]!!.length)
         assertEquals("user:profile", fields["scope"])
         assertEquals("phone@example.test", credential.account)
         assertEquals("Pro", credential.plan)
@@ -61,6 +62,24 @@ class PhoneSignInTest {
         for (bad in listOf("", "abc#wrong", "abc#", "code: abc", "abc def", "https://other.test/?code=abc&state=state")) {
             assertThrows(IOException::class.java) { PhoneSignIn.claudeCode(bad, "state") }
         }
+    }
+
+    @Test fun aPasteMistakeCanBeCorrectedWithoutReplacingTheBrowserApproval() = runBlocking {
+        val saves = AtomicInteger()
+        PhoneSignIn.start("claude", http()) { _, _ -> saves.incrementAndGet() }
+        val waiting = step { it.needsPaste }
+        PhoneSignIn.paste("code: accidentally included text")
+        val retry = step { it.needsPaste && it.error != null }
+        assertEquals(waiting.url, retry.url)
+        assertEquals(0, saves.get())
+        PhoneSignIn.paste("valid-code#${query(waiting.url!!).getValue("state")}")
+        step { it.done }
+        assertEquals(1, saves.get())
+    }
+
+    @Test fun callbackCodesCanContainUriUnreservedPunctuation() {
+        assertEquals("code.part~1", PhoneSignIn.claudeCode("code.part~1#state", "state"))
+        assertEquals("code.part~1", PhoneSignIn.claudeCode("https://platform.claude.com/oauth/code/callback?code=code.part~1&state=state", "state"))
     }
 
     @Test fun aRefusedUsageTokenIsNotSavedOrReportedConnected() = runBlocking {

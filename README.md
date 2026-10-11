@@ -41,6 +41,8 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 ## What you see
 
+**New in 1.5.0:** open **Insights** from the desktop flyout/tray or the Android toolbar for plan history, a notification centre with snooze, and redacted diagnostics exports. The desktop also includes a captured-traffic billing-cycle budget and theme/text/provider display controls. Android keeps its existing mobile/Wi-Fi totals and mobile data-plan controls. See [feature details and limitations](docs/product-improvements.md).
+
 | Surface | What it does |
 | --- | --- |
 | **Flyout** | Two-by-two provider cards (5-hour / weekly, `used/total %`), plus a **Network** card with live download and upload speed, the data used in the last hour, and the apps using the network right now. Click the Network card (or the ⇅ button) to open the full Network usage window. The footer shows the version and the [automatic update](#automatic-updates) status (**Up to date**, **Downloading 1.2.0… 42%**, …) with **Check now**. It rests flush on top of the taskbar. **Open flyout** / **Hide flyout**. Click outside the panel to close it. On Windows, **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks the panel just above the taskbar. |

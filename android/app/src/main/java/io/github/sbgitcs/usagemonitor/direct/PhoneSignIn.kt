@@ -10,7 +10,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.UUID
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -64,7 +64,7 @@ object PhoneSignIn {
     private val _step = MutableStateFlow<SignInStep?>(null)
     val step: StateFlow<SignInStep?> = _step
     private var job: Job? = null
-    private var pasted: CompletableDeferred<String>? = null
+    private var pasted: Channel<String>? = null
     private var attempt = 0L
 
     /** Starts signing in to [provider]; the result is saved in the vault and [step] reports progress. */
@@ -80,7 +80,7 @@ object PhoneSignIn {
     internal fun start(provider: String, http: Http, save: suspend (Credential, UsageResult) -> Unit) {
         cancel()
         val currentAttempt = attempt
-        val waiting = CompletableDeferred<String>()
+        val waiting = Channel<String>(Channel.CONFLATED)
         pasted = waiting
         fun report(value: SignInStep) = synchronized(this) {
             if (attempt != currentAttempt) throw kotlinx.coroutines.CancellationException()
@@ -90,7 +90,7 @@ object PhoneSignIn {
         job = scope.launch {
             try {
                 val c = when (provider) {
-                    "claude" -> claude(http, ::report) { waiting.await() }
+                    "claude" -> claude(http, ::report) { waiting.receive() }
                     "codex" -> codex(http, ::report)
                     "grok" -> grok(http, ::report)
                     "cursor" -> cursor(http, ::report)
@@ -120,7 +120,7 @@ object PhoneSignIn {
         val current = _step.value ?: return
         if (!current.needsPaste || code.isBlank()) return
         _step.value = current.copy(needsPaste = false, busy = true)
-        pasted?.complete(code.trim())
+        pasted?.trySend(code.trim())
     }
 
     @Synchronized
@@ -128,25 +128,37 @@ object PhoneSignIn {
         attempt++
         job?.cancel()
         job = null
+        pasted?.cancel()
         pasted = null
         _step.value = null
     }
 
     internal suspend fun claude(http: Http, report: (SignInStep) -> Unit, awaitCode: suspend () -> String): Credential {
         val verifier = randomText(32)
-        val state = randomText(16)
+        // Claude's authorization service rejects the shorter 16-byte state as an invalid request.
+        val state = randomText(32)
         val url = "https://claude.com/cai/oauth/authorize?code=true&client_id=$CLAUDE_CLIENT&response_type=code" +
             "&redirect_uri=${enc(CLAUDE_REDIRECT)}&scope=${enc(CLAUDE_SCOPE)}&code_challenge=${challenge(verifier)}" +
             "&code_challenge_method=S256&state=$state"
-        report(SignInStep("claude", url = url, needsPaste = true))
-        val code = claudeCode(awaitCode(), state)
+        val approval = SignInStep("claude", url = url, needsPaste = true)
+        report(approval)
+        var code: String
+        while (true) {
+            try {
+                code = claudeCode(awaitCode(), state)
+                break
+            } catch (e: IOException) {
+                // A paste mistake does not invalidate the browser's code or its PKCE verifier.
+                report(approval.copy(error = e.message))
+            }
+        }
         val tokens = postJson(http, CLAUDE_TOKEN, JSONObject().put("grant_type", "authorization_code").put("code", code)
             .put("redirect_uri", CLAUDE_REDIRECT).put("client_id", CLAUDE_CLIENT).put("code_verifier", verifier).put("state", state))
         val access = accessToken(tokens)
         val profile = runCatching {
             JSONObject(http.send("GET", CLAUDE_PROFILE, mapOf("Authorization" to "Bearer $access", "anthropic-beta" to "oauth-2025-04-20"), null).text())
         }.getOrNull()
-        return Credential("claude", TokenVault.PHONE, access, tokens.optString("refresh_token").ifEmpty { null },
+        return Credential("claude", TokenVault.PHONE, access, tokens.text("refresh_token"),
             expiry(tokens), plan = profile?.let(::claudePlan),
             account = profile?.optJSONObject("account")?.optString("email")?.ifEmpty { null }
                 ?: tokens.optJSONObject("account")?.optString("email_address")?.ifEmpty { null })
@@ -172,7 +184,7 @@ object PhoneSignIn {
             returnedState = if ('#' in raw) raw.substringAfter('#') else null
         }
         if (returnedState != null && returnedState != state) throw IOException("That code is from another sign-in. Start again and copy the new code.")
-        if (!code.matches(Regex("[A-Za-z0-9_-]+"))) throw IOException("Paste the complete code from the approval page, without any extra text.")
+        if (!code.matches(Regex("[A-Za-z0-9._~-]+"))) throw IOException("Paste the complete code from the approval page, without any extra text.")
         return code
     }
 
@@ -200,12 +212,14 @@ object PhoneSignIn {
 
     private fun codexCredential(tokens: JSONObject, previous: Credential?): Credential {
         val access = accessToken(tokens)
-        val id = tokens.optString("id_token").ifEmpty { null }?.let(::claims)
+        val id = tokens.text("id_token")?.let(::claims)
+        val accessClaims = claims(access)
         val auth = id?.optJSONObject("https://api.openai.com/auth")
-        return Credential("codex", TokenVault.PHONE, access, tokens.optString("refresh_token").ifEmpty { previous?.refreshToken },
-            claims(access)?.optLong("exp")?.takeIf { it > 0 }?.times(1000),
-            accountId = auth?.optString("chatgpt_account_id")?.ifEmpty { null } ?: previous?.accountId,
-            account = id?.optString("email")?.ifEmpty { null } ?: previous?.account)
+        return Credential("codex", TokenVault.PHONE, access, tokens.text("refresh_token") ?: previous?.refreshToken,
+            accessClaims?.optLong("exp")?.takeIf { it > 0 }?.times(1000) ?: expiry(tokens),
+            accountId = auth?.text("chatgpt_account_id")
+                ?: accessClaims?.optJSONObject("https://api.openai.com/auth")?.text("chatgpt_account_id") ?: previous?.accountId,
+            account = id?.text("email") ?: accessClaims?.text("email") ?: previous?.account)
     }
 
     /** Grok's device sign-in (RFC 8628) with the Grok Build command line's public client. */
@@ -232,10 +246,10 @@ object PhoneSignIn {
 
     private fun grokCredential(tokens: JSONObject, previous: Credential?): Credential {
         val access = accessToken(tokens)
-        val id = tokens.optString("id_token").ifEmpty { null }?.let(::claims)
-        return Credential("grok", TokenVault.PHONE, access, tokens.optString("refresh_token").ifEmpty { previous?.refreshToken },
-            expiry(tokens), userId = claims(access)?.optString("sub")?.ifEmpty { null },
-            account = id?.optString("email")?.ifEmpty { null } ?: previous?.account)
+        val id = tokens.text("id_token")?.let(::claims)
+        return Credential("grok", TokenVault.PHONE, access, tokens.text("refresh_token") ?: previous?.refreshToken,
+            expiry(tokens), userId = claims(access)?.text("sub") ?: previous?.userId,
+            account = id?.text("email") ?: previous?.account)
     }
 
     /** Cursor's browser sign-in: approve on cursor.com while the phone waits for the result. */
@@ -247,12 +261,12 @@ object PhoneSignIn {
         val tokens = poll(150, { wait.also { wait = (wait * 1.2).toLong().coerceAtMost(10_000) } }) {
             val r = http.send("GET", "https://api2.cursor.sh/auth/poll?uuid=$uuid&verifier=$verifier", JSON, null)
             when (r.status) {
-                200 -> JSONObject(r.text()).takeIf { it.optString("accessToken").isNotEmpty() }
+                200 -> JSONObject(r.text()).takeIf { it.text("accessToken") != null }
                 404 -> null
                 else -> throw IOException("Cursor sign-in failed (HTTP ${r.status}).")
             }
         }
-        val access = tokens.getString("accessToken")
+        val access = tokens.text("accessToken") ?: throw IOException("The service returned no access token. Try again.")
         // Cursor's session lasts 60 days; then the phone asks to sign in again.
         return Credential("cursor", TokenVault.PHONE, access, null, claims(access)?.optLong("exp")?.takeIf { it > 0 }?.times(1000))
     }
@@ -280,12 +294,13 @@ object PhoneSignIn {
             "codex" -> codexCredential(tokens, c)
             "grok" -> grokCredential(tokens, c)
             else -> c.copy(accessToken = accessToken(tokens),
-                refreshToken = tokens.optString("refresh_token").ifEmpty { refresh }, expiresAt = expiry(tokens))
+                refreshToken = tokens.text("refresh_token") ?: refresh, expiresAt = expiry(tokens))
         }
     }
 
-    private fun accessToken(tokens: JSONObject): String = tokens.optString("access_token")
-        .takeIf { !tokens.isNull("access_token") && it.isNotBlank() }
+    private fun JSONObject.text(key: String): String? = (opt(key) as? String)?.takeIf { it.isNotBlank() }
+
+    private fun accessToken(tokens: JSONObject): String = tokens.text("access_token")
         ?: throw IOException("The service returned no access token. Try again.")
 
     /** Whether a phone sign-in should be renewed now; Codex's 10-day tokens are renewed a day early. */
