@@ -1,6 +1,7 @@
 const fs = require("fs");
 const { configDir, configPath } = require("./paths");
 const { normalizeNet } = require("./net/settings");
+const { displayPrefs } = require("./insights");
 
 const ALLOWED_INTERVALS = [5, 15, 30, 60];
 const ALERT_THRESHOLDS = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
@@ -36,6 +37,7 @@ const DEFAULTS = {
   update_channel: "stable",
   phone: { enabled: false, port: PHONE_PORT, devices: [] },
   accounts: {},
+  display: displayPrefs(),
   adapters: {
     claude: { refresh_tokens: true },
     gemini: { refresh_tokens: true },
@@ -72,6 +74,7 @@ function normalize(parsed) {
   cfg.update_channel = UPDATE_CHANNELS.includes(cfg.update_channel) ? cfg.update_channel : "stable";
   cfg.phone = normalizePhone(raw.phone);
   cfg.accounts = normalizeAccounts(raw.accounts);
+  cfg.display = displayPrefs(raw.display);
   // Taskbar docking relies on the Windows taskbar; elsewhere the widgets float.
   if (process.platform !== "win32") {
     cfg.chips_docked = false;

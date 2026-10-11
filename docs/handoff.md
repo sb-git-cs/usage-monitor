@@ -2,7 +2,13 @@
 
 ## Objective
 
+Current request (2026-10-11): implement the competitor-inspired roadmap, fix discovered issues, install the tested latest Android build on the connected phone, and push the verified repository changes. Version 1.5.0 adds desktop/Android Insights; no public release was requested.
+
 Audit and fix defects, bugs and usage miscalculations; harden the Windows app and produce tested distributable builds.
+
+Current authentication request (2026-10-08): fix Claude Code phone sign-in failing with
+"Authorization failed / Invalid request format", review the related provider flows,
+and install the tested update on the connected phone.
 
 Current release request (2026-10-08): fix remaining defects, push the unpublished changes,
 and release 1.4.0 with desktop downloads only. The owner corrected an accidental selection
@@ -28,6 +34,9 @@ Not yet verified: (1) **link end to end**, because the running desktop app preda
 
 | Owner | Assignment | Status | Evidence |
 | --- | --- | --- | --- |
+| Codex | Implement Insights roadmap, fix defects, build desktop/Android 1.5.0, install on phone and update Git | Complete implementation/build/native acceptance; committed and pushed with this update on the existing work branch | `review.md`; 137 desktop and 78 Android tests; `.qa/mobile-features-results.json`, `.qa/packaged-source-results.json` |
+| Codex | Research competitor features and improve the local desktop flyout | Complete locally; 130 tests passed, one platform skip; Electron checks and visual inspection passed; installed executable not rebuilt | `docs/product-improvements.md`, `src/ui/overview.js`, `test/overview.test.js`, `.qa/flyout.png`, `review.md` |
+| Codex | Fix Claude's rejected approval request and related provider token/paste recovery failures | Regression fixes tested and installed in 1.5.0; existing Claude phone readings verified; fresh interactive provider approval remains unexercised | `direct/PhoneSignIn.kt`, `ui/ProviderConnections.kt`; `review.md`, `.qa/mobile-features-results.json` |
 | Codex | Review remaining defects, push the tested changes and publish desktop release 1.4.0 | Complete; desktop release published and update metadata verified; 1.4.0 installed on the connected phone | `docs/review.md` desktop release section; GitHub Checks `37775251835`, Release `37813233964`; `.qa/published-release-results.json`, `.qa/release-phone-results.json` |
 | Codex | Fix mobile Claude sign-in retention, direct reading and matching widgets | Complete and installed; 70 tests and native checks passed; real provider approval/renewal acceptance remains pending | `dist/UsageMonitor-1.3.0-android-optimized.apk`; `.qa/mobile-auth-final-results.json`; `docs/review.md` mobile section |
 | Development | Compact two-row chips; CPU, memory, optional GPU, disk activity and storage | Complete; unit, source/packaged UI and live packaged hardware checks passed | `src/system.js`, `src/system-windows.ps1`, `src/ui/chips.js`, `test/system.test.js`, `scripts/ui-smoke.js` |
@@ -50,10 +59,17 @@ Not yet verified: (1) **link end to end**, because the running desktop app preda
 
 ## Verification
 
+### Insights 1.5.0 (2026-10-11)
+
+- Desktop: 137 tests passed, one platform skip; source/packaged Electron checks passed. History, snooze, diagnostics, billing-cycle budget and display preferences are documented in `docs/product-improvements.md`. Windows installer/portable/ZIP produced; all 69 packaged source files and update metadata verified. Eight pre-existing moderate build-tool advisories remain; no high/critical findings.
+- Android: 78 tests passed, lint zero errors (14 existing warnings), optimized build succeeded. Installed final APK on CPH2423 using the existing certificate, preserving pairing and widget ID 8. Version 1.5.0 / 1050099; 5,517,555 bytes; SHA-256 `11446ba63f294deb952db1bbd0758365ed48a1392b062073b5e887b8bf2e3c6b`. Verified the installed APK matches that digest.
+- Native checks: five tabs, all five retained Accounts providers, Insights/history periods, export picker/cancel, snooze/resume, diagnostics, dark theme, 130% text and Back routing. Original display preferences were restored. Existing Claude/Grok phone readings work; other providers retain their truthful cached computer state while it is unreachable. No new provider consent. Phone returned to launcher. Detailed evidence and resolved findings: `review.md`.
+- Git update uses the existing `claude/beautiful-edison-ljkbkv` work branch. No production Android signing key, release tag or public release was requested or created. APK and Windows artifacts remain in local `dist/`.
+
 ### Desktop release 1.4.0 (2026-10-08)
 
 - Fixed malformed Cursor/Copilot quota parsing, out-of-range Cursor billing dates and token responses finishing after phone authorization was revoked. All three regression tests failed before the fixes and passed afterwards. The complete desktop suite passed with **127 tests, one platform skip, zero failures**. `git diff --check` passed.
-- The final dependency tree pins electron-builder **26.17.0** and retains Electron **44.4.5** and electron-updater **6.8.10**. `npm audit --audit-level=high` passes with no high/critical findings. Eight moderate build-only upstream advisories remain; the compatibility limitation is recorded in `docs/review.md`.
+- The final dependency tree pins electron-builder **26.17.0** and uses Electron **44.7.0** and electron-updater **6.8.10**. `npm audit --audit-level=high` passes with no high/critical findings. Eight moderate build-only upstream advisories remain; the compatibility limitation is recorded in `docs/review.md`.
 - `npm run test:ui`, `npm run dist` and `npm run test:ui -- --packaged` passed. Generated Windows installer **120,892,824 bytes**, portable **120,680,321 bytes**, ZIP **153,910,068 bytes**, installer blockmap and `latest.yml`. Local artifacts are under `dist/`; the installer is `UsageMonitor-Setup-1.4.0.exe`. These desktop builds are unsigned, as in the existing release workflow.
 - Android SDK build tools are explicitly 35.0.0, matching the SDK image. Docker `testDebugUnitTest lintOptimized assembleOptimized` passed: **70 tests, zero failures/errors; lint zero errors and 14 existing warnings**. Android code is retained in source but no APK is to be published. No signing key was created, no GitHub secrets were changed, and no new provider consent was performed during this release task.
 - Pushed release commit `4345a43` to `main` and `claude/beautiful-edison-ljkbkv`. [GitHub Checks run 37775251835](https://github.com/sb-git-cs/usage-monitor/actions/runs/37775251835) passed all four jobs: Windows, macOS, Linux and Android. Desktop source/packaged UI checks, builds, live Unix capture probes and the high-severity dependency audit passed in their respective jobs.

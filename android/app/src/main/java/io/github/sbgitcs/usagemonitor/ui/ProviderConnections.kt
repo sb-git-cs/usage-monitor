@@ -225,7 +225,7 @@ private fun SignInDialog(step: io.github.sbgitcs.usagemonitor.direct.SignInStep)
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 when {
                     step.done -> Text(step.notice ?: "This phone now reads $name usage directly.")
-                    step.error != null -> Text(step.error, color = MaterialTheme.colorScheme.error)
+                    step.error != null && !step.needsPaste -> Text(step.error, color = MaterialTheme.colorScheme.error)
                     step.busy -> Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                         Text("  Connecting and checking usage…")
@@ -236,6 +236,7 @@ private fun SignInDialog(step: io.github.sbgitcs.usagemonitor.direct.SignInStep)
                     }
                     step.needsPaste -> {
                         Text("Approve in the browser, copy the code it shows, then paste it here.")
+                        step.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         OutlinedTextField(value = pasted, onValueChange = { pasted = it }, singleLine = true,
                             label = { Text("Code") }, modifier = Modifier.fillMaxWidth())
                     }
@@ -257,7 +258,7 @@ private fun SignInDialog(step: io.github.sbgitcs.usagemonitor.direct.SignInStep)
         confirmButton = {
             when {
                 step.done -> TextButton(onClick = { PhoneSignIn.cancel() }) { Text("Done") }
-                step.error != null -> TextButton(onClick = { PhoneSignIn.start(context, step.provider) }) { Text("Try again") }
+                step.error != null && !step.needsPaste -> TextButton(onClick = { PhoneSignIn.start(context, step.provider) }) { Text("Try again") }
                 step.busy -> {}
                 step.needsPaste -> TextButton(enabled = pasted.isNotBlank(), onClick = { PhoneSignIn.paste(pasted) }) { Text("Connect") }
                 step.url != null -> TextButton(onClick = {

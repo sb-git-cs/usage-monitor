@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html class="fit">
+<html class="fit" lang="en">
 <head>
   <meta charset="utf-8" />
+  <title>Usage Monitor</title>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src data:" />
   <link rel="stylesheet" href="shared.css" />
 </head>
@@ -10,17 +11,18 @@
     <div class="head">
       <span>Usage Monitor</span>
       <div class="chrome-actions">
-        <select class="interval" id="interval" title="Auto-refresh">
+        <button class="pair-btn" id="insights" type="button">Insights</button>
+        <select class="interval" id="interval" title="Auto-refresh" aria-label="Auto-refresh interval">
           <option value="5">5s</option>
           <option value="15">15s</option>
           <option value="30">30s</option>
           <option value="60">60s</option>
         </select>
-        <button class="icon-btn" id="network" title="Network usage">⇅</button>
-        <button class="icon-btn" id="dock" title="Snap to taskbar">▤</button>
-        <button class="icon-btn" id="refresh" title="Refresh now">↻</button>
+        <button class="icon-btn" id="network" title="Network usage" aria-label="Network usage">⇅</button>
+        <button class="icon-btn" id="dock" title="Snap to taskbar" aria-label="Toggle taskbar snapping">▤</button>
+        <button class="icon-btn" id="refresh" title="Refresh now" aria-label="Refresh now">↻</button>
         <button class="pair-btn" id="pair" type="button" title="Pair a phone">Pair</button>
-        <button class="icon-btn" id="settings" title="Settings">⚙</button>
+        <button class="icon-btn" id="settings" title="Settings" aria-label="Settings">⚙</button>
       </div>
     </div>
     <section class="pair-card" id="pairCard" hidden>
@@ -33,8 +35,14 @@
         <button class="link-btn" id="pairCancel" type="button">Cancel</button>
       </div>
     </section>
+    <section class="overview" id="overview" aria-label="Plan overview">
+      <div><span class="overview-label">Reporting</span><strong id="overviewReporting">Waiting</strong></div>
+      <div><span class="overview-label">Attention</span><strong id="overviewAttention">Waiting</strong></div>
+      <div><span class="overview-label">Next reset</span><strong id="overviewReset">Waiting</strong></div>
+    </section>
+    <div class="section-caption"><span>Plan usage <span class="caption-detail">Used / limit · time to reset</span></span><span id="overviewCoverage"></span></div>
     <div id="body"></div>
-    <section class="net-card" id="net" hidden title="Open Network usage">
+    <section class="net-card" id="net" hidden title="Open Network usage" role="button" tabindex="0" aria-label="Open network usage monitor">
       <div class="p-head">
         <span class="p-name"><span class="net-glyph" aria-hidden="true">⇅</span><span>Network</span></span>
         <span class="p-plan" id="netState">Open monitor ›</span>
@@ -55,6 +63,7 @@
   <script src="../models.js"></script>
   <script src="../net/format.js"></script>
   <script src="format.js"></script>
+  <script src="overview.js"></script>
   <script src="drag.js"></script>
   <script src="flyout.js"></script>
 </body>

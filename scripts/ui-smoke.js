@@ -72,6 +72,17 @@ async function check(file) {
     assert.equal(result.clickable, true, `${file} controls must receive pointer events`);
     assert.deepEqual(errors, []);
     if (file === "flyout") {
+      const overview = await win.webContents.executeJavaScript(`({
+        reporting: document.getElementById('overviewReporting').textContent,
+        attention: document.getElementById('overviewAttention').textContent,
+        coverage: document.getElementById('overviewCoverage').textContent,
+        meters: document.querySelectorAll('[role="progressbar"]').length,
+      })`);
+      assert.deepEqual(overview, { reporting: "2 of 4", attention: "2 at risk", coverage: "2 unavailable / cached", meters: 4 });
+      await win.webContents.executeJavaScript(`document.querySelector('.provider').focus()`);
+      win.webContents.send("usage://snapshot", snapshot);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(await win.webContents.executeJavaScript(`document.activeElement.dataset.id`), "claude", "provider focus survives polling");
       assert.match(result.net, /Download ?1\.50 MB\/s Upload ?30\.0 KB\/s/);
       assert.match(result.net, /Used in the last hour ?↓ 120 MB\s↑ 8\.00 MB/);
       assert.ok(result.net.includes(`Now: ${hostile} 1.0 MB/s · Teams 80 KB/s`), "app names render as text");
@@ -88,6 +99,20 @@ async function check(file) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.equal(await win.webContents.executeJavaScript(`document.getElementById('updateStatus').textContent`), "Downloading 1.2.0… 42%");
       assert.equal(await win.webContents.executeJavaScript(`document.getElementById('updateAction').hidden`), true, "no action while an update is on its way");
+      win.webContents.send("usage://prefs", { alert_threshold: 80, chips_show: {}, dark: false,
+        display: { theme: "light", scale: 130, compact: true, hidden: ["grok"], order: ["codex", "claude", "gemini", "grok"] } });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const large = await win.webContents.executeJavaScript(`({
+        width: document.getElementById('root').getBoundingClientRect().width,
+        first: document.querySelector('.provider').dataset.id,
+        cards: document.querySelectorAll('.provider').length,
+        light: document.getElementById('root').classList.contains('light'),
+      })`);
+      assert.equal(large.first, "codex"); assert.equal(large.cards, 3); assert.equal(large.light, true);
+      assert.ok(large.width <= 861, "130% flyout must fit the native width limit");
+      fs.writeFileSync(path.join(output, "flyout-large.png"), (await win.webContents.capturePage()).toPNG());
+      win.webContents.send("usage://prefs", { alert_threshold: 80, chips_show: {}, dark: true });
+      await new Promise((resolve) => setTimeout(resolve, 100));
     } else {
       assert.equal(result.chips, 4);
       assert.equal(result.net, "↓1.5 MB/s↑30 KB/s");
@@ -99,7 +124,9 @@ async function check(file) {
     const deadline = Date.now() + 5000;
     while (!renderedFrame && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.ok(renderedFrame && !renderedFrame.isEmpty(), `${file} must produce a rendered frame`);
-    fs.writeFileSync(path.join(output, `${file}.png`), renderedFrame.toPNG());
+    const capture = await win.webContents.capturePage();
+    assert.ok(!capture.isEmpty(), `${file} screenshot must not be empty`);
+    fs.writeFileSync(path.join(output, `${file}.png`), capture.toPNG());
     if (file === "chips") {
       // Two rows fit the taskbar, with network spanning both rows.
       win.webContents.send("usage://chips-fill", 48);
@@ -337,6 +364,65 @@ async function checkNet() {
   } finally { win.destroy(); }
 }
 
+async function checkInsights() {
+  const win = new BrowserWindow({ show: false, width: 1040, height: 780, webPreferences: {
+    preload: path.join(source, "insights-preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false,
+  } });
+  const { Insights, displayPrefs } = require(path.join(source, "insights"));
+  const file = path.join(output, `insights-test-${process.pid}.json`);
+  let time = Date.now() - 3600000;
+  const data = new Insights({ file, now: () => time });
+  const cfg = { display: displayPrefs() };
+  for (let n = 0; n < 4; n++) {
+    data.record({ providers: [{ ...snapshot.providers[0], account: "synthetic@example.invalid", windows: [{ kind: "five_hour", label: hostile, used_pct: 10 + n * 15, resets_at: future }] }] });
+    time += 900000;
+  }
+  data.event(hostile, "Quota warning", "suppressed");
+  data.setBudget({ limit: 10e9, day: 1 }); data.traffic({ apps: [{ rx: 2e9, tx: 1e9 }] });
+  const view = () => ({ series: data.report(7), events: data.data.events, snooze_until: data.data.snoozeUntil, budget: data.budgetView(),
+    display: cfg.display, dark: true, diagnostics: { storage: "ok", providers: [{ id: "codex", state: "stale", last_success: future }], network: { state: "setup_required", coverage: "Partial observed traffic" } } });
+  const errors = [];
+  win.webContents.on("console-message", (details) => { if (details.level === "error") errors.push(details.message); });
+  ipcMain.handle("insights:get", () => view());
+  ipcMain.handle("insights:action", (_e, action, value) => {
+    if (action === "snooze") data.snooze(Number(value));
+    if (action === "display") cfg.display = displayPrefs(value);
+    if (action === "budget") data.setBudget(value);
+    return { ok: true };
+  });
+  ipcMain.handle("insights:export", () => ({ canceled: true }));
+  try {
+    await win.loadFile(path.join(source, "ui/insights.html"));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(await win.webContents.executeJavaScript(`document.querySelectorAll('canvas').length`), 1);
+    assert.equal(await win.webContents.executeJavaScript(`!!document.querySelector('img') || !!window.injected`), false);
+    assert.ok(await win.webContents.executeJavaScript(`document.getElementById('events').textContent.includes(${JSON.stringify(hostile)})`));
+    await win.webContents.executeJavaScript(`document.getElementById('snooze').value = '60'; document.getElementById('snooze').dispatchEvent(new Event('change'));`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(data.isSnoozed());
+    await win.webContents.executeJavaScript(`document.getElementById('theme').value = 'light'; document.getElementById('scale').value = '130'; document.getElementById('displayForm').dispatchEvent(new Event('submit', { cancelable: true }));`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(cfg.display.theme, "light"); assert.equal(cfg.display.scale, 130);
+    assert.equal(await win.webContents.executeJavaScript(`document.body.classList.contains('light')`), true);
+    win.setSize(620, 780);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(await win.webContents.executeJavaScript(`document.documentElement.scrollWidth > document.documentElement.clientWidth`), false, "large text fits the narrow window");
+    fs.writeFileSync(path.join(output, "insights-light.png"), (await win.webContents.capturePage()).toPNG());
+    win.setSize(1040, 780);
+    cfg.display = displayPrefs({ theme: "dark" });
+    await win.webContents.executeJavaScript(`load()`);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(await win.webContents.executeJavaScript(`document.body.classList.contains('light')`), false);
+    fs.writeFileSync(path.join(output, "insights-dark.png"), (await win.webContents.capturePage()).toPNG());
+    assert.deepEqual(errors, []);
+    console.log("insights: charts, escaping, snooze, display saving and narrow/large-text layout passed");
+  } finally {
+    win.destroy();
+    for (const channel of ["insights:get", "insights:action", "insights:export"]) ipcMain.removeHandler(channel);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  }
+}
+
 app.whenReady().then(async () => {
   fs.mkdirSync(output, { recursive: true });
   ipcMain.handle("usage://get-interval", () => 5);
@@ -356,6 +442,7 @@ app.whenReady().then(async () => {
     await check("chips");
     await checkNet();
     await checkSettings();
+    await checkInsights();
     app.exit(0);
   } catch (err) {
     console.error(err);

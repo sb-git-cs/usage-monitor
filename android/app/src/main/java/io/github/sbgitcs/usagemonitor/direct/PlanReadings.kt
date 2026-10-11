@@ -46,7 +46,7 @@ object PlanReadings {
             }
             currentCoroutineContext().ensureActive()
             readDirect(settings, vault, force, UsageApi())
-            read(settings)
+            read(settings).also { view -> settings.recordInsights(view.snapshot) }
         }
     }
 

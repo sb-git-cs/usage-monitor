@@ -23,6 +23,8 @@ import io.github.sbgitcs.usagemonitor.work.Scheduler
 
 class MainActivity : ComponentActivity() {
     private lateinit var settings: Settings
+    private val themeMode = mutableStateOf("system")
+    private val textScale = mutableStateOf(1f)
 
     /** A pairing link opened from the camera app, waiting for the user to confirm it. */
     private val incoming = mutableStateOf<PairingInfo?>(null)
@@ -37,15 +39,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         settings = Settings(this)
+        themeMode.value = settings.themeMode
+        textScale.value = settings.textScale
         if (savedInstanceState == null) {
             handle(intent)
         } else {
             savedInstanceState.getString(PAIR_LINK)?.let { link -> accept(link) }
         }
         setContent {
-            UsageMonitorTheme {
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides
+                androidx.compose.ui.unit.Density(density.density, density.fontScale * textScale.value)) {
+            UsageMonitorTheme(themeMode.value) {
                 App(settings, incoming.value, onIncomingHandled = { accept(null) },
-                    requestedTab = requestedTab.value, onNavigationHandled = { requestedTab.value = null })
+                    requestedTab = requestedTab.value, onNavigationHandled = { requestedTab.value = null },
+                    onDisplayChanged = { themeMode.value = settings.themeMode; textScale.value = settings.textScale })
+            }
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !settings.askedNotifications &&

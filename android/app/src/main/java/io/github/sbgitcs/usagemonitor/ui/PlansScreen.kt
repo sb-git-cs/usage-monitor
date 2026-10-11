@@ -60,7 +60,7 @@ fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Uni
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var selected by remember { mutableStateOf<String?>(null) }
     val snapshot = view.snapshot
-    val shown = snapshot?.providers.orEmpty().filter { it.state != "disabled" && it.state != "not_installed" }
+    val shown = snapshot?.providers.orEmpty().filter { it.state != "disabled" && it.state != "not_installed" && it.id !in settings.hiddenProviders }
     val warnAt = snapshot?.alertThreshold?.toDouble() ?: 80.0
 
     suspend fun refresh(force: Boolean) {
@@ -83,7 +83,7 @@ fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Uni
 
     WhileVisible(computer, 30_000) { refresh(false) }
 
-    if (computer == null && shown.isEmpty()) {
+    if (computer == null && snapshot?.providers.orEmpty().none { it.state != "disabled" && it.state != "not_installed" }) {
         ScreenList {
             item {
                 Section("See your AI plan usage") {
@@ -128,6 +128,9 @@ fun PlansContent(status: String, busy: Boolean, shown: List<Provider>, warnAt: D
                  onRefresh: () -> Unit, onPair: () -> Unit, onSelect: (Provider) -> Unit) {
     ScreenList {
         item { DashboardHeader(status, busy, onRefresh = onRefresh) }
+        if (shown.isEmpty() && snapshot?.providers.orEmpty().isNotEmpty()) item {
+            Section("Provider visibility") { Note("All available providers are hidden. Open Insights to choose the providers shown on Home.") }
+        }
         if (unpaired || (snapshot == null && error != null)) item {
             Section(if (unpaired) "Pair again" else "Computer not reached") {
                 error?.let { Note(it, color = MaterialTheme.colorScheme.error) }

@@ -1,6 +1,14 @@
 const body = document.getElementById("body");
 const root = document.getElementById("root");
 const dockBtn = document.getElementById("dock");
+document.getElementById("insights").addEventListener("click", () => window.usage.openInsights());
+let display = { order: [], hidden: [] };
+function applyDisplay(prefs) {
+  display = prefs.display || { order: [], hidden: [] };
+  root.classList.toggle("light", display.theme === "light" || (display.theme === "system" && !prefs.dark));
+  root.classList.toggle("compact", !!display.compact);
+  root.style.zoom = `${(display.scale || 100) / 100}`;
+}
 document.getElementById("settings").addEventListener("click", (e) => {
   e.stopPropagation();
   window.usage.openSettings();
@@ -33,19 +41,39 @@ window.usage.getFlyoutState().then(applyFlyoutState);
 
 function fitFlyout() {
   root.style.width = "max-content";
-  const w = Math.ceil(Math.max(root.scrollWidth, root.offsetWidth, root.getBoundingClientRect().width, 580));
-  const h = Math.ceil(Math.max(root.scrollHeight, root.offsetHeight, root.getBoundingClientRect().height));
+  const scale = (display.scale || 100) / 100;
+  const available = Math.min(860, window.screen.availWidth) / scale;
+  root.style.minWidth = `${Math.min(580, available)}px`;
+  root.style.maxWidth = `${available}px`;
+  root.style.maxHeight = `${Math.min(860, window.screen.availHeight) / scale}px`;
+  root.classList.toggle("narrow", available < 580);
+  const w = Math.ceil(root.getBoundingClientRect().width);
+  const h = Math.ceil(root.getBoundingClientRect().height);
   // Exact height: no transparent strip under the panel, so it can sit flush on the taskbar.
   window.usage.resizeFlyout(h, w);
 }
 
 function render(snapshot) {
+  const focused = document.activeElement?.dataset.id;
+  const overview = UsageOverview.summarize(snapshot.providers, alertThreshold);
+  document.getElementById("overviewReporting").textContent = `${overview.reporting} of ${(snapshot.providers || []).length}`;
+  const attention = document.getElementById("overviewAttention");
+  attention.textContent = overview.attention ? `${overview.attention} at risk` : overview.reporting ? "Within limits" : "No current data";
+  attention.classList.toggle("at-risk", overview.attention > 0);
+  document.getElementById("overviewCoverage").textContent = overview.unavailable ? `${overview.unavailable} unavailable / cached` : "Current readings";
+  const reset = document.getElementById("overviewReset");
+  reset.dataset.reset = overview.nextReset ? new Date(overview.nextReset.at).toISOString() : "";
+  reset.textContent = overview.nextReset ? formatEta(reset.dataset.reset) : "Not reported";
+  reset.title = overview.nextReset ? `${overview.nextReset.provider} · ${overview.nextReset.label} · ${new Date(overview.nextReset.at).toLocaleString()}` : "No current reset time reported";
   const parts = [];
-  for (const p of snapshot.providers || []) {
+  const visible = (snapshot.providers || []).filter((p) => !(display.hidden || []).includes(p.id))
+    .sort((a, b) => (display.order || []).indexOf(a.id) - (display.order || []).indexOf(b.id));
+  for (const p of visible) {
     const hint = statusText(p);
-    parts.push(`<section class="provider accent-${escapeHtml(p.id)}" data-id="${escapeHtml(p.id)}">
+    parts.push(`<section class="provider accent-${escapeHtml(p.id)}" data-id="${escapeHtml(p.id)}" role="button" tabindex="0" aria-label="Open ${escapeHtml(p.display_name)} usage">
       <div class="p-head"><span class="p-name">${mark(p.id)}<span>${escapeHtml(p.display_name)}</span></span><span class="p-plan">${escapeHtml(p.plan || "")}${p.status && p.status.state === "stale" ? '<span class="badge">stale</span>' : ""}</span></div>`);
     if (p.account) parts.push(`<div class="p-account">${escapeHtml(p.account)}</div>`);
+    if (hint && p.windows && p.windows.length) parts.push(`<div class="hint">${escapeHtml(hint)} · showing saved readings</div>`);
     if (hint && !(p.windows && p.windows.length)) {
       parts.push(`<div class="hint">${escapeHtml(hint)}</div>`);
     } else {
@@ -58,15 +86,15 @@ function render(snapshot) {
         }
         const alert = alerting(w) ? " alert" : "";
         const pct = formatUsedTotal(w);
-        const width = w.used_pct == null ? 0 : Math.max(0, Math.min(100, w.used_pct));
+        const width = Number.isFinite(w.used_pct) ? Math.max(0, Math.min(100, w.used_pct)) : 0;
         const color = alerting(w) ? "red" : "green";
         parts.push(`<div class="row${alert}">
           <span class="row-label" title="${escapeHtml(flyoutLabel(w))}">${escapeHtml(flyoutLabel(w))}</span>
-          <div class="meter"><div class="fill ${color}" data-width="${width}"></div></div>
+          <div class="meter" role="progressbar" aria-label="${escapeHtml(flyoutLabel(w))} usage" aria-valuemin="0" aria-valuemax="100" ${Number.isFinite(w.used_pct) ? `aria-valuenow="${width}" aria-valuetext="${escapeHtml(formatUsedTotal(w))} used"` : 'aria-valuetext="Usage unavailable"'}><div class="fill ${color}" data-width="${width}"></div></div>
           <span class="pct">${pct}</span>
           <span class="eta" data-reset="${escapeHtml(w.resets_at || "")}">${formatEta(w.resets_at)}</span>
         </div>`);
-        if (w.forecast_at && Number.isFinite(w.used_pct)) {
+        if (p.status?.state === "ok" && Date.parse(w.forecast_at) > Date.now() && Number.isFinite(w.used_pct)) {
           const pace = Number.isFinite(w.burn_per_hour) ? ` (+${w.burn_per_hour}%/h)` : "";
           extras.push(`<div class="forecast" title="Projected from the recent pace; the window resets ${escapeHtml(formatEta(w.resets_at) || "later")}">${escapeHtml(flyoutLabel(w))} reaches 100% around ${escapeHtml(formatClock(w.forecast_at))} at this pace${escapeHtml(pace)}</div>`);
         }
@@ -82,6 +110,13 @@ function render(snapshot) {
   });
   body.querySelectorAll(".provider").forEach((el) => {
     el.addEventListener("click", () => window.usage.openUsage(el.dataset.id));
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        el.click();
+      }
+    });
+    if (el.dataset.id === focused) el.focus({ preventScroll: true });
   });
   requestAnimationFrame(fitFlyout);
 }
@@ -128,6 +163,12 @@ function renderNet(summary) {
 netCard.addEventListener("click", (e) => {
   e.stopPropagation();
   window.usage.openNetwork();
+});
+netCard.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    netCard.click();
+  }
 });
 window.usage.onNet(renderNet);
 
@@ -257,9 +298,15 @@ window.usage.getPairing().then(renderPairing, () => {});
 window.usage.onPrefs((prefs) => {
   if (!prefs) return;
   setAlertThreshold(prefs.alert_threshold);
+  applyDisplay(prefs);
   if (window.__last) render(window.__last);
 });
-window.usage.getPrefs().then((prefs) => prefs && setAlertThreshold(prefs.alert_threshold), () => {});
+window.usage.getPrefs().then((prefs) => {
+  if (!prefs) return;
+  setAlertThreshold(prefs.alert_threshold);
+  applyDisplay(prefs);
+  if (window.__last) render(window.__last);
+}, () => {});
 window.usage.onSnapshot((s) => {
   window.__last = s;
   render(s);
@@ -273,6 +320,6 @@ setInterval(() => {
     return;
   }
   document.querySelectorAll("[data-reset]").forEach((el) => {
-    el.textContent = formatEta(el.dataset.reset);
+    el.textContent = formatEta(el.dataset.reset) || (el.id === "overviewReset" ? "Not reported" : "");
   });
 }, 1000);

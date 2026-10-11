@@ -119,7 +119,7 @@ open class ScreenshotsTest {
     }
 
     private fun shoot(name: String, content: @Composable () -> Unit) {
-        compose.setContent { UsageMonitorTheme(content) }
+        compose.setContent { UsageMonitorTheme(content = content) }
         compose.waitForIdle()
         val view = compose.activity.window.decorView
         val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
