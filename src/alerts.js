@@ -8,6 +8,7 @@ function clock(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 const cache = require("./cache");
+const { digest, identity } = require("./insights");
 
 function keyFor(provider, win) {
   let resets = "0";
@@ -16,7 +17,7 @@ function keyFor(provider, win) {
     resets = Number.isNaN(t) ? String(win.resets_at) : String(Math.floor(t / 60000));
   }
   const label = win.label || "";
-  return `${provider.id}|${win.kind}|${label}|${resets}`;
+  return `${provider.id}|${win.kind}|${label}|${resets}${identity(provider) ? `|${digest(identity(provider))}` : ""}`;
 }
 
 function prune(fired) {
@@ -45,7 +46,7 @@ function notify(title, body) {
 // threshold: the "warn at" percentage from Settings. quiet: inside quiet hours the crossing is
 // recorded but no notification is shown, so it does not pop up later either.
 // forecastAlerts: warn once per window when it is on course to reach 100% before it resets.
-function evaluate(snapshot, { onClick, notifyOnLimit, threshold = ALERT_USED_PCT, quiet = false, forecastAlerts = false } = {}) {
+function evaluate(snapshot, { onClick, onEvent, notifyOnLimit, threshold = ALERT_USED_PCT, quiet = false, forecastAlerts = false } = {}) {
   const warnAt = Number.isFinite(threshold) ? threshold : ALERT_USED_PCT;
   const state = cache.loadAlertState();
   state.fired = prune(state.fired || {});
@@ -76,7 +77,7 @@ function evaluate(snapshot, { onClick, notifyOnLimit, threshold = ALERT_USED_PCT
         prev.crossed80 = true;
         prev.until = win.resets_at;
       }
-      if (forecastAlerts && win.forecast_at && win.resets_at && win.used_pct >= FORECAST_MIN_USED && win.used_pct < 100 && !prev.forecast) {
+      if (forecastAlerts && Date.parse(win.forecast_at) > Date.now() && Date.parse(win.forecast_at) < Date.parse(win.resets_at) && win.used_pct >= FORECAST_MIN_USED && win.used_pct < 100 && !prev.forecast) {
         toasts.push({
           title: `Usage Monitor — ${provider.display_name}`,
           body: `${win.label} is ${Math.round(win.used_pct)}% used. At this pace it reaches 100% around ${clock(win.forecast_at)}, before it resets at ${clock(win.resets_at)}.`,
@@ -93,9 +94,10 @@ function evaluate(snapshot, { onClick, notifyOnLimit, threshold = ALERT_USED_PCT
   }
 
   try { cache.saveAlertState(state); } catch (err) { console.error("alert cache write failed", err.message); }
-  if (quiet) return;
   for (const t of toasts) {
+    if (quiet) { if (onEvent) onEvent(t.title, t.body, "suppressed"); continue; }
     const n = notify(t.title, t.body);
+    if (onEvent) onEvent(t.title, t.body, n ? "requested" : "unsupported");
     if (n && onClick) n.on("click", onClick);
   }
 }

@@ -86,6 +86,30 @@ class Settings(context: Context) {
         get() = p.getBoolean("plan_alerts", true)
         set(v) = p.edit().putBoolean("plan_alerts", v).apply()
 
+    var snoozeUntil: Long
+        get() = p.getLong("snooze_until", 0)
+        set(v) = p.edit().putLong("snooze_until", v.coerceAtLeast(0)).apply()
+    var insightsJson: String?
+        get() = p.getString("insights", null)
+        set(v) = p.edit().putString("insights", v).apply()
+    fun recordInsights(snapshot: io.github.sbgitcs.usagemonitor.model.DesktopSnapshot?) = synchronized(InsightHistory) {
+        val previous = insightsJson
+        val next = InsightHistory.record(previous, snapshot)
+        if (next != previous) insightsJson = next
+    }
+    fun recordEvent(title: String, body: String, delivery: String) = synchronized(InsightHistory) {
+        insightsJson = InsightHistory.event(insightsJson, title, body, delivery)
+    }
+    var themeMode: String
+        get() = p.getString("theme_mode", "system") ?: "system"
+        set(v) = p.edit().putString("theme_mode", v.takeIf { it in listOf("system", "light", "dark") } ?: "system").apply()
+    var textScale: Float
+        get() = p.getFloat("text_scale", 1f)
+        set(v) = p.edit().putFloat("text_scale", v.coerceIn(1f, 1.3f)).apply()
+    var hiddenProviders: Set<String>
+        get() = p.getStringSet("hidden_providers", emptySet()).orEmpty().toSet()
+        set(v) = p.edit().putStringSet("hidden_providers", v.toSet()).apply()
+
     var forecastAlerts: Boolean
         get() = p.getBoolean("forecast_alerts", true)
         set(v) = p.edit().putBoolean("forecast_alerts", v).apply()

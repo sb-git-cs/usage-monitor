@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.0 — 2026-10-11
+
+- **Insights** on the desktop flyout/tray and Android toolbar: observed plan history for 24 hours, 7 days or 30 days, separated by account reference and reset segment. Up to 31 days retained; cached readings are excluded. Desktop exports CSV/JSON; Android exports JSON using the system file picker. Percentages are not token counts or costs.
+- **Notification centre** records quota and network warnings with delivery-requested, suppressed or unavailable states. Snooze persists across restart; quiet hours still apply. Android offers one-hour snooze and resume.
+- Desktop **network budget** counts captured traffic across apps independently of list filters, with a billing day, allowance, warning and observed-pace projection. Recording gaps and traffic the capture source cannot observe are excluded; this is not an ISP total.
+- **Diagnostics** shows provider reading status, last successful/read times and capture health, with retry/account/network actions and a redacted JSON support report that excludes credentials, identities and traffic details.
+- Desktop **display preferences**: system/light/dark theme, 100/115/130% text, compact flyout, provider visibility/order. Android adds theme, text size and Home provider visibility. System accessibility text scaling is retained.
+- Desktop overview shows current reporting coverage, at-risk providers and the next reset. Meter cards support keyboard activation, progressbar semantics and focus preservation across refreshes.
+- Forecast history and warning deduplication now separate known accounts. Stale or expired forecasts are not presented as current advice. Large-text flyouts fit the available desktop area and scroll when necessary.
+- Android Claude authorization uses the expected state length; a malformed pasted code can be corrected without restarting approval. Null/malformed renewal fields no longer become literal tokens, and Codex can recover account identity and expiry from access-token claims.
+
+The Android optimized build uses the existing development signing key for an in-place local update. No public release or production Android signing key is created by this work.
+
 ## 1.4.0 — 2026-10-08
 
 - **Pair a phone** on the flyout and in Settings shows a QR code and a typeable code immediately, and turns phone sharing on. The code lasts 10 minutes and stays on the flyout if Settings is closed. **Cancel** withdraws it.

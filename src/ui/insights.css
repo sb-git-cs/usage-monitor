@@ -1,0 +1,24 @@
+:root { color-scheme: dark; --bg: #0c1423; --surface: #151f30; --text: #edf2fb; --muted: #adbcd1; --border: #334158; --accent: #93c5fd; font-family: 'Segoe UI', system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
+body.light { color-scheme: light; --bg: #f4f7fc; --surface: #fff; --text: #17243a; --muted: #506078; --border: #cbd5e1; --accent: #2563eb; }
+header, main { max-width: 1200px; margin: auto; padding: 24px; }
+header { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+h1 { font-size: 32px; margin: 4px 0; } h2 { font-size: 19px; margin: 0 0 12px; } h3 { font-size: 15px; margin: 0; }
+p { color: var(--muted); line-height: 1.55; margin: 8px 0 16px; }
+.eyebrow { font-size: 11px; letter-spacing: .12em; color: var(--accent); margin: 0; }
+section { padding: 22px; border: 1px solid var(--border); background: var(--surface); border-radius: 14px; margin-bottom: 18px; }
+.section-head, .actions, .provider-choice { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.actions { justify-content: flex-start; }
+button, select, input { font: inherit; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--bg); padding: 9px 12px; }
+button { cursor: pointer; } button:hover { border-color: var(--accent); } :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+label { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; } input[type=number] { width: 120px; } input[type=checkbox] { width: 18px; height: 18px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+.chart-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; min-width: 0; }
+canvas { display: block; width: 100%; height: 120px; }
+.event, .provider-choice, .diagnostic { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.event p { margin: 4px 0; } .meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.stats { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 18px; } .stats strong { display: block; font-size: 22px; margin-top: 4px; }
+#message:not(:empty) { padding: 12px; margin-bottom: 16px; border: 1px solid var(--accent); border-radius: 8px; }
+@media (max-width: 700px) { header, main { padding: 14px; } section { padding: 16px; } .section-head { align-items: flex-start; } }
+@media (forced-colors: active) { section, .chart-card { border: 1px solid CanvasText; } }

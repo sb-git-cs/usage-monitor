@@ -19,6 +19,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,11 +55,13 @@ enum class Tab(val label: String, val title: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Unit,
-        requestedTab: Tab? = null, onNavigationHandled: () -> Unit = {}) {
+        requestedTab: Tab? = null, onNavigationHandled: () -> Unit = {}, onDisplayChanged: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableStateOf(Tab.Plans) }
     var pairing by rememberSaveable { mutableStateOf(false) }
+    var insights by rememberSaveable { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = insights) { insights = false }
     var computer by remember { mutableStateOf(settings.computer) }
     val navigationHeight = if (LocalDensity.current.fontScale > 1.15f) 72.dp else 64.dp
     // Bumped on every return to the app, so permission states are read again.
@@ -68,6 +71,7 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
         requestedTab?.let {
             tab = it
             pairing = false
+            insights = false
             onNavigationHandled()
         }
     }
@@ -91,7 +95,8 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text(tab.title, style = MaterialTheme.typography.titleLarge) }, expandedHeight = 52.dp) },
+        topBar = { TopAppBar(title = { Text(if (insights) "Insights" else tab.title, style = MaterialTheme.typography.titleLarge) },
+            actions = { TextButton(onClick = { insights = !insights }) { Text(if (insights) "Back" else "Insights") } }, expandedHeight = 52.dp) },
         bottomBar = {
             NavigationBar(
                 modifier = Modifier.windowInsetsPadding(NavigationBarDefaults.windowInsets).height(navigationHeight),
@@ -101,7 +106,7 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
-                        onClick = { tab = t },
+                        onClick = { tab = t; insights = false },
                         icon = {
                             when (t) {
                                 Tab.Plans -> Icon(Icons.Filled.Home, contentDescription = null)
@@ -118,6 +123,7 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
+            if (insights) { InsightsScreen(settings, onDisplayChanged, onAccounts = { insights = false; tab = Tab.Accounts }); return@Box }
             when (tab) {
                 Tab.Plans -> PlansScreen(settings, computer, onPair = { pairing = true }, onAccounts = { tab = Tab.Accounts })
                 Tab.Data -> DataScreen(settings, resumes)

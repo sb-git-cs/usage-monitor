@@ -12,6 +12,8 @@ const log = require("./log");
 const netUsage = require("./net");
 const systemUsage = require("./system");
 const { History } = require("./history");
+const { Insights } = require("./insights");
+const insightsWindow = require("./insights-window");
 const { PhoneLink } = require("./phone");
 const accounts = require("./accounts");
 const claude = require("./adapters/claude");
@@ -36,6 +38,7 @@ let latest;
 let systemPoll;
 let latestSystem;
 let history;
+let insights;
 let phone;
 let settingsWin = null;
 let saveTimer = null;
@@ -642,6 +645,7 @@ function broadcastNet() {
 
 function buildMenu() {
   return Menu.buildFromTemplate([
+    { label: "Insights and reports…", click: () => insightsWindow.open() },
     { label: "Network usage…", click: () => netUsage.openWindow() },
     { label: "Settings…", click: () => openSettings() },
     { type: "separator" },
@@ -807,7 +811,7 @@ function sendUpdateState(state) {
 // ---- settings window -----------------------------------------------------------------
 
 function prefs() {
-  return { alert_threshold: cfg.alert_threshold, chips_show: cfg.chips_show };
+  return { alert_threshold: cfg.alert_threshold, chips_show: cfg.chips_show, display: cfg.display, dark: nativeTheme.shouldUseDarkColors };
 }
 
 function broadcastPrefs() {
@@ -1297,8 +1301,9 @@ function wireIpc() {
   }));
   ipcMain.on("usage://flyout-resize", (_e, h, w) => {
     if (!flyout || !Number.isFinite(h) || !Number.isFinite(w)) return;
-    const width = Math.max(560, Math.min(860, Math.round(w || 580)));
-    const height = Math.max(140, Math.min(860, Math.round(h)));
+    const area = screen.getDisplayMatching(flyout.getBounds()).workArea;
+    const width = Math.min(area.width, Math.max(320, Math.min(860, Math.round(w || 580))));
+    const height = Math.min(area.height, Math.max(140, Math.min(860, Math.round(h))));
     if (cfg.flyout_docked || dragState) {
       setSizeKeepPos(flyout, width, height);
       if (cfg.flyout_docked && !dragState) placeFlyoutDocked();
@@ -1345,6 +1350,7 @@ function wireIpc() {
   ipcMain.handle("usage://get-update", () => updater.getState());
   ipcMain.handle("usage://get-prefs", () => prefs());
   ipcMain.on("usage://open-settings", () => openSettings());
+  ipcMain.on("usage://open-insights", () => insightsWindow.open());
   ipcMain.handle("usage://pair-phone", () => beginPairing());
   ipcMain.handle("usage://pair-cancel", () => {
     if (phone) phone.cancelPairing();
@@ -1419,9 +1425,28 @@ if (!gotLock) {
     cfg = config.ensure();
     cfg.autostart = autostart.apply(cfg.autostart !== false);
     config.save(cfg);
+    insights = new Insights();
+    insightsWindow.init({ cfg, insights, snapshot: () => latest, network: () => netUsage.summary(),
+      save: () => { const saved = config.save(cfg); broadcastPrefs(); if (latest) broadcast(latest); return saved; },
+      refresh: () => poll && poll.refresh(), openNetwork: () => netUsage.openWindow(), openSettings,
+      login: (id) => beginAccountSwitch(id) });
+    nativeTheme.on("updated", () => broadcastPrefs());
     try {
       netUsage.init({
         cfg,
+        onTraffic: (sample) => {
+          insights.traffic(sample);
+          const crossing = insights.budgetCrossing(cfg.alert_threshold);
+          if (crossing) {
+            const muted = config.inQuietHours(cfg) || insights.isSnoozed();
+            insights.event("Network budget warning", "Captured traffic reached the configured billing-cycle warning level.", muted ? "suppressed" : require("electron").Notification.isSupported() ? "requested" : "unsupported");
+            if (!muted && require("electron").Notification.isSupported()) new (require("electron").Notification)({ title: "Network budget warning", body: "Captured traffic reached your warning level. Open Insights to review.", silent: true }).show();
+          }
+        },
+        onEvent: (title, body) => {
+          const muted = config.inQuietHours(cfg) || insights.isSnoozed();
+          insights.event(title, body, muted ? "suppressed" : require("electron").Notification.isSupported() ? "requested" : "unsupported"); return !muted;
+        },
         save: () => saveSoon(),
         setAutostart: (enabled) => {
           cfg.autostart = autostart.apply(enabled);
@@ -1496,15 +1521,18 @@ if (!gotLock) {
     refreshAccounts();
     poll = poller.start(cfg, (snap) => {
       const { snapshot: fresh } = applyLocalResets(snap);
-      history.record(fresh);
-      const snapshot = present(history.annotate(fresh));
+      const identified = present(fresh);
+      history.record(identified);
+      insights.record(identified);
+      const snapshot = history.annotate(identified);
       latest = snapshot;
       broadcast(snapshot);
       alerts.evaluate(snapshot, {
         notifyOnLimit: cfg.notify_on_limit_reached,
         threshold: cfg.alert_threshold,
         forecastAlerts: cfg.forecast_alerts,
-        quiet: config.inQuietHours(cfg),
+        quiet: config.inQuietHours(cfg) || insights.isSnoozed(),
+        onEvent: (title, body, delivery) => insights.event(title, body, delivery),
         onClick: () => showFlyout(),
       });
     });
@@ -1546,6 +1574,7 @@ app.on("before-quit", () => {
   }
   if (poll) poll.stop();
   if (history) history.flush();
+  if (insights) insights.save(true);
   if (phone) phone.stop();
   updater.stop();
   if (systemPoll) systemPoll.stop();
