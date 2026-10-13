@@ -4,7 +4,7 @@
 
 - Fixed — fabricated shared usage: `src/adapters/grok.js:99` previously summed product percentages, and its mapper inferred zero solely from a live period; Android did the same in `direct/UsageApi.kt:307`. Missing totals could appear as real usage and trigger forecasts/alerts. Both now require an explicit total. `src/subscription.js:8` requires weekly/reset and Cursor-coverage evidence before accepting a shared pool, and `src/subscription.js:20` selects one reader with its own identity/credits. Monthly fallbacks retain monthly reset semantics. Regression tests cover zero, missing/malformed usage, shared-reader fallback and unrelated accounts.
 
-No open release-blocking code defect identified in the affected flow. Publication remains gated on final checks and release-asset verification below.
+No open release-blocking code defect identified in the affected flow. Final checks and release-asset verification passed; stable 1.6.0 is published.
 
 ## Should-fix
 
@@ -34,6 +34,7 @@ None recorded; no style-only changes requested.
 - Live provider account migration, new sign-in consent, refresh-token lifetime, and a real paid X Subscription API response are **unverified**. The currently known response contract requires explicit weekly total/reset plus Cursor product coverage; providers that do not expose that evidence show unavailable rather than an estimated total. Older snapshots/linked tokens default to legacy. No paid plan/account migration was performed.
 - Windows/macOS binaries remain unsigned under the existing workflow. Existing moderate build-tool advisories and Android lint warnings are reported, with high/critical audit findings gating release. Public release/checksum/download verification is recorded in the handoff after publication.
 - The final audit reports eight moderate build-tool advisories and zero low/high/critical findings. The parallel demo-build attempt hit the shared Gradle journal lock; the final demo build is run serially. A PowerShell screenshot-directory argument needed quoting; native rendering then passed. These were harness/build-environment failures, not application test failures.
+- Publication verified: main Checks **38471351149** and Release **38471774303** passed. Stable/latest [v1.6.0](https://github.com/sb-git-cs/usage-monitor/releases/tag/v1.6.0) points to tested commit **529e9a5113d04599e58af160af8116f814f93227**. All 17 checksum catalogue entries match asset digests; the downloaded Windows installer and updater manifests pass size/hash checks, and all updater references/blockmaps resolve. Other platform binaries were verified against server digests rather than downloaded locally. Receipt: `docs/handoff.md`; machine-readable results: `.qa/subscription-published-release.json`.
 
 ---
 
