@@ -52,11 +52,15 @@ object PlanReadings {
 
     fun read(settings: Settings, now: Long = System.currentTimeMillis()): PlanView {
         val view = desktopView(settings, now)
-        val direct = directReadings(settings)
-        if (direct.isEmpty()) return view
-        val providers = merge(view.snapshot?.providers.orEmpty(), direct, now)
+        val direct = directReadings(settings).map { p ->
+            if (p.source == "phone" && p.subscriptionRegime != settings.subscriptionRegime)
+                p.copy(subscriptionRegime = settings.subscriptionRegime, state = "unknown", windows = emptyList(), sharedWeekly = null, hint = "Refreshing the selected subscription", cacheScope = null) else p
+        }
+        val providers = selectReadings(view.snapshot?.providers.orEmpty(), direct, settings.subscriptionRegime,
+            view.snapshot?.subscriptionRegime ?: "legacy", now)
+        if (providers.isEmpty()) return view
         val snapshot = view.snapshot?.copy(providers = providers)
-            ?: DesktopSnapshot("", "This phone", now, 80, providers, null, null)
+            ?: DesktopSnapshot("", "This phone", now, 80, providers, null, null, subscriptionRegime = settings.subscriptionRegime)
         return PlanView(snapshot, view.computerCached)
     }
 
@@ -119,18 +123,20 @@ object PlanReadings {
     suspend fun saveSignIn(context: Context, settings: Settings, credential: Credential, reading: UsageResult) = withContext(Dispatchers.IO) {
         mutex.withLock {
             currentCoroutineContext().ensureActive()
-            TokenVault(context).put(credential)
+            val selected = credential.copy(subscriptionRegime = settings.subscriptionRegime)
+            TokenVault(context).put(selected)
             val now = System.currentTimeMillis()
-            backoffUntil.remove(credential.provider)
+            backoffUntil.remove(credentialScope(selected))
             val provider = when (reading) {
                 is UsageResult.Ok -> reading.provider.copy(source = "phone")
                 is UsageResult.Failed -> {
-                    if (reading.rateLimited) backoffUntil[credential.provider] = now + 15 * 60_000L
+                    if (reading.rateLimited) backoffUntil[credentialScope(selected)] = now + 15 * 60_000L
                     placeholder(credential.provider, "phone", "fetch_failed", reading.message, credential.account, now)
                 }
                 UsageResult.AuthFailed -> error("Cannot save a refused sign-in")
             }
-            saveDirect(settings, directReadings(settings).filterNot { it.id == credential.provider } + provider)
+            saveDirect(settings, directReadings(settings).filterNot { it.id == credential.provider } + provider.copy(
+                subscriptionRegime = selected.subscriptionRegime, cacheScope = credentialScope(selected), accountId = selected.accountId ?: selected.userId))
         }
     }
 
@@ -138,8 +144,8 @@ object PlanReadings {
         try {
             val linked = linkedCredentials(client.tokens())
             vault.replaceLinked(linked)
-            val ids = linked.map { it.provider }.toSet()
-            saveDirect(settings, directReadings(settings).filter { it.source != "linked" || it.id in ids })
+            val scopes = linked.associate { it.provider to credentialScope(it) }
+            saveDirect(settings, directReadings(settings).filter { it.source != "linked" || it.cacheScope == scopes[it.id] })
             settings.directLink = "on"
             settings.tokensAt = System.currentTimeMillis()
         } catch (e: DirectReadingOffException) {
@@ -158,34 +164,37 @@ object PlanReadings {
         val now = System.currentTimeMillis()
         val desktop = desktopView(settings, now).snapshot?.providers.orEmpty().associateBy { it.id }
         val cache = directReadings(settings).associateBy { it.id }.toMutableMap()
+        val history = settings.directJson?.let { raw -> runCatching {
+            val list = JSONObject(raw).optJSONArray("cached_readings")
+            DesktopSnapshot.parse(JSONObject().putOpt("providers", list).toString()).providers.associateBy { it.cacheScope }
+        }.getOrNull() }.orEmpty()
         val creds = vault.all()
         var changed = false
         for (id in MOBILE) {
             val phone = creds.firstOrNull { it.provider == id && it.origin == TokenVault.PHONE }
             val linked = creds.firstOrNull { it.provider == id && it.origin == TokenVault.LINKED }
-            val computerCurrent = desktop[id]?.state == "ok"
-            val c = phone ?: linked?.takeIf { !computerCurrent } ?: continue
+            val computerCurrent = desktop[id]?.state == "ok" || (id in setOf("grok", "cursor") && desktop["x_subscription"]?.state == "ok")
+            val chosen = phone ?: linked?.takeIf { !computerCurrent } ?: continue
+            val c = if (chosen.origin == TokenVault.PHONE) chosen.copy(subscriptionRegime = settings.subscriptionRegime) else chosen
             val source = if (c.origin == TokenVault.PHONE) "phone" else "linked"
-            val last = cache[id]?.takeIf { it.source == source }
+            val last = history[credentialScope(c)] ?: cache[id]?.takeIf { it.source == source && it.cacheScope == credentialScope(c) }
             if (!force && last != null && now - (last.fetchedAt ?: 0) < DIRECT_EVERY_MS) continue
-            if ((backoffUntil[id] ?: 0) > now) continue
+            if ((backoffUntil[credentialScope(c)] ?: 0) > now) continue
             val reading = readOne(c, api, now, { PhoneSignIn.renew(it) }, vault::put)
-            val known = desktop[id]
             cache[id] = when (reading) {
                 is UsageResult.Ok -> reading.provider.copy(source = source,
-                    account = reading.provider.account ?: if (source == "linked") known?.account else c.account,
-                    plan = reading.provider.plan ?: if (source == "linked") known?.plan else c.plan)
+                    account = reading.provider.account ?: c.account, plan = reading.provider.plan ?: c.plan)
                 is UsageResult.AuthFailed -> {
                     vault.remove(id, c.origin)
                     if (source == "phone") placeholder(id, source, "logged_out", "Signed out on this phone. Sign in again.", c.account, now)
                     else placeholder(id, source, "logged_out", "Computer sign-in expired. Reconnect the computer to update it.", c.account, now)
                 }
                 is UsageResult.Failed -> {
-                    if (reading.rateLimited) backoffUntil[id] = now + 15 * 60_000L
+                    if (reading.rateLimited) backoffUntil[credentialScope(c)] = now + 15 * 60_000L
                     last?.copy(state = "stale", hint = "Could not read: ${reading.message}")
                         ?: placeholder(id, source, "fetch_failed", "Could not read: ${reading.message}", c.account, now)
                 }
-            }
+            }.copy(subscriptionRegime = c.subscriptionRegime, cacheScope = credentialScope(c), accountId = c.accountId ?: c.userId)
             changed = true
         }
         if (changed) saveDirect(settings, cache.values.toList())
@@ -217,7 +226,14 @@ object PlanReadings {
         settings.directJson?.let { runCatching { DesktopSnapshot.parse(it).providers }.getOrNull() }.orEmpty()
 
     private fun saveDirect(settings: Settings, providers: List<Provider>) {
-        settings.directJson = DesktopSnapshot.providersJson(providers)
+        val old = settings.directJson?.let { runCatching { JSONObject(it).optJSONArray("cached_readings") }.getOrNull() }
+        val cached = old?.let { runCatching { DesktopSnapshot.parse(JSONObject().put("providers", it).toString()).providers }.getOrNull() }.orEmpty().associateBy { it.cacheScope }.toMutableMap()
+        for (p in providers) if (p.cacheScope != null && p.state == "ok") cached[p.cacheScope] = p
+        val out = JSONObject(DesktopSnapshot.providersJson(providers))
+        val retained = cached.values.filter { p -> providers.any { it.id == p.id && it.source == p.source && it.accountId == p.accountId } }
+            .sortedByDescending { it.fetchedAt ?: 0 }.take(60)
+        out.put("cached_readings", JSONObject(DesktopSnapshot.providersJson(retained)).getJSONArray("providers"))
+        settings.directJson = out.toString()
     }
 
     internal fun linkedCredentials(tokens: JSONObject): List<Credential> = MOBILE.mapNotNull { id ->
@@ -226,6 +242,7 @@ object PlanReadings {
         fun text(key: String) = if (t.isNull(key)) null else t.optString(key).ifEmpty { null }
         Credential(id, TokenVault.LINKED, access, expiresAt = t.optLong("expires_at").takeIf { it > 0 },
             accountId = text("account_id"), userId = text("user_id"), plan = text("plan"),
+            account = text("account"), subscriptionRegime = if (text("subscription_regime") == "combined") "combined" else "legacy",
             extra = text("ide_type")?.let { mapOf("ide_type" to it) }.orEmpty())
     }
 
@@ -235,11 +252,12 @@ object PlanReadings {
      */
     internal fun merge(desktop: List<Provider>, direct: List<Provider>, now: Long): List<Provider> {
         val fromDesktop = desktop.associateBy { it.id }
-        val read = direct.associateBy { it.id }.mapValues { (_, p) ->
+        val read = direct.associateBy { it.id }.mapValues { (_, original) ->
+            val p = original.afterResets(now)
             if (p.state == "ok" && now - (p.fetchedAt ?: 0) > FRESH_MS)
                 p.copy(state = "stale", hint = "Last reading ${Format.ago(p.fetchedAt ?: 0, now)}") else p
         }
-        val ids = MOBILE.filter { it in fromDesktop || it in read }
+        val ids = (MOBILE + "x_subscription").filter { it in fromDesktop || it in read }
         return ids.mapNotNull { id ->
             val d = fromDesktop[id]
             val x = read[id]
@@ -258,9 +276,25 @@ object PlanReadings {
     internal fun fromDesktop(desktop: DesktopSnapshot?, desktopAt: Long, desktopFailed: Boolean, now: Long): PlanView {
         val cached = desktop != null && (desktopFailed || desktopAt <= 0 || now - desktopAt > FRESH_MS)
         val providers = desktop?.providers.orEmpty().filter { it.id != "copilot" }.map { p ->
-            if (cached && p.state != "disabled" && p.state != "not_installed")
-                p.copy(state = "stale", hint = "Computer unavailable · Last reading ${Format.ago(desktopAt, now)}") else p
+            val expired = p.windows.any { (it.resetsAt ?: Long.MAX_VALUE) <= now }
+            val windows = p.windows.map { w -> if ((w.resetsAt ?: Long.MAX_VALUE) <= now) w.copy(usedPct = null, forecastAt = null, burnPerHour = null) else w }
+            if ((cached && p.windows.isNotEmpty() && p.state !in setOf("disabled", "not_installed")) || expired)
+                p.copy(state = "stale", windows = windows, hint = "Computer unavailable · Last reading ${Format.ago(desktopAt, now)}") else p
         }
         return PlanView(desktop?.copy(providers = providers), cached)
+    }
+
+    internal fun selectReadings(desktop: List<Provider>, direct: List<Provider>, phoneRegime: String, desktopRegime: String, now: Long): List<Provider> {
+        val group = setOf("grok", "cursor", "x_subscription")
+        val owned = direct.filter { it.id in group && it.source == "phone" && it.state != "logged_out" }
+        val other = merge(desktop.filter { it.id !in group }, direct.filter { it.id !in group }, now)
+        val selected = if (owned.isNotEmpty()) consolidateSubscription(merge(if (phoneRegime == "legacy" && desktopRegime == "legacy") desktop.filter { it.id in group } else emptyList(), owned, now), phoneRegime, now)
+            else {
+                val linked = direct.filter { it.id in group && it.source == "linked" && it.subscriptionRegime == desktopRegime }
+                val pc = desktop.filter { it.id in group }
+                merge(if (pc.isEmpty()) emptyList() else consolidateSubscription(pc, desktopRegime, now),
+                    if (linked.isEmpty()) emptyList() else consolidateSubscription(linked, desktopRegime, now), now)
+            }
+        return other + selected
     }
 }

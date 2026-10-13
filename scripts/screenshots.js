@@ -35,6 +35,7 @@ const snapshot = {
     { id: "copilot", display_name: "Copilot", status: { state: "ok" }, plan: "Pro", account: "octocat", windows: [win("monthly", "Chat", 36, 10 * 1440), win("monthly", "Premium", 64, 10 * 1440)] },
   ],
 };
+snapshot.providers.find((p) => p.id === "grok").shared_weekly = win("weekly", "Weekly", 55, 3 * 1440 + 60);
 
 const netSummary = {
   state: "running",
@@ -238,6 +239,8 @@ async function main() {
   ipcMain.handle("usage://get-interval", () => 5);
   ipcMain.handle("usage://get-chips-docked", () => true);
   ipcMain.handle("usage://get-flyout-state", () => ({ docked: false, pinned: false, canDock: true }));
+  ipcMain.handle("usage://get-prefs", () => ({ alert_threshold: 80, chips_show: {}, dark: true }));
+  ipcMain.handle("usage://get-pairing", () => null);
   ipcMain.handle("usage://get-update", () => updateState);
   ipcMain.handle("net:state", () => netState);
   ipcMain.handle("net:settings", () => netState);
@@ -250,6 +253,19 @@ async function main() {
     const image = await app.getFileIcon(file, { size: "normal" });
     return image.isEmpty() ? null : image.toDataURL();
   });
+
+  for (const regime of ["legacy", "combined"]) {
+    const demo = { ...snapshot, subscription_regime: regime, providers: require("../src/subscription").consolidate(snapshot.providers, regime) };
+    for (const page of ["flyout", "chips"]) {
+      const shot = await renderPage(page, { width: 860, height: page === "flyout" ? 720 : 80, transparent: true,
+        crop: page === "flyout" ? "#root" : "#bar", setup: async (w) => {
+          w.webContents.send("usage://snapshot", demo); w.webContents.send("usage://net", netSummary);
+          w.webContents.send("usage://update", updateState);
+          if (page === "chips") w.webContents.send("usage://chips-fill", 44);
+        } });
+      fs.writeFileSync(path.join(OUT, `${page}-${regime}.png`), shot.toPNG());
+    }
+  }
 
   const flyout = saveTmp(
     "flyout.png",

@@ -48,7 +48,7 @@ test("history records fresh readings once a minute, starts over on a new window 
     now = T0 + i * 20_000; // every 20 s for 10 minutes
     h.record(reading(40 + i * 0.3, resets));
   }
-  const key = "codex|five_hour|5h";
+  const key = require("../src/history").keyOf("codex", { kind: "five_hour", label: "5h" }, "legacy|unidentified");
   assert.equal(h.series.get(key).points.length, 11, "one point per minute");
   h.record(reading(99, resets, "stale"));
   assert.equal(h.series.get(key).points.length, 11, "cached readings are not recorded");

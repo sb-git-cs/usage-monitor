@@ -84,6 +84,7 @@ const MARKS = {
 };
 
 const MARK_TITLES = {
+  x_subscription: "X Subscription",
   claude: "Anthropic",
   codex: "OpenAI",
   gemini: "Google Gemini",
@@ -126,6 +127,6 @@ function statusText(p) {
   if (s.state === "logged_out") return s.hint || "Sign in";
   if (s.state === "not_installed") return s.hint || "Not installed";
   if (s.state === "fetch_failed") return s.message || "Error";
-  if (s.state === "unknown") return s.message || "n/a";
+  if (s.state === "unknown") return s.hint || s.message || "n/a";
   return null;
 }

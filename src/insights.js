@@ -4,9 +4,9 @@ const crypto = require("node:crypto");
 const { cacheDir } = require("./paths");
 
 const DAY = 86400000;
-const PROVIDERS = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+const PROVIDERS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "x_subscription"];
 const digest = (value) => crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
-const identity = (p) => p.account_id || p.account || null;
+const identity = (p) => p.cache_scope || p.account_id || p.account || null;
 function cycleAt(now, day) {
   const d = new Date(now);
   const start = (year, month) => new Date(year, month, Math.min(day, new Date(year, month + 1, 0).getDate())).getTime();
@@ -15,10 +15,11 @@ function cycleAt(now, day) {
     : { start: start(d.getFullYear(), d.getMonth() - 1), end: current };
 }
 function displayPrefs(raw = {}) {
-  const ids = [...new Set((Array.isArray(raw.order) ? raw.order : []).filter((id) => PROVIDERS.includes(id)))];
+  const displayProviders = PROVIDERS.filter((id) => id !== "x_subscription");
+  const ids = [...new Set((Array.isArray(raw.order) ? raw.order : []).filter((id) => displayProviders.includes(id)))];
   return { theme: ["system", "light", "dark"].includes(raw.theme) ? raw.theme : "system",
     scale: [100, 115, 130].includes(Number(raw.scale)) ? Number(raw.scale) : 100,
-    compact: raw.compact === true, order: [...ids, ...PROVIDERS.filter((id) => !ids.includes(id))],
+    compact: raw.compact === true, order: [...ids, ...displayProviders.filter((id) => !ids.includes(id))],
     hidden: (Array.isArray(raw.hidden) ? raw.hidden : []).filter((id) => PROVIDERS.includes(id)) };
 }
 class Insights {
@@ -62,7 +63,7 @@ class Insights {
       const account = identity(p) ? digest(identity(p)) : "unidentified";
       for (const w of p.windows || []) {
         if (!Number.isFinite(w.used_pct)) continue;
-        const key = digest(`${p.id}|${account}|${w.kind}|${w.label || ""}`);
+        const key = digest(`${p.subscription_regime || "legacy"}|${p.id}|${account}|${w.kind}|${w.label || ""}`);
         const s = this.data.series[key] ||= { provider: p.id, account, kind: w.kind, label: w.label || w.kind, points: [] };
         const last = s.points.at(-1);
         const reset = Number.isFinite(Date.parse(w.resets_at)) ? w.resets_at : "unknown";

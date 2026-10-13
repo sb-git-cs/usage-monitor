@@ -25,6 +25,7 @@ data class Credential(
     val plan: String? = null,
     val account: String? = null,
     val extra: Map<String, String> = emptyMap(),
+    val subscriptionRegime: String = "legacy",
 )
 
 data class HttpReply(val status: Int, val body: ByteArray, val headers: Map<String, String> = emptyMap()) {
@@ -53,9 +54,10 @@ class UsageApi(private val http: Http = UrlHttp) {
             "gemini" -> fetchGemini(c, now)
             else -> UsageResult.Failed("Unknown tool")
         }
-        if (result is UsageResult.Ok && result.provider.windows.isEmpty() && result.provider.usageSummary == null)
+        if (result is UsageResult.Ok && result.provider.windows.isEmpty() && result.provider.usageSummary == null && result.provider.sharedWeekly == null)
             UsageResult.Failed("No usage report was returned for this account")
-        else if (result is UsageResult.Ok) UsageResult.Ok(result.provider.copy(account = c.account, source = "phone", fetchedAt = now)) else result
+        else if (result is UsageResult.Ok) UsageResult.Ok(result.provider.copy(account = c.account, accountId = c.accountId ?: c.userId,
+            subscriptionRegime = c.subscriptionRegime, cacheScope = credentialScope(c), source = "phone", fetchedAt = now)) else result
     } catch (e: Exception) {
         UsageResult.Failed(e.message ?: "network error")
     }
@@ -306,8 +308,6 @@ class UsageApi(private val http: Http = UrlHttp) {
 
         private fun weeklyPct(cfg: JSONObject): Double? {
             num(cfg.v("creditUsagePercent"))?.let { return it }
-            val products = productPercents(cfg)
-            if (products.isNotEmpty()) return products.sum()
             val used = num(cfg.obj("used")?.v("val"))
             val limit = num(cfg.obj("monthlyLimit")?.v("val"))
             return if (used != null && limit != null && limit > 0) used / limit * 100 else null
@@ -333,25 +333,30 @@ class UsageApi(private val http: Http = UrlHttp) {
             val cfg = body.obj("config") ?: body
             val windows = mutableListOf<PlanWindow>()
             var pct = weeklyPct(cfg)
-            val fromCredits = num(cfg.v("creditUsagePercent")) != null || productPercents(cfg).isNotEmpty()
-            // proto3 JSON omits a 0.0 creditUsagePercent; a live period still reads as 0%.
-            if (pct == null && hasActivePeriod(cfg, now)) pct = 0.0
+            val fromCredits = num(cfg.v("creditUsagePercent")) != null
             if (pct != null) {
                 val type = cfg.obj("currentPeriod")?.first("type").orEmpty()
                 val monthly = when {
+                    !fromCredits -> true
                     like("WEEKLY", type) -> false
                     like("MONTHLY", type) -> true
                     fromCredits -> false
                     else -> (num(cfg.obj("monthlyLimit")?.v("val")) ?: 0.0) > 0
                 }
-                windows.add(window(if (monthly) "monthly" else "weekly", if (monthly) "Monthly" else "Weekly", pct, periodEnd(cfg)))
+                val reset = if (fromCredits || like("MONTHLY", type)) periodEnd(cfg) else isoMs(cfg.v("billingPeriodEnd"))
+                windows.add(window(if (monthly) "monthly" else "weekly", if (monthly) "Monthly" else "Weekly", pct, reset))
             }
             val prepaid = num(cfg.obj("prepaidBalance")?.v("val"))
             val cap = num(cfg.obj("onDemandCap")?.v("val"))
-            val used = num(cfg.obj("onDemandUsed")?.v("val")) ?: 0.0
-            if (cap != null && cap > 0) windows.add(window("credits", "Credits", used / cap * 100, null))
+            val used = num(cfg.obj("onDemandUsed")?.v("val"))
+            if (cap != null && cap > 0) windows.add(window("credits", "Credits", used?.let { it / cap * 100 }, null))
             else if (prepaid != null && prepaid > 0) windows.add(labelWindow("credits", "Credits $" + String.format(Locale.US, "%.2f", prepaid)))
-            return provider("grok", "Grok Build", "SuperGrok", windows, now)
+            val shared = num(cfg.v("creditUsagePercent"))?.takeIf { it >= 0 }?.let { total ->
+                if (Regex("(?:^|_)WEEKLY$", RegexOption.IGNORE_CASE).containsMatchIn(cfg.obj("currentPeriod")?.first("type").orEmpty()) &&
+                    cfg.list("productUsage").any { it is JSONObject && it.first("product").contains("cursor", ignoreCase = true) } && periodEnd(cfg) != null)
+                    window("weekly", "Weekly", total, periodEnd(cfg)) else null
+            }
+            return provider("grok", "Grok Build", "SuperGrok", windows, now).copy(sharedWeekly = shared)
         }
 
         private class Cursor(val bytes: ByteArray, var at: Int = 0)
@@ -434,6 +439,7 @@ class UsageApi(private val http: Http = UrlHttp) {
                 .mapNotNull { (label, key) -> num(spend.v(key))?.let { window("monthly", label, it, end) } }
             val name = plan?.obj("planInfo")?.first("planName").orEmpty().replace(Regex("[\\u0000-\\u001f]"), "").trim()
             return provider("cursor", "Cursor", name.take(40).ifEmpty { null }, windows, now)
+                .copy(sharedWeekly = mapGrok(usage, now).sharedWeekly)
         }
 
         private fun usedFromFraction(v: Any?): Double? = num(v)?.let { ((1 - it) * 100).coerceIn(0.0, 100.0) }

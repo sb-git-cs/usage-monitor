@@ -12,6 +12,9 @@ data class PairedComputer(val name: String, val addresses: List<String>, val por
 /** Everything the app remembers, in one SharedPreferences file that widgets and workers can read. */
 class Settings(context: Context) {
     private val p: SharedPreferences = context.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    var subscriptionRegime: String
+        get() = if (p.getString("subscription_regime", "legacy") == "combined") "combined" else "legacy"
+        set(v) = p.edit().putString("subscription_regime", if (v == "combined") "combined" else "legacy").apply()
 
     var computer: PairedComputer?
         get() = p.getString("computer", null)?.let { raw ->

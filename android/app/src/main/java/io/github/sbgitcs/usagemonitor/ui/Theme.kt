@@ -8,6 +8,10 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import android.app.Activity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -49,8 +53,18 @@ private val appType = Typography(
 /** A consistent palette in both system light and dark mode. */
 @Composable
 fun UsageMonitorTheme(mode: String = "system", content: @Composable () -> Unit) {
+    val dark = mode == "dark" || (mode == "system" && isSystemInDarkTheme())
+    val view = LocalView.current
+    SideEffect {
+        (view.context as? Activity)?.let { activity ->
+            WindowCompat.getInsetsController(activity.window, view).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+        }
+    }
     MaterialTheme(
-        colorScheme = if (mode == "dark" || (mode == "system" && isSystemInDarkTheme())) darkColors else lightColors,
+        colorScheme = if (dark) darkColors else lightColors,
         typography = appType,
         shapes = Shapes(small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(12.dp),
             large = RoundedCornerShape(16.dp), extraLarge = RoundedCornerShape(20.dp)),

@@ -3,6 +3,7 @@ const { grokAuth, cliOnPath, fileExists } = require("../paths");
 const { windowOf, emptyProvider } = require("../models");
 const { getJson, postForm, request } = require("../http");
 const { jwtExpMs } = require("../jwt");
+const { sharedWeekly } = require("../subscription");
 
 const BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const GRPC_CREDITS_URL = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
@@ -84,7 +85,7 @@ async function refreshGrok(entry, credsPath, mtimeMs, topKey) {
 }
 
 function finiteNumber(value) {
-  if (value == null || value === "") return null;
+  if (!["number", "string"].includes(typeof value) || String(value).trim() === "") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -98,11 +99,9 @@ function productPercents(cfg) {
 function weeklyPct(cfg) {
   const explicit = finiteNumber(cfg.creditUsagePercent);
   if (explicit != null) return explicit;
-  const products = productPercents(cfg);
-  if (products.length) return products.reduce((a, b) => a + b, 0);
-  const used = cfg.used && cfg.used.val;
-  const limit = cfg.monthlyLimit && cfg.monthlyLimit.val;
-  if (used != null && Number(limit) > 0) return (Number(used) / Number(limit)) * 100;
+  const used = finiteNumber(cfg.used && cfg.used.val);
+  const limit = finiteNumber(cfg.monthlyLimit && cfg.monthlyLimit.val);
+  if (used != null && limit > 0) return (used / limit) * 100;
   return null;
 }
 
@@ -135,22 +134,21 @@ function mapBilling(body) {
   const cfg = (body && (body.config || body)) || {};
   const windows = [];
   let pct = weeklyPct(cfg);
-  const fromCredits = cfg.creditUsagePercent != null || productPercents(cfg).length > 0;
-  // proto3 JSON omits a 0.0 creditUsagePercent. Grok's /usage still draws a 0% bar when the period is live.
-  if (pct == null && hasActivePeriod(cfg)) pct = 0;
+  const fromCredits = finiteNumber(cfg.creditUsagePercent) != null;
   if (pct != null) {
-    const { kind, label } = periodMeta(cfg, fromCredits);
-    windows.push(windowOf({ kind, label, usedPct: pct, resetsAt: periodEnd(cfg) }));
+    const { kind, label } = fromCredits ? periodMeta(cfg, true) : { kind: "monthly", label: "Monthly" };
+    const reset = fromCredits || /MONTHLY/i.test(cfg.currentPeriod?.type || "") ? periodEnd(cfg) : cfg.billingPeriodEnd;
+    windows.push(windowOf({ kind, label, usedPct: pct, resetsAt: reset }));
   }
-  const prepaid = cfg.prepaidBalance && cfg.prepaidBalance.val;
-  const cap = cfg.onDemandCap && cfg.onDemandCap.val;
-  const used = cfg.onDemandUsed && cfg.onDemandUsed.val;
+  const prepaid = finiteNumber(cfg.prepaidBalance && cfg.prepaidBalance.val);
+  const cap = finiteNumber(cfg.onDemandCap && cfg.onDemandCap.val);
+  const used = finiteNumber(cfg.onDemandUsed && cfg.onDemandUsed.val);
   if (cap > 0) {
     windows.push(
       windowOf({
         kind: "credits",
         label: "Credits",
-        usedPct: (Number(used || 0) / Number(cap)) * 100,
+        usedPct: used == null ? null : (used / cap) * 100,
         resetsAt: null,
       })
     );
@@ -175,6 +173,7 @@ function mapBilling(body) {
     footnotes,
     fetched_at: new Date().toISOString(),
     source: "api",
+    shared_weekly: sharedWeekly(cfg),
   };
 }
 
@@ -346,7 +345,7 @@ async function fetchUsage(cfg) {
       /* fall through */
     }
   }
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     return emptyProvider("grok", "Grok Build", {
       state: "logged_out",
       hint: "Run grok login (token expired)",
@@ -376,7 +375,7 @@ async function fetchUsage(cfg) {
       /* REST period still maps */
     }
   }
-  return mapBilling(body);
+  return { ...mapBilling(body), account_id: entry.user_id || entry.email || null, account: entry.email || entry.user_id || null };
 }
 
 // The current access token for a phone that reads usage directly; the refresh token stays here.

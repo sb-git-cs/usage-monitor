@@ -248,10 +248,14 @@ function decorate(provider) {
   if (!provider || !TOOLS[provider.id]) return provider;
   const row = cached[provider.id];
   const next = { ...provider };
-  if (row.signed_in && row.account_id) next.account_id = row.account_id;
-  else delete next.account_id;
-  if (row.signed_in && row.account) next.account = row.account;
-  else delete next.account;
+  // Persisted readings carry the identity of the fetch, even when a newer login
+  // has been observed while they were cached.
+  if (!provider.account_id && !provider.account && !(provider.status?.state === "stale" && provider.cache_scope)) {
+    if (row.signed_in && row.account_id) next.account_id = row.account_id;
+    else delete next.account_id;
+    if (row.signed_in && row.account) next.account = row.account;
+    else delete next.account;
+  }
   if (row.choices.length > 1) next.accounts = row.choices.map(({ id, label, active }) => ({ id, label, active }));
   else delete next.accounts;
   return next;

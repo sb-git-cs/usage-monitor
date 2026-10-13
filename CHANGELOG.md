@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0 — 2026-10-14
+
+- Added a persisted **Use combined X Subscription** toggle on desktop and Android, off by default. Combined mode shows one verified shared weekly meter across chips, flyout, Home, summaries and Plan widgets; Additional Usage credits stay separate and both account controls remain available.
+- Shared totals require explicit weekly/reset and product-coverage evidence. Removed invented zero readings and product-percentage summation; monthly fallback usage keeps monthly reset semantics. Unverified usage links to the provider dashboard, and cached readings remain stale.
+- Scoped caches, history and pending polls by subscription regime/account; changes during refresh discard the previous selection. Phone snapshots and linked credentials carry backward-compatible regime metadata. Linked replacement readings deduplicate shared-pool warnings by stable account ID.
+- Fixed Grok/Cursor HTTP 403 handling, expired direct phone windows, stale account relabelling, missing desktop Cursor/Copilot dashboard routes and unavailable-state hints. Added regression coverage and refreshed sanitized desktop/native Android screenshots for both regimes.
+- Stable desktop downloads; Android source and screenshots included. The optimized development APK uses the existing local key and is not attached to the public release when production signing is unavailable.
+
 ## 1.5.0 — 2026-10-11
 
 - **Insights** on the desktop flyout/tray and Android toolbar: observed plan history for 24 hours, 7 days or 30 days, separated by account reference and reset segment. Up to 31 days retained; cached readings are excluded. Desktop exports CSV/JSON; Android exports JSON using the system file picker. Percentages are not token counts or costs.

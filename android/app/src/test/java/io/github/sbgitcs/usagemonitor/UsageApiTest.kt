@@ -91,23 +91,21 @@ class UsageApiTest {
         assertEquals(0, UsageApi.mapGrok(JSONObject("""{"used":{"val":25},"monthlyLimit":{"val":"0"}}"""), now).windows.size)
     }
 
-    @Test fun grokOmittedPercentIsZeroWhilePeriodIsLive() {
+    @Test fun grokOmittedPercentRemainsUnavailable() {
         val body = JSONObject("""{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2020-01-01T00:00:00Z","end":"2099-01-01T00:00:00Z"}}}""")
         val p = UsageApi.mapGrok(body, now)
-        assertEquals("weekly", p.windows[0].kind)
-        assertEquals(0.0, p.windows[0].usedPct!!, 0.0)
-        assertEquals(4070908800000L, p.windows[0].resetsAt)
+        assertTrue(p.windows.isEmpty())
     }
 
-    @Test fun grokSumsProductUsageAndKeepsPrepaidCredits() {
+    @Test fun grokDoesNotSumProductsAndKeepsPrepaidCredits() {
         val body = JSONObject("""{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2099-01-01T00:00:00Z"},
           "productUsage":[{"product":"GrokBuild","usagePercent":8},{"product":"GrokChat","usagePercent":2}],
           "prepaidBalance":{"val":"12.5"}}""")
         val p = UsageApi.mapGrok(body, now)
         assertEquals("SuperGrok", p.plan)
-        assertEquals(10.0, p.windows[0].usedPct!!, 0.0)
-        assertEquals("Credits $12.50", p.windows[1].label)
-        assertNull(p.windows[1].usedPct)
+        assertEquals(1, p.windows.size)
+        assertEquals("Credits $12.50", p.windows[0].label)
+        assertNull(p.windows[0].usedPct)
     }
 
     @Test fun grokOnDemandCapGivesCreditsPercent() {
@@ -237,7 +235,7 @@ class UsageApiTest {
             else ok("""{"config":{"currentPeriod":{"end":"2099-01-01T00:00:00Z"}}}""")
         }
         val reply = UsageApi(fake).fetch(Credential("grok", "phone", "tok"), now)
-        assertEquals(0.0, (reply as UsageResult.Ok).provider.windows[0].usedPct!!, 0.0)
+        assertTrue(reply is UsageResult.Failed)
     }
 
     @Test fun cursorFetchPostsBothCalls() {

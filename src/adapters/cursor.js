@@ -5,6 +5,7 @@ const { readValue } = require("../cursor-local");
 const { windowOf, emptyProvider } = require("../models");
 const { postJson } = require("../http");
 const { jwtExpMs } = require("../jwt");
+const { sharedWeekly } = require("../subscription");
 
 const DISPLAY = "Cursor";
 const PLAN_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo";
@@ -97,6 +98,7 @@ function provider(plan, usage) {
     windows,
     fetched_at: new Date().toISOString(),
     source: "api",
+    shared_weekly: sharedWeekly(usage?.config || usage),
   };
 }
 
@@ -122,7 +124,7 @@ async function fetchUsage() {
   } catch (err) {
     return failed("fetch_failed", { message: String(err.message || err) });
   }
-  if (usageRes.status === 401 || usageRes.status === 403) {
+  if (usageRes.status === 401) {
     return failed("logged_out", { hint: "Sign in to Cursor, or run: cursor-agent login" });
   }
   if (planRes.status === 429 || usageRes.status === 429) {

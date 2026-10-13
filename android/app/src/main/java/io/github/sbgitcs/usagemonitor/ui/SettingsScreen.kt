@@ -48,6 +48,7 @@ import io.github.sbgitcs.usagemonitor.net.Format
 import io.github.sbgitcs.usagemonitor.service.SpeedService
 import io.github.sbgitcs.usagemonitor.update.Updater
 import io.github.sbgitcs.usagemonitor.widget.Widgets
+import io.github.sbgitcs.usagemonitor.direct.PlanReadings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,6 +64,8 @@ fun SettingsScreen(settings: Settings, computer: PairedComputer?, resumes: Int, 
     }
     var notificationsNow by remember(resumes) { mutableStateOf(notificationsAllowed) }
     var speedOn by remember { mutableStateOf(settings.speedNotification) }
+    var combined by remember { mutableStateOf(settings.subscriptionRegime == "combined") }
+    val subscriptionScope = rememberCoroutineScope()
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         notificationsNow = granted
         if (granted && speedOn) SpeedService.sync(context)
@@ -77,6 +80,19 @@ fun SettingsScreen(settings: Settings, computer: PairedComputer?, resumes: Int, 
     }
 
     ScreenList {
+        item {
+            Section("Subscription") {
+                SwitchRow("Use combined X Subscription", "Phone sign-ins use one shared weekly pool. Paired computer readings follow its selection.", combined) {
+                    combined = it
+                    settings.subscriptionRegime = if (it) "combined" else "legacy"
+                    subscriptionScope.launch {
+                        Widgets.refresh(context)
+                        runCatching { PlanReadings.refresh(context, settings, true) }
+                        Widgets.refresh(context)
+                    }
+                }
+            }
+        }
         item { ComputerSection(settings, computer, onPair, onForget) }
         item {
             Section("Home screen widgets") {

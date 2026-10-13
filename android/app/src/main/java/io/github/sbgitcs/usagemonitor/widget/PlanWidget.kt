@@ -31,7 +31,7 @@ internal fun planWidgetStats(providers: List<Provider>): List<WidgetStat> = prov
     .sortedWith(compareByDescending<Provider> { it.state == "ok" }.thenByDescending { it.currentWindow()?.usedPct ?: -1.0 })
     .map { p ->
         val source = MeterConnection.from(p).shortSource
-        val label = "${p.name.substringBefore(' ')} $source" + if (p.state == "stale") " · Old" else ""
+        val label = "${if (p.id == "x_subscription") "X Subscription" else p.name.substringBefore(' ')} $source" + if (p.state == "stale") " · Old" else ""
         val value = when (p.state) {
             "ok", "stale" -> p.usageValue ?: Format.percent(p.currentWindow()?.usedPct)
             "logged_out" -> "Sign in"
@@ -128,6 +128,9 @@ class PlanWidget : GlanceAppWidget() {
                 val detail = if (p.state == "ok") p.usageSummary ?: p.hint
                     else p.hint ?: Format.state(p.state)
                 Text(detail ?: "No reading yet", style = smallStyle(), maxLines = 2)
+                p.windows.filter { it.kind == "credits" }.forEach { credit ->
+                    Text(credit.label + (credit.usedPct?.let { " · ${Format.percent(it)}" } ?: ""), style = smallStyle(), maxLines = 2)
+                }
             }
             return
         }
@@ -138,8 +141,13 @@ class PlanWidget : GlanceAppWidget() {
             w.resetsAt != null -> "${w.label} · resets ${Format.until(w.resetsAt, now)}"
             else -> w.label
         }
-        MeterRow(p.name, Format.percent(used), used,
-            if (cached) WidgetColors.muted else WidgetColors.forPercent(used, warnAt), "$detail · $source")
+        Column {
+            MeterRow(p.name, Format.percent(used), used,
+                if (cached) WidgetColors.muted else WidgetColors.forPercent(used, warnAt), "$detail · $source")
+            p.windows.filter { it.kind == "credits" }.forEach { credit ->
+                Text(credit.label + (credit.usedPct?.let { " · ${Format.percent(it)}" } ?: ""), style = smallStyle(), maxLines = 2)
+            }
+        }
     }
 }
 

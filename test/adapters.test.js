@@ -131,25 +131,22 @@ test("Grok monthly billing fallback is not mislabeled as a weekly quota", () => 
   assert.equal(adapter.mapBilling({ used: { val: 25 }, monthlyLimit: { val: "0" } }).windows.length, 0);
 });
 
-test("Grok omitted proto3 weekly percent is 0% while the period is live", () => {
+test("Grok missing weekly usage stays unavailable despite a live period", () => {
   const adapter = load("src/adapters/grok.js", {}, ["mapBilling"]);
   const result = adapter.mapBilling({
     currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "2020-01-01T00:00:00Z", end: "2099-01-01T00:00:00Z" },
     isUnifiedBillingUser: true,
   });
-  assert.equal(result.windows[0].kind, "weekly");
-  assert.equal(result.windows[0].used_pct, 0);
-  assert.equal(result.windows[0].resets_at, "2099-01-01T00:00:00.000Z");
+  assert.equal(result.windows.length, 0);
 });
 
-test("Grok uses productUsage when creditUsagePercent is absent", () => {
+test("Grok does not sum productUsage when the authoritative total is absent", () => {
   const adapter = load("src/adapters/grok.js", {}, ["mapBilling"]);
   const result = adapter.mapBilling({
     currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end: "2099-01-01T00:00:00Z" },
     productUsage: [{ product: "GrokBuild", usagePercent: 8 }, { product: "GrokChat", usagePercent: 2 }],
   });
-  assert.equal(result.windows[0].kind, "weekly");
-  assert.equal(result.windows[0].used_pct, 10);
+  assert.equal(result.windows.length, 0);
 });
 
 test("Grok parses credit_usage_percent from a grok.com gRPC-web frame", () => {

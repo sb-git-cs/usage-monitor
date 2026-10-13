@@ -160,6 +160,7 @@ function render(next) {
   if (!next) return;
   view = next;
   const s = next.settings;
+  setValue($("combinedSubscription"), s.subscription_regime === "combined");
   $("version").textContent = `Version ${next.version}`;
   $("autostartLabel").textContent = next.login_label;
   setValue($("autostart"), s.autostart);
@@ -266,6 +267,7 @@ async function switchAccount(id, accountId) {
 }
 
 function bind() {
+  $("combinedSubscription").addEventListener("change", (e) => save({ subscription_regime: e.target.checked ? "combined" : "legacy" }));
   $("autostart").addEventListener("change", (e) => save({ autostart: e.target.checked }));
   $("chipsVisible").addEventListener("change", (e) => save({ chips_hidden: !e.target.checked }));
   $("chipsDocked").addEventListener("change", (e) => save({ chips_docked: e.target.checked }));

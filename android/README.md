@@ -5,6 +5,14 @@ The phone app. It ships with the desktop releases and takes its version from `..
 
 ## Build
 
+Settings → **Use combined X Subscription** defaults to off and persists across restarts. Off retains separate Grok and Cursor meters; on shows one verified shared weekly total and separate Additional Usage credits. This choice applies to phone sign-ins. Paired computer readings and linked credentials retain the desktop regime. Home and all Plan widget sizes use the same selected readings before history and alerts run. Unverified totals show unavailable; cached totals remain labelled old/stale.
+
+Native phone screenshots with sanitized demo data are in `../docs/screenshots/android/native-*.png`; the demo uses a separate package and does not alter the production pairing, vault or widgets. To reproduce, build `./gradlew -I ../scripts/android-demo.gradle assembleDebug` and run `python ../scripts/verify-subscription-phone.py --adb <adb> --apk ../.qa/phone-demo-build/outputs/apk/debug/app-debug.apk`. The existing native rendering tests also produce both subscription regimes: `./gradlew testDebugUnitTest --tests '*ScreenshotsTest*' -PscreenshotsDir=../docs/screenshots/android`.
+
+| Combined Home | Subscription setting | Real Plan widget |
+| --- | --- | --- |
+| ![Shared weekly Home](../docs/screenshots/android/native-home-combined.png) | ![Combined subscription setting](../docs/screenshots/android/native-settings-combined.png) | ![Shared pool and separate credits in the Plan widget](../docs/screenshots/android/native-widget-combined.png) |
+
 Needs JDK 17 and the Android SDK (platform 35).
 
 ```sh

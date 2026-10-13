@@ -41,6 +41,14 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 ## What you see
 
+**New in 1.6.0:** Settings → **Use combined X Subscription** replaces the separate Grok and Cursor meters with one shared weekly pool. It defaults to off, including after an upgrade. Additional Usage credits remain separate. Paired/linked phone readings follow the computer's selection; phone sign-ins follow the phone toggle. Unverified shared usage shows unavailable with a dashboard link, and cached readings stay marked stale.
+
+The meter requires an explicit total, a weekly period/reset, and reported Cursor coverage in the billing response. It never adds product percentages or converts a monthly allowance to a weekly quota. Provider responses that do not expose that evidence remain unavailable. See the [official shared-pool description](https://docs.x.ai/x-subscription/usage-limits) and [account migration FAQ](https://docs.x.ai/x-subscription/faq).
+
+| Separate meters | Shared weekly pool |
+| --- | --- |
+| ![Legacy flyout with separate Grok and Cursor meters](docs/screenshots/flyout-legacy.png) | ![Combined X Subscription flyout](docs/screenshots/flyout-combined.png) |
+
 **New in 1.5.0:** open **Insights** from the desktop flyout/tray or the Android toolbar for plan history, a notification centre with snooze, and redacted diagnostics exports. The desktop also includes a captured-traffic billing-cycle budget and theme/text/provider display controls. Android keeps its existing mobile/Wi-Fi totals and mobile data-plan controls. See [feature details and limitations](docs/product-improvements.md).
 
 | Surface | What it does |

@@ -2,6 +2,8 @@
 
 ## Objective
 
+Current request (2026-10-13): implement persisted legacy/combined X Subscription regimes on desktop and Android; fix confirmed billing, source/cache, alert, reset and UI defects; refresh sanitized native screenshots; verify and publish stable 1.6.0. Production Android signing is unavailable, so publish desktop assets and keep an APK signed with the existing development key locally. Remote main's intervening UI/screenshot/dependency work has been preserved by fast-forward integration.
+
 Current request (2026-10-11): implement the competitor-inspired roadmap, fix discovered issues, install the tested latest Android build on the connected phone, and push the verified repository changes. Version 1.5.0 adds desktop/Android Insights; no public release was requested.
 
 Audit and fix defects, bugs and usage miscalculations; harden the Windows app and produce tested distributable builds.
@@ -34,6 +36,7 @@ Not yet verified: (1) **link end to end**, because the running desktop app preda
 
 | Owner | Assignment | Status | Evidence |
 | --- | --- | --- | --- |
+| Codex | X Subscription regimes, defect fixes, screenshots and stable 1.6.0 release | Implementation, final tests/builds and native acceptance complete; CI/publication in progress | `review.md`; 150 desktop tests plus one skip; 101 Android tests; `.qa/subscription-phone-results.json`; `docs/screenshots/android/native-*.png` |
 | Codex | Implement Insights roadmap, fix defects, build desktop/Android 1.5.0, install on phone and update Git | Complete implementation/build/native acceptance; committed and pushed with this update on the existing work branch | `review.md`; 137 desktop and 78 Android tests; `.qa/mobile-features-results.json`, `.qa/packaged-source-results.json` |
 | Codex | Research competitor features and improve the local desktop flyout | Complete locally; 130 tests passed, one platform skip; Electron checks and visual inspection passed; installed executable not rebuilt | `docs/product-improvements.md`, `src/ui/overview.js`, `test/overview.test.js`, `.qa/flyout.png`, `review.md` |
 | Codex | Fix Claude's rejected approval request and related provider token/paste recovery failures | Regression fixes tested and installed in 1.5.0; existing Claude phone readings verified; fresh interactive provider approval remains unexercised | `direct/PhoneSignIn.kt`, `ui/ProviderConnections.kt`; `review.md`, `.qa/mobile-features-results.json` |
@@ -58,6 +61,14 @@ Not yet verified: (1) **link end to end**, because the running desktop app preda
 | Codex | Remove only Copilot from Android; keep Codex on mobile and keep both meters on desktop | Complete; optimized APK installed, 20 tests and native phone/widget checks passed; Codex's existing computer reading retained | `direct/PlanReadings.kt`, `ui/ProviderConnections.kt`, `.qa/mobile-removal-results.json`; desktop source unchanged |
 
 ## Verification
+
+### X Subscription 1.6.0 (2026-10-14)
+
+- Desktop: **150 tests passed, one existing platform skip**; source and packaged Electron UI checks passed for both regimes. All **70 packaged source files** match the checkout. Windows installer, portable and ZIP built successfully; the local updater manifest's version, filenames, sizes and SHA-512 match the installer. Audit: **eight moderate build-tool advisories, zero high/critical**.
+- Android: **101 tests passed** (89 behavioral plus 12 native light/dark renders), lint **zero errors and 14 existing warnings**, optimized build successful. Local artifact: `dist/UsageMonitor-1.6.0-android-optimized.apk`, version **1.6.0 / 1060099**, **5,533,935 bytes**, SHA-256 **aa545b9db56a376be28c977fdd2e8639369a71372719ccaaf57f3ee4c679f8ee**. Its certificate is the existing **4ef13f3472e2e4fa880e7442bf4f370410db86b6c32ad721a12fb55c050e1769**.
+- Actual CPH2423 Home, Settings and Glance widget captures passed in both regimes, including separate credits, dark widgets, toggle persistence and 130% text. The installed demo APK's digest was checked against its build. A device security scan required **Continue installation** after reporting no risks; confirmation completed the verified demo update. The demo package is separate from the production app, preserving its sign-ins, pairing and launcher widgets. Evidence: `.qa/subscription-phone-results.json`; `docs/screenshots/android/native-*.png`.
+- No production Android signing secrets are configured; the public stable release publishes desktop assets, Android source/screenshots and a checksum catalogue. The development APK remains local. Paid plan migration, new provider consent, live shared-pool response matching and real refresh-token lifetime remain unverified; unsupported billing responses show unavailable. Details and resolved findings: `review.md`.
+- Cross-platform CI and publication follow the verified local implementation on the existing work branch; release receipts are added here after publication.
 
 ### Insights 1.5.0 (2026-10-11)
 

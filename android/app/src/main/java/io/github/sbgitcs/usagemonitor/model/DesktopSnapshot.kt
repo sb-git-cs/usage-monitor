@@ -28,10 +28,22 @@ data class Provider(
     val fetchedAt: Long? = null,
     val usageSummary: String? = null,
     val usageValue: String? = null,
+    val subscriptionRegime: String = "legacy",
+    val sharedWeekly: PlanWindow? = null,
+    val accountId: String? = null,
+    val cacheScope: String? = null,
+    val poolReader: String? = null,
 ) {
+    fun afterResets(now: Long): Provider {
+        if (windows.none { (it.resetsAt ?: Long.MAX_VALUE) <= now }) return this
+        return copy(state = "stale", windows = windows.map { w ->
+            if ((w.resetsAt ?: Long.MAX_VALUE) <= now) w.copy(usedPct = null, forecastAt = null, burnPerHour = null) else w
+        })
+    }
     /** The window the chips show: 5-hour first, then daily, else the fullest one (like the desktop). */
     fun currentWindow(): PlanWindow? {
-        val numeric = windows.filter { it.usedPct != null }
+        if (id == "x_subscription") return windows.firstOrNull { it.kind == "weekly" && it.usedPct != null }
+        val numeric = windows.filter { it.usedPct != null && (id !in setOf("grok", "cursor") || it.kind != "credits") }
         if (numeric.isEmpty()) return null
         val preferred = numeric.filter { it.kind == "five_hour" }.ifEmpty { numeric.filter { it.kind == "daily" } }.ifEmpty { numeric }
         return preferred.maxByOrNull { it.usedPct ?: 0.0 }
@@ -50,6 +62,7 @@ data class DesktopSnapshot(
     val providers: List<Provider>,
     val system: SystemReadings?,
     val network: DesktopNetwork?,
+    val subscriptionRegime: String = "legacy",
 ) {
     companion object {
         /** Parses the /v1/snapshot payload; unknown fields are ignored. */
@@ -83,6 +96,11 @@ data class DesktopSnapshot(
                     fetchedAt = p.timeOrNull("fetched_at"),
                     usageSummary = p.stringOrNull("usage_summary"),
                     usageValue = p.stringOrNull("usage_value"),
+                    subscriptionRegime = if (p.optString("subscription_regime", o.optString("subscription_regime")) == "combined") "combined" else "legacy",
+                    accountId = p.stringOrNull("account_id"),
+                    cacheScope = p.stringOrNull("cache_scope"),
+                    poolReader = p.stringOrNull("pool_reader"),
+                    sharedWeekly = p.optJSONObject("shared_weekly")?.let { w -> PlanWindow("weekly", "Weekly", w.numberOrNull("used_pct"), w.timeOrNull("resets_at"), null, null) },
                     accounts = (0 until (saved?.length() ?: 0)).mapNotNull { j ->
                         val item = saved?.optJSONObject(j) ?: return@mapNotNull null
                         val id = item.optString("id")
@@ -103,6 +121,7 @@ data class DesktopSnapshot(
                     SystemReadings(it.numberOrNull("cpu"), it.numberOrNull("mem"), it.numberOrNull("gpu"), it.numberOrNull("disk"), it.numberOrNull("disk_rate"), it.numberOrNull("space"))
                 },
                 network = net?.let { DesktopNetwork(it.optString("state"), it.numberOrNull("rx_rate") ?: 0.0, it.numberOrNull("tx_rate") ?: 0.0) },
+                subscriptionRegime = if (o.optString("subscription_regime") == "combined") "combined" else "legacy",
             )
         }
 
@@ -112,6 +131,10 @@ data class DesktopSnapshot(
                 .put("status", JSONObject().put("state", p.state).putOpt("hint", p.hint))
                 .putOpt("account", p.account).put("source", p.source).putOpt("fetched_at", p.fetchedAt?.let { Instant.ofEpochMilli(it).toString() })
                 .putOpt("usage_summary", p.usageSummary).putOpt("usage_value", p.usageValue)
+                .put("subscription_regime", p.subscriptionRegime).putOpt("account_id", p.accountId).putOpt("cache_scope", p.cacheScope)
+                .putOpt("pool_reader", p.poolReader)
+                .putOpt("shared_weekly", p.sharedWeekly?.let { w -> JSONObject().putOpt("used_pct", w.usedPct)
+                    .putOpt("resets_at", w.resetsAt?.let { Instant.ofEpochMilli(it).toString() }) })
                 .put("windows", JSONArray(p.windows.map { w ->
                     JSONObject().put("kind", w.kind).put("label", w.label).putOpt("used_pct", w.usedPct)
                         .putOpt("resets_at", w.resetsAt?.let { Instant.ofEpochMilli(it).toString() })

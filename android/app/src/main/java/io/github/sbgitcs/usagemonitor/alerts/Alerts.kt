@@ -3,6 +3,9 @@ package io.github.sbgitcs.usagemonitor.alerts
 import android.content.Context
 import io.github.sbgitcs.usagemonitor.data.Settings
 import io.github.sbgitcs.usagemonitor.model.DesktopSnapshot
+import io.github.sbgitcs.usagemonitor.model.Provider
+import io.github.sbgitcs.usagemonitor.model.PlanWindow
+import io.github.sbgitcs.usagemonitor.data.InsightHistory
 import io.github.sbgitcs.usagemonitor.net.DataStatus
 import io.github.sbgitcs.usagemonitor.net.Format
 import java.time.Instant
@@ -10,6 +13,14 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlin.math.roundToInt
+
+internal fun planWindowKey(p: Provider, w: PlanWindow): String {
+    // A linked token with the same provider account reads the same pool as the PC.
+    // Without a stable account ID, keep sources isolated.
+    val account = p.accountId?.let { InsightHistory.accountRef(it) }
+        ?: "${p.source}|${InsightHistory.accountRef(p.cacheScope ?: p.account)}"
+    return "${p.subscriptionRegime}|${p.id}|$account|${w.kind}|${w.label}|${w.resetsAt ?: 0}"
+}
 
 /**
  * Notifications the phone shows itself: plan windows past the computer's "warn at" percentage,
@@ -29,7 +40,7 @@ object Alerts {
                 for (w in p.windows) {
                     val used = w.usedPct ?: continue
                     if (w.resetsAt != null && w.resetsAt <= System.currentTimeMillis()) continue
-                    val window = "${p.id}|${io.github.sbgitcs.usagemonitor.data.InsightHistory.accountRef(p.account)}|${w.kind}|${w.label}|${w.resetsAt ?: 0}"
+                    val window = planWindowKey(p, w)
                     if (used >= 100) due += Alert("plan-full|$window", p.name, "${w.label} limit reached")
                     else if (used >= snapshot.alertThreshold) due += Alert("plan-warn|$window", p.name, "${w.label} is ${used.roundToInt()}% used")
                     val forecast = w.forecastAt

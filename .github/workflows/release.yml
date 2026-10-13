@@ -157,6 +157,9 @@ jobs:
           for f in latest.yml latest-linux.yml latest-mac.yml; do
             test -s "installers/$f" || { echo "::error::$f is missing, installed copies could not update"; exit 1; }
           done
+      - name: Write download checksums
+        working-directory: installers
+        run: sha256sum * > SHA256SUMS
       - uses: actions/checkout@v7
         with:
           sparse-checkout: CHANGELOG.md

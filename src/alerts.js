@@ -17,7 +17,9 @@ function keyFor(provider, win) {
     resets = Number.isNaN(t) ? String(win.resets_at) : String(Math.floor(t / 60000));
   }
   const label = win.label || "";
-  return `${provider.id}|${win.kind}|${label}|${resets}${identity(provider) ? `|${digest(identity(provider))}` : ""}`;
+  const account = provider.account_id || provider.account || identity(provider);
+  const selected = provider.subscription_regime === "combined" ? "combined|" : "";
+  return `${selected}${provider.id}|${win.kind}|${label}|${resets}${account ? `|${digest(account)}` : ""}`;
 }
 
 function prune(fired) {

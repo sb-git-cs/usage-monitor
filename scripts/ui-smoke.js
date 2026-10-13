@@ -172,7 +172,28 @@ async function check(file) {
       })`);
       assert.deepEqual(absent, { hidden: true, cpu: "—", rows: 2 });
     }
-    console.log(`${file}: rendering, CSP, escaping, warning colors and preload passed`);
+    const { consolidate } = require("../src/subscription");
+    const grok = { id: "grok", display_name: "Grok Build", status: { state: "ok" }, source: "api",
+      shared_weekly: { kind: "weekly", label: "Weekly", used_pct: 42, resets_at: future },
+      windows: [{ kind: "credits", label: "Credits $12.50", used_pct: null }] };
+    const combined = { subscription_regime: "combined", providers: consolidate([...snapshot.providers.filter(p => p.id !== "grok"), grok,
+      { id: "cursor", windows: [{ kind: "monthly", label: "Included", used_pct: 90 }] }], "combined") };
+    win.webContents.send("usage://snapshot", combined);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const x = await win.webContents.executeJavaScript(`({
+      count: document.querySelectorAll('[data-id="x_subscription"]').length,
+      separate: document.querySelectorAll('[data-id="grok"], [data-id="cursor"]').length,
+      text: document.querySelector('[data-id="x_subscription"]').textContent,
+    })`);
+    assert.equal(x.count, 1); assert.equal(x.separate, 0); assert.match(x.text, /42/);
+    if (file === "flyout") assert.match(x.text, /Additional Usage \$12.50/);
+    grok.shared_weekly = null;
+    win.webContents.send("usage://snapshot", { providers: consolidate([grok], "combined") });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const unavailable = await win.webContents.executeJavaScript(`document.querySelector('[data-id="x_subscription"]').textContent`);
+    assert.doesNotMatch(unavailable, /42%/);
+    if (file === "flyout") assert.match(unavailable, /unavailable/);
+    console.log(`${file}: rendering, CSP, escaping, warning colors, combined subscription and preload passed`);
   } finally { win.destroy(); }
 }
 
@@ -291,6 +312,10 @@ async function checkSettings() {
     await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('threshold'); s.value = '70'; s.dispatchEvent(new Event('change')); })()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(patches.at(-1), { alert_threshold: 70 });
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('combinedSubscription').checked`), false);
+    await win.webContents.executeJavaScript(`document.getElementById('combinedSubscription').click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(patches.at(-1), { subscription_regime: "combined" });
     const deadline = Date.now() + 5000;
     renderedFrame = null;
     win.webContents.invalidate();

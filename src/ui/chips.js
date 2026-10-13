@@ -74,7 +74,8 @@ function showLoading() {
 let prefs = { alert_threshold: 80, chips_show: {} };
 
 function shownProviders(snapshot) {
-  return (snapshot.providers || []).filter((p) => prefs.chips_show[p.id] !== false);
+  return (snapshot.providers || []).filter((p) => p.id === "x_subscription"
+    ? prefs.chips_show.grok !== false || prefs.chips_show.cursor !== false : prefs.chips_show[p.id] !== false);
 }
 
 function applyPrefs(next) {

@@ -77,7 +77,7 @@ fun UsageRow(p: Provider, warnAt: Double, now: Long, onClick: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(p.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false))
-                p.plan?.let {
+                p.plan?.takeUnless { p.id == "x_subscription" }?.let {
                     Text("  $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 }
             }
@@ -102,6 +102,10 @@ fun UsageRow(p: Provider, warnAt: Double, now: Long, onClick: () -> Unit) {
                     Text("  ", style = MaterialTheme.typography.bodySmall)
                     MeterSource(p)
                 }
+            }
+            p.windows.filter { it.kind == "credits" }.forEach { credit ->
+                Text(credit.label + (credit.usedPct?.let { " · ${Format.percent(it)}" } ?: ""),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Text(if (hasReading) p.usageValue ?: Format.percent(used) else "—",

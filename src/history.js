@@ -105,7 +105,7 @@ class History {
       if (!provider || provider.status?.state !== "ok") continue;
       for (const win of provider.windows || []) {
         if (!Number.isFinite(win.used_pct)) continue;
-        const key = keyOf(provider.id, win, identity(provider));
+        const key = keyOf(provider.id, win, `${provider.subscription_regime || "legacy"}|${identity(provider) || "unidentified"}`);
         let s = this.series.get(key);
         // A new reset time means a new window; the old trend no longer applies.
         if (!s || (win.resets_at && s.resets_at && win.resets_at !== s.resets_at) || (s.points.length && win.used_pct < s.points[s.points.length - 1].used - 1)) {
@@ -136,7 +136,7 @@ class History {
       providers: snapshot.providers.map((p) => ({
         ...p,
         windows: (p.windows || []).map((w) => {
-          const f = p.status?.state === "ok" ? forecast(this.series.get(keyOf(p.id, w, identity(p)))?.points, w, now) : null;
+          const f = p.status?.state === "ok" ? forecast(this.series.get(keyOf(p.id, w, `${p.subscription_regime || "legacy"}|${identity(p) || "unidentified"}`))?.points, w, now) : null;
           const { forecast_at, burn_per_hour, ...rest } = w;
           return f ? { ...rest, forecast_at: f.at, burn_per_hour: f.rate_per_hour } : rest;
         }),

@@ -1,0 +1,14 @@
+// Isolated device screenshots: the production package, pairing and vault stay untouched.
+// ./gradlew -I ../scripts/android-demo.gradle assembleDebug
+gradle.beforeProject { p ->
+    if (p.path == ':app') {
+        p.pluginManager.withPlugin('com.android.application') {
+            p.layout.buildDirectory.set(p.rootProject.file('../.qa/phone-demo-build'))
+            p.extensions.getByName('androidComponents').finalizeDsl { android ->
+                android.defaultConfig.applicationId = 'io.github.sbgitcs.usagemonitor.subscriptiondemo'
+                android.sourceSets.getByName('debug').java.srcDir(p.rootProject.file('../scripts/phone-demo'))
+                android.sourceSets.getByName('debug').manifest.srcFile(p.rootProject.file('../scripts/phone-demo/AndroidManifest.xml'))
+            }
+        }
+    }
+}

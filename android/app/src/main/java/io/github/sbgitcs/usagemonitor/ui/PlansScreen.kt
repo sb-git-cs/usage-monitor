@@ -27,6 +27,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.unit.dp
 import io.github.sbgitcs.usagemonitor.data.PairedComputer
 import io.github.sbgitcs.usagemonitor.data.Settings
@@ -60,7 +62,8 @@ fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Uni
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var selected by remember { mutableStateOf<String?>(null) }
     val snapshot = view.snapshot
-    val shown = snapshot?.providers.orEmpty().filter { it.state != "disabled" && it.state != "not_installed" && it.id !in settings.hiddenProviders }
+    val shown = snapshot?.providers.orEmpty().filter { it.state != "disabled" && it.state != "not_installed" &&
+        if (it.id == "x_subscription") !setOf("grok", "cursor").all { id -> id in settings.hiddenProviders } else it.id !in settings.hiddenProviders }
     val warnAt = snapshot?.alertThreshold?.toDouble() ?: 80.0
 
     suspend fun refresh(force: Boolean) {
@@ -170,6 +173,7 @@ fun PlansContent(status: String, busy: Boolean, shown: List<Provider>, warnAt: D
 
 @Composable
 private fun ProviderDetails(settings: Settings, p: Provider, warnAt: Double, now: Long) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var switching by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
@@ -196,11 +200,16 @@ private fun ProviderDetails(settings: Settings, p: Provider, warnAt: Double, now
                 (p.fetchedAt?.let { " · ${Format.ago(it, now)}" } ?: ""))
         }
         p.usageSummary?.let { Text(it) }
+        p.windows.filter { it.kind == "credits" && it.usedPct == null }.forEach { Note(it.label) }
+        if (p.id == "x_subscription") TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW,
+            Uri.parse(if (p.poolReader == "cursor") "https://cursor.com/dashboard" else "https://grok.com/?_s=usage"))) }) {
+            Text("Open usage dashboard")
+        }
         val numeric = p.windows.filter { it.usedPct != null }
         if (numeric.isEmpty()) {
             if (p.usageSummary == null || p.state != "ok") Note(p.hint ?: Format.state(p.state) ?: "No reading yet")
         } else {
-            if (p.state != "ok") Format.state(p.state)?.let { Note(it, color = StatusColors.warn) }
+            if (p.state != "ok") (p.hint ?: Format.state(p.state))?.let { Note(it, color = StatusColors.warn) }
             for (w in numeric) {
                 val used = w.usedPct ?: continue
                 Meter(w.label, Format.percent(used), used,
@@ -220,7 +229,7 @@ private fun ProviderDetails(settings: Settings, p: Provider, warnAt: Double, now
                 }
             }
         }
-        if (p.source != "phone") TextButton(enabled = !switching, onClick = { ask(null) }) {
+        if (p.source != "phone" && p.id != "x_subscription") TextButton(enabled = !switching, onClick = { ask(null) }) {
             Text(if (p.account.isNullOrBlank()) "Sign in on computer" else "Switch computer account")
         }
         note?.let { Note(it) }

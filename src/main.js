@@ -3,6 +3,7 @@ const path = require("path");
 const os = require("os");
 const config = require("./config");
 const poller = require("./poller");
+const { consolidate } = require("./subscription");
 const alerts = require("./alerts");
 const { applyLocalResets } = require("./models");
 const taskbarLayout = require("./taskbarLayout");
@@ -85,6 +86,9 @@ const USAGE_URLS = {
   codex: "https://chatgpt.com/codex/settings/usage",
   gemini: "https://antigravity.google",
   grok: "https://grok.com",
+  x_subscription: "https://grok.com/?_s=usage",
+  cursor: "https://cursor.com/dashboard",
+  copilot: "https://github.com/settings/copilot",
 };
 
 function ui(file) {
@@ -822,7 +826,7 @@ function broadcastPrefs() {
 
 function settingsView() {
   const keys = ["autostart", "poll_interval_secs", "chips_hidden", "chips_docked", "chips_show_network", "chips_show", "alert_threshold",
-    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel"];
+    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel", "subscription_regime"];
   return {
     platform: process.platform,
     version: app.getVersion(),
@@ -838,7 +842,7 @@ function settingsView() {
 
 function present(snapshot) {
   if (!snapshot) return snapshot;
-  return { ...snapshot, providers: (snapshot.providers || []).map((provider) => accounts.decorate(provider)) };
+  return { ...snapshot, providers: consolidate((snapshot.providers || []).map((provider) => accounts.decorate(provider)), snapshot.subscription_regime) };
 }
 
 const ACCOUNT_TOOLS = Object.keys(accounts.TOOLS);
@@ -919,7 +923,7 @@ async function phoneTokens() {
   await Promise.all(Object.entries(tools).map(async ([id, adapter]) => {
     try {
       const token = await adapter.linkToken(cfg);
-      if (token && token.access_token) tokens[id] = token;
+      if (token && token.access_token) tokens[id] = { ...token, subscription_regime: cfg.subscription_regime };
     } catch {
       /* that tool is not signed in */
     }
@@ -1020,6 +1024,15 @@ function bool(value) {
 // Applies a patch from the settings window. Every field is checked; unknown ones are ignored.
 function applySettings(patch) {
   if (!patch || typeof patch !== "object") return settingsView();
+  if (["legacy", "combined"].includes(patch.subscription_regime) && patch.subscription_regime !== cfg.subscription_regime) {
+    cfg.subscription_regime = patch.subscription_regime;
+    const other = (latest?.providers || []).filter((p) => !["grok", "cursor", "x_subscription"].includes(p.id));
+    const pending = cfg.subscription_regime === "combined" ? consolidate([], "combined") : ["grok", "cursor"].map((id) => ({
+      id, display_name: id === "grok" ? "Grok Build" : "Cursor", status: { state: "unknown", hint: "Refreshing the selected subscription" }, windows: [], source: "none",
+    }));
+    latest = { subscription_regime: cfg.subscription_regime, providers: [...other, ...pending] };
+    if (poll) poll.refresh();
+  }
   if (bool(patch.autostart) !== null) cfg.autostart = autostart.apply(patch.autostart);
   if ("poll_interval_secs" in patch && config.ALLOWED_INTERVALS.includes(Number(patch.poll_interval_secs))) setPollInterval(Number(patch.poll_interval_secs));
   if (bool(patch.chips_hidden) !== null && patch.chips_hidden !== cfg.chips_hidden) setChipsHidden(patch.chips_hidden);
@@ -1082,6 +1095,7 @@ function phonePayload() {
     name: os.hostname(),
     generated_at: new Date().toISOString(),
     alert_threshold: cfg.alert_threshold,
+    subscription_regime: cfg.subscription_regime,
     providers: ((latest && latest.providers) || []).map((p) => ({
       id: p.id,
       display_name: p.display_name,
@@ -1089,6 +1103,11 @@ function phonePayload() {
       status: { state: (p.status && p.status.state) || "unknown", hint: (p.status && (p.status.hint || p.status.message)) || null },
       fetched_at: p.fetched_at || null,
       account: typeof p.account === "string" ? p.account : null,
+      account_id: p.account_id || null,
+      cache_scope: p.cache_scope || null,
+      subscription_regime: p.subscription_regime || cfg.subscription_regime,
+      shared_weekly: p.shared_weekly || null,
+      pool_reader: p.pool_reader || null,
       accounts: Array.isArray(p.accounts)
         ? p.accounts.filter((item) => item && typeof item.id === "string" && typeof item.label === "string").map((item) => ({ id: item.id, label: item.label, active: !!item.active }))
         : [],
@@ -1323,7 +1342,10 @@ function wireIpc() {
   ipcMain.on("usage://tray-menu", () => popupAppMenu());
   ipcMain.on("usage://open-network", () => netUsage.openWindow());
   ipcMain.on("usage://open-usage", (_e, id) => {
-    if (Object.hasOwn(USAGE_URLS, id)) shell.openExternal(USAGE_URLS[id]).catch((err) => console.error("open usage failed", err.message));
+    if (Object.hasOwn(USAGE_URLS, id)) {
+      const url = id === "x_subscription" && latest?.providers.find((p) => p.id === id)?.pool_reader === "cursor" ? USAGE_URLS.cursor : USAGE_URLS[id];
+      shell.openExternal(url).catch((err) => console.error("open usage failed", err.message));
+    }
   });
   ipcMain.handle("usage://get-interval", () => cfg.poll_interval_secs || 5);
   ipcMain.on("usage://set-interval", (_e, secs) => setPollInterval(secs));

@@ -20,10 +20,10 @@ object InsightHistory {
         for (p in snapshot?.providers.orEmpty()) {
             if (p.state != "ok") continue
             if (p.fetchedAt != null && now - p.fetchedAt > 30 * 60_000L) continue
-            val account = accountRef(p.account)
+            val account = accountRef(p.cacheScope ?: p.accountId ?: p.account)
             for (w in p.windows) {
                 val used = w.usedPct?.takeIf { it.isFinite() } ?: continue
-                val key = accountRef("${p.id}|$account|${w.kind}|${w.label}")
+                val key = accountRef("${p.subscriptionRegime}|${p.source}|${p.id}|$account|${w.kind}|${w.label}")
                 val s = series.optJSONObject(key) ?: JSONObject().put("provider", p.id).put("account_ref", account)
                     .put("label", w.label).put("points", JSONArray()).also { series.put(key, it) }
                 val points = s.optJSONArray("points") ?: JSONArray().also { s.put("points", it) }

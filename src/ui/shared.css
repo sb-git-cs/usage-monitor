@@ -154,6 +154,7 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 .accent-codex { box-shadow: inset 2px 0 0 var(--codex); }
 .accent-gemini { box-shadow: inset 2px 0 0 var(--gemini); }
 .accent-grok { box-shadow: inset 2px 0 0 var(--grok); }
+.accent-x_subscription { box-shadow: inset 2px 0 0 var(--grok); }
 .accent-cursor { box-shadow: inset 2px 0 0 var(--cursor); }
 .accent-copilot { box-shadow: inset 2px 0 0 var(--copilot); }
 .flyout .provider {

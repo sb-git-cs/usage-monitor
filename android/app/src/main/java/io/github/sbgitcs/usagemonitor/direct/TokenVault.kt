@@ -81,6 +81,7 @@ class TokenVault(context: Context) {
                 .putOpt("refresh", c.refreshToken).putOpt("expires", c.expiresAt).putOpt("account_id", c.accountId)
                 .putOpt("user_id", c.userId).putOpt("plan", c.plan).putOpt("account", c.account)
                 .put("extra", JSONObject(c.extra))
+                .put("subscription_regime", c.subscriptionRegime)
         }).toString()
 
         internal fun decode(json: String): List<Credential> {
@@ -100,6 +101,7 @@ class TokenVault(context: Context) {
                     plan = o.text("plan"),
                     account = o.text("account"),
                     extra = extra?.keys()?.asSequence()?.associateWith { extra.optString(it) }.orEmpty(),
+                    subscriptionRegime = if (o.optString("subscription_regime") == "combined") "combined" else "legacy",
                 )
             }
         }

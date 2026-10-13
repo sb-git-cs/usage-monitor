@@ -49,7 +49,9 @@ function emptyProvider(id, displayName, status) {
 }
 
 function currentWindow(provider) {
-  const numeric = (provider.windows || []).filter((w) => Number.isFinite(w.used_pct));
+  if (provider.id === "x_subscription") return (provider.windows || []).find((w) => w.kind === "weekly" && Number.isFinite(w.used_pct)) || null;
+  const numeric = (provider.windows || []).filter((w) => Number.isFinite(w.used_pct) &&
+    (!["grok", "cursor"].includes(provider.id) || w.kind !== "credits"));
   if (!numeric.length) return null;
   const windows = numeric.filter((w) => w.kind === "five_hour");
   if (!windows.length) windows.push(...numeric.filter((w) => w.kind === "daily"));

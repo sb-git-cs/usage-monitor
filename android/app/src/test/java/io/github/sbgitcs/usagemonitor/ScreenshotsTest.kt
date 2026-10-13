@@ -6,6 +6,8 @@ import android.graphics.Canvas
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.core.view.WindowCompat
+import org.junit.Assert.assertEquals
 import io.github.sbgitcs.usagemonitor.data.Settings
 import io.github.sbgitcs.usagemonitor.device.DeviceReadings
 import io.github.sbgitcs.usagemonitor.model.DesktopNetwork
@@ -20,6 +22,8 @@ import io.github.sbgitcs.usagemonitor.ui.AppScaffold
 import io.github.sbgitcs.usagemonitor.ui.DataContent
 import io.github.sbgitcs.usagemonitor.ui.DeviceContent
 import io.github.sbgitcs.usagemonitor.ui.PlansContent
+import io.github.sbgitcs.usagemonitor.ui.SettingsScreen
+import io.github.sbgitcs.usagemonitor.direct.consolidateSubscription
 import io.github.sbgitcs.usagemonitor.ui.Tab
 import io.github.sbgitcs.usagemonitor.ui.UsageMonitorTheme
 import org.junit.Rule
@@ -51,8 +55,11 @@ open class ScreenshotsTest {
     protected open val suffix = ""
     private val now = System.currentTimeMillis()
 
-    @Test fun home() = shoot("home") {
-        val providers = listOf(
+    @Test fun home() = homeScene("legacy", "home")
+    @Test fun homeCombined() = homeScene("combined", "home-combined")
+
+    private fun homeScene(regime: String, name: String) = shoot(name) {
+        val raw = listOf(
             Provider("claude", "Claude Code", "Max", "ok", null, listOf(
                 PlanWindow("five_hour", "5h", 42.0, now + 2 * HOUR + 10 * MIN, null, 14.0),
                 PlanWindow("weekly", "Weekly", 61.0, now + 3 * DAY, null, null),
@@ -65,19 +72,30 @@ open class ScreenshotsTest {
                 PlanWindow("daily", "Daily", 86.0, now + 7 * HOUR, now + 55 * MIN, 15.0),
             )),
             Provider("grok", "Grok Build", "SuperGrok", "ok", null, listOf(
-                PlanWindow("five_hour", "5h", 9.0, now + 4 * HOUR, null, 2.0),
-            )),
+                PlanWindow("weekly", "Weekly", 35.0, now + 3 * DAY, null, null),
+                PlanWindow("credits", "Credits $12.50", null, null, null, null),
+            ), sharedWeekly = PlanWindow("weekly", "Weekly", 35.0, now + 3 * DAY, null, null)),
             Provider("cursor", "Cursor", "Pro", "ok", null, listOf(
                 PlanWindow("monthly", "Monthly", 54.0, now + 12 * DAY, null, null),
             ), source = "phone", fetchedAt = now - 2 * MIN),
         )
-        val snapshot = DesktopSnapshot("1.4.0", "Studio PC", now, 80, providers,
+        val providers = consolidateSubscription(raw, regime, now)
+        val snapshot = DesktopSnapshot("1.6.0", "Studio PC", now, 80, providers,
             SystemReadings(cpu = 23.0, mem = 58.0, gpu = 12.0, disk = 4.0, diskRate = null, space = 71.0),
             DesktopNetwork("running", 2.4 * MB, 310.0 * 1024))
         AppScaffold(Tab.Plans, onTab = {}) {
             PlansContent("Studio PC · 1 min ago · 1 direct", busy = false, providers, warnAt = 80.0, now = now,
                 snapshot = snapshot, cached = false, error = null, unpaired = false,
                 onRefresh = {}, onPair = {}, onSelect = {})
+        }
+    }
+
+    @Test fun settingsLegacy() = settingsScene("legacy")
+    @Test fun settingsCombined() = settingsScene("combined")
+    private fun settingsScene(regime: String) {
+        val settings = Settings(compose.activity).apply { subscriptionRegime = regime; autoUpdate = false }
+        shoot("settings-$regime") {
+            AppScaffold(Tab.Settings, onTab = {}) { SettingsScreen(settings, null, 0, onPair = {}, onForget = {}) }
         }
     }
 
@@ -122,6 +140,8 @@ open class ScreenshotsTest {
         compose.setContent { UsageMonitorTheme(content = content) }
         compose.waitForIdle()
         val view = compose.activity.window.decorView
+        assertEquals("system bar contrast follows the rendered theme", suffix != "-dark",
+            WindowCompat.getInsetsController(compose.activity.window, view).isAppearanceLightStatusBars)
         val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
         view.draw(Canvas(bitmap))
         val dir = File(System.getProperty("screenshotsDir") ?: error("Set -PscreenshotsDir")).apply { mkdirs() }

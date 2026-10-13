@@ -66,14 +66,15 @@ function render(snapshot) {
   reset.textContent = overview.nextReset ? formatEta(reset.dataset.reset) : "Not reported";
   reset.title = overview.nextReset ? `${overview.nextReset.provider} · ${overview.nextReset.label} · ${new Date(overview.nextReset.at).toLocaleString()}` : "No current reset time reported";
   const parts = [];
-  const visible = (snapshot.providers || []).filter((p) => !(display.hidden || []).includes(p.id))
-    .sort((a, b) => (display.order || []).indexOf(a.id) - (display.order || []).indexOf(b.id));
+  const visible = (snapshot.providers || []).filter((p) => p.id === "x_subscription"
+    ? !["grok", "cursor"].every((id) => (display.hidden || []).includes(id)) : !(display.hidden || []).includes(p.id))
+    .sort((a, b) => (display.order || []).indexOf(a.id === "x_subscription" ? "grok" : a.id) - (display.order || []).indexOf(b.id === "x_subscription" ? "grok" : b.id));
   for (const p of visible) {
     const hint = statusText(p);
     parts.push(`<section class="provider accent-${escapeHtml(p.id)}" data-id="${escapeHtml(p.id)}" role="button" tabindex="0" aria-label="Open ${escapeHtml(p.display_name)} usage">
       <div class="p-head"><span class="p-name">${mark(p.id)}<span>${escapeHtml(p.display_name)}</span></span><span class="p-plan">${escapeHtml(p.plan || "")}${p.status && p.status.state === "stale" ? '<span class="badge">stale</span>' : ""}</span></div>`);
     if (p.account) parts.push(`<div class="p-account">${escapeHtml(p.account)}</div>`);
-    if (hint && p.windows && p.windows.length) parts.push(`<div class="hint">${escapeHtml(hint)} · showing saved readings</div>`);
+    if (hint && p.windows && p.windows.length) parts.push(`<div class="hint">${escapeHtml(hint)}${p.status?.state === "stale" ? " · showing saved readings" : ""}</div>`);
     if (hint && !(p.windows && p.windows.length)) {
       parts.push(`<div class="hint">${escapeHtml(hint)}</div>`);
     } else {

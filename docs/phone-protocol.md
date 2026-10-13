@@ -72,6 +72,12 @@ Only current access tokens are sent, never refresh tokens, so the phone cannot r
 
 ## Responses
 
+### Subscription metadata (1.6.0)
+
+Snapshots and every linked token include `subscription_regime: "legacy" | "combined"`. Missing or unknown values default to `legacy`, preserving old snapshots/credentials. In combined snapshots, `x_subscription` replaces Grok and Cursor in the visible `providers` list; their account connection routes and token entries remain separate. Its primary window is `weekly`, and `credits` windows are labelled Additional Usage. `pool_reader` identifies the authoritative billing reader (`grok` or `cursor`) for the dashboard link. A missing shared total produces an unknown weekly window, never a sum or a monthly conversion.
+
+Provider `account_id` and opaque `cache_scope` metadata keep cached readings attached to their fetched account and regime. Direct-reading caches preserve `shared_weekly` evidence until it expires. Phone-owned sign-ins use the phone's regime; linked tokens and paired snapshots use the computer's regime. A phone-owned Grok/Cursor group does not borrow another computer account's pool or credits. Stable account IDs allow shared-pool alert deduplication when a linked read replaces a computer read; history still separates sources.
+
 ```json
 { "v": 1, "iv": "<12 bytes, base64url>", "data": "<ciphertext + 16-byte tag, base64url>" }
 ```

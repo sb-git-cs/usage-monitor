@@ -11,6 +11,7 @@ const PHONE_PORT = 47329;
 
 const DEFAULTS = {
   poll_interval_secs: 5,
+  subscription_regime: "legacy",
   config_version: 7,
   chips_docked: true,
   chips_hidden: false,
@@ -68,6 +69,7 @@ function normalize(parsed) {
     cfg.adapters[id] = { refresh_tokens: raw.adapters?.[id]?.refresh_tokens !== false };
   }
   cfg.net = normalizeNet(raw.net);
+  cfg.subscription_regime = raw.subscription_regime === "combined" ? "combined" : "legacy";
   cfg.alert_threshold = ALERT_THRESHOLDS.includes(Number(cfg.alert_threshold)) ? Number(cfg.alert_threshold) : DEFAULTS.alert_threshold;
   cfg.quiet_hours = normalizeQuietHours(raw.quiet_hours);
   cfg.chips_show = Object.fromEntries(CHIP_KEYS.map((k) => [k, raw.chips_show?.[k] !== false]));
