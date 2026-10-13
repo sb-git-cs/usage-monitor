@@ -14,8 +14,11 @@ internal fun consolidateSubscription(providers: List<Provider>, regime: String, 
     fun verified(p: Provider): Boolean = p.sharedWeekly?.let { it.usedPct != null && it.usedPct.isFinite() && it.usedPct >= 0 && (it.resetsAt ?: 0) > now && p.state in setOf("ok", "stale") } == true
     val reader = readers.firstOrNull { verified(it) && it.state == "ok" } ?: readers.firstOrNull { verified(it) } ?: readers.firstOrNull()
     val weekly = reader?.sharedWeekly?.takeIf { reader != null && verified(reader) }
-    val meter = Provider("x_subscription", "X Subscription", "Shared weekly pool", if (weekly != null) reader!!.state else "unknown",
-        if (weekly == null) "Shared weekly usage unavailable. Open the usage dashboard." else reader?.hint,
+    val meter = Provider("x_subscription", "X Subscription", "Shared weekly pool", if (weekly != null || reader?.state == "stale") reader!!.state else "unknown",
+        if (weekly == null) {
+            if (reader?.state == "stale") "Stale reading · shared weekly usage unavailable. Open the usage dashboard."
+            else "Shared weekly usage unavailable. Open the usage dashboard."
+        } else reader?.hint,
         listOf(weekly ?: PlanWindow("weekly", "Weekly", null, null, null, null)) + reader?.windows.orEmpty()
             .filter { it.kind == "credits" }.map { it.copy(label = it.label.replaceFirst("Credits", "Additional Usage")) },
         account = reader?.account, source = reader?.source ?: providers.firstOrNull()?.source ?: "phone", fetchedAt = reader?.fetchedAt,

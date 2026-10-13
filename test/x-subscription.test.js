@@ -94,6 +94,18 @@ test("cached shared readings stay stale and never notify; fresh shared pool aler
   assert.equal(shown.length, 1);
 });
 
+test("cached Additional Usage stays visibly stale when the weekly pool expires", () => {
+  const grok = { ...provider("grok"), status: { state: "stale" }, source: "cache",
+    shared_weekly: { kind: "weekly", label: "Weekly", used_pct: 42, resets_at: "2020-01-01T00:00:00Z" },
+    windows: [{ kind: "credits", label: "Credits $12.50", used_pct: null }] };
+  const x = consolidate([grok], "combined")[0];
+  assert.equal(x.status.state, "stale");
+  assert.equal(x.source, "cache");
+  assert.match(x.status.hint, /^Stale/);
+  assert.equal(currentWindow(x), null);
+  assert.equal(x.windows[1].label, "Additional Usage $12.50");
+});
+
 function polling() {
   let snapshot, token = "token-a", fail = false;
   const ids = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];

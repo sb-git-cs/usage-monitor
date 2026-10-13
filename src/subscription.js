@@ -35,10 +35,11 @@ function consolidate(providers, selected) {
     pool_reader: base?.id || "grok",
     account: base?.account, account_id: base?.account_id,
     cache_scope: base?.cache_scope,
-    status: valid ? base.status : { state: "unknown", hint: "Shared weekly usage unavailable. Open the usage dashboard." },
+    status: valid ? base.status : { state: base?.status?.state === "stale" ? "stale" : "unknown",
+      hint: base?.status?.state === "stale" ? "Stale reading · shared weekly usage unavailable. Open the usage dashboard." : "Shared weekly usage unavailable. Open the usage dashboard." },
     windows: [...(valid ? [weekly] : [{ kind: "weekly", label: "Weekly", used_pct: null, remaining_pct: null, resets_at: null }]), ...(base?.windows || []).filter((w) => w.kind === "credits")
       .map((w) => ({ ...w, label: w.label.replace(/^Credits/, "Additional Usage") }))],
-    fetched_at: base?.fetched_at || new Date().toISOString(), source: valid ? base.source : "none",
+    fetched_at: base?.fetched_at || new Date().toISOString(), source: valid || base?.status?.state === "stale" ? base.source : "none",
   };
   const out = providers.filter((p) => !["grok", "cursor", "x_subscription"].includes(p.id));
   out.splice(Math.min(3, out.length), 0, combined);

@@ -63,6 +63,12 @@ class SubscriptionTest {
         val x = consolidateSubscription(listOf(grok(state = "stale")), "combined", now).single()
         assertEquals("stale", x.state)
         assertTrue(planWidgetStats(listOf(x)).single().label.contains("Old"))
+        val expired = grok(state = "stale").copy(sharedWeekly = weekly.copy(resetsAt = now - 1))
+        val cachedCredits = consolidateSubscription(listOf(expired), "combined", now).single()
+        assertEquals("stale", cachedCredits.state)
+        assertTrue(cachedCredits.hint!!.startsWith("Stale"))
+        assertNull(cachedCredits.currentWindow())
+        assertTrue(planWidgetStats(listOf(cachedCredits)).single().label.contains("Old"))
     }
 
     @Test fun phoneRegimeDoesNotOverridePairedComputerAndPhoneAccountsDoNotBorrowItsPool() {
