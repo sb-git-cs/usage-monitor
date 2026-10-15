@@ -85,6 +85,9 @@ function normalize(parsed) {
     cfg.flyout_docked = false;
   }
   cfg.poll_interval_secs = ALLOWED_INTERVALS.includes(Number(cfg.poll_interval_secs)) ? Number(cfg.poll_interval_secs) : 5;
+  // The folder menu starts each CLI with its own skip-permissions flag. A saved Enter-watcher
+  // switch has no off control anymore, so it is dropped and the next save does not write it back.
+  delete cfg.godmode;
   return cfg;
 }
 

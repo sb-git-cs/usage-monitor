@@ -6,6 +6,7 @@ const path = require("node:path");
 const {
   createWatcher, claudeState, codexState, resumeStatus, matchCodex, isCodexTui, filetimeMs, clockAfter,
   GRACE_MS, MAX_ATTEMPTS, RETRY_MS, LIMIT_ON_SCREEN,
+  otherCli, isOtherTui, resetOnScreen, grokState, OTHER_CLIS, OTHER_LIMIT_ON_SCREEN, OTHER_LINES,
 } = require("../src/sessions");
 const config = require("../src/config");
 
@@ -122,9 +123,12 @@ test("FILETIME process start times convert to milliseconds", () => {
 test("auto-resume is opt-in and the sessions chip is on by default", () => {
   const cfg = config.normalize({});
   assert.equal(cfg.auto_resume, false);
+  assert.equal("godmode" in cfg, false);
   assert.equal(cfg.chips_show.sessions, true);
   assert.equal(config.normalize({ auto_resume: "yes" }).auto_resume, false);
   assert.equal(config.normalize({ auto_resume: true }).auto_resume, true);
+  assert.equal("godmode" in config.normalize({ godmode: true }), false);
+  assert.equal("godmode" in config.normalize({ godmode: "yes" }), false);
 });
 
 // ---- the watcher on temporary folders, with a fake terminal helper ----------------------
@@ -211,6 +215,32 @@ test("with auto-resume off or the reset still ahead, the session waits and shows
   assert.equal(view.sessions[0].resume, "scheduled");
   assert.equal(view.sessions[0].resume_at, new Date(NOW + 3600_000 + GRACE_MS).toISOString());
   assert.equal(helper.typed.length, 0);
+});
+
+test("a switch flipped during a scan shows at once, and a refresh asked for then runs after it", async () => {
+  const fx = claudeFixture({ entries: [limitEntry((NOW + 3600_000) / 1000)] });
+  let enabled = false;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let scans = 0;
+  const views = [];
+  const request = async (req) => {
+    if (req.op !== "scan") return { ok: true };
+    scans++;
+    if (scans === 1) await gate;
+    return { procs: [{ pid: fx.pid, name: "claude", start: fx.start }] };
+  };
+  const w = createWatcher({ getConfig: () => ({ auto_resume: enabled }), platform: "win32", now: () => NOW, request,
+    claudeDir: () => fx.dir, codexDir: () => path.join(fx.dir, "none"), onChange: (v) => views.push(v) });
+  const first = w.scan();
+  await new Promise((resolve) => setImmediate(resolve));
+  enabled = true;
+  await w.scan(); // asked for while the first scan waits on the helper
+  release();
+  assert.equal((await first).auto_resume, true, "the view reflects the switch as it is now");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(scans, 2, "the refresh asked for during the scan runs once it finishes");
+  assert.equal(views.at(-1).sessions[0].resume, "scheduled");
 });
 
 test("a terminal that refuses input is retried a minute apart, then reported failed", async () => {
@@ -333,6 +363,18 @@ test("a Codex terminal with no rollout uses the meters' reset and waits for it",
   assert.equal(view.sessions[0].state, "idle");
 });
 
+test("a saved godmode flag does not type into an open terminal", async () => {
+  const fx = claudeFixture({ entries: [{ type: "user", message: { content: "hello" } }] });
+  const helper = fakeHelper(() => [{ pid: fx.pid, name: "claude", start: fx.start }]);
+  const w = createWatcher({ getConfig: () => ({ godmode: true, auto_resume: true }), platform: "win32", now: () => NOW, request: helper.request,
+    claudeDir: () => fx.dir, codexDir: () => path.join(fx.dir, "none") });
+  const view = await w.scan();
+  assert.equal(helper.typed.length, 0);
+  assert.equal(helper.peeked.length, 0);
+  assert.equal("godmode" in view, false);
+  assert.equal(view.sessions.length, 1);
+});
+
 test("without a known Codex limit, unlinked terminals are not read", async () => {
   const codex = codexFixture({});
   const helper = fakeHelper(() => [codexProc(9, NOW - 3600_000)], () => ({ ok: true }), () => true);
@@ -342,4 +384,215 @@ test("without a known Codex limit, unlinked terminals are not read", async () =>
   assert.equal(helper.peeked.length, 0);
   assert.equal(helper.typed.length, 0);
   assert.equal(view.sessions[0].state, "idle");
+});
+
+test("the other CLIs' limit messages are recognized, tool output and spending caps are not", () => {
+  const re = new RegExp(OTHER_LIMIT_ON_SCREEN, "i");
+  for (const text of ["You hit your weekly limit.", "You\u2019ve reached your free Grok Build usage limit for now.",
+    "You have exhausted your quota on this model.", "You've hit your usage limit", "Sorry, you've exceeded your premium requests quota.",
+    "Quota exceeded for quota metric 'Gemini 2.5 Pro Requests'"]) assert.ok(re.test(text), text);
+  for (const text of ["50 results limit reached. Use limit=100 for more", "You've hit your spending cap.", "AI: Out of credits",
+    "Usage limit tab shows your allowance"]) assert.equal(re.test(text), false, text);
+});
+
+test("a reset time on screen is read from when the message first showed", () => {
+  const seen = new Date(2026, 9, 16, 21, 0).getTime();
+  assert.equal(resetOnScreen("You've hit your usage limit · resets 10:10pm", seen), new Date(2026, 9, 16, 22, 10).getTime());
+  assert.equal(resetOnScreen("Try again at 8:05 PM.", seen), new Date(2026, 9, 17, 20, 5).getTime());
+  assert.equal(resetOnScreen("limit reached, try again in 2h 30m", seen), seen + 2.5 * 3600_000);
+  assert.equal(resetOnScreen("resets in 3 days", seen), seen + 3 * 86400_000);
+  assert.equal(resetOnScreen("You hit your weekly limit.", seen), null);
+});
+
+test("Grok, Antigravity, Gemini, Cursor and Copilot terminals are recognized by their programs", () => {
+  // Real command lines use backslashes; the matchers take either separator.
+  const cursor = "C:/Users/u/AppData/Local/cursor-agent/versions/2026.10.12-d47ca18";
+  const cases = [
+    [{ name: "grok", cmd: '"C:/Users/u/.grok/bin/grok.exe" ' }, "Grok Build", true],
+    [{ name: "agent", cmd: '"C:/Users/u/.grok/bin/agent.exe" --model x' }, "Grok Build", true],
+    [{ name: "agent", cmd: '"C:/tools/agent.exe"' }, null],
+    [{ name: "agy", cmd: '"C:/Users/u/AppData/Local/agy/bin/agy.exe" ' }, "Antigravity", true],
+    [{ name: "node", cmd: `"${cursor}/node.exe" ${cursor}/index.js ` }, "Cursor Agent", true],
+    [{ name: "node", cmd: `${cursor}/node.exe ${cursor}/index.js worker-server` }, "Cursor Agent", false],
+    [{ name: "node", cmd: '"C:/node/node.exe" C:/Users/u/AppData/Roaming/npm/node_modules/@google/gemini-cli/dist/index.js' }, "Gemini CLI", true],
+    [{ name: "node", cmd: '"C:/node/node.exe" C:/npm/node_modules/@github/copilot/index.js -p "fix it"' }, "Copilot CLI", false],
+    [{ name: "copilot", cmd: "copilot --resume" }, "Copilot CLI", true],
+    [{ name: "node", cmd: '"C:/node/node.exe" C:/work/server.js' }, null],
+  ];
+  for (const [proc, label, interactive] of cases) {
+    const hit = otherCli(proc);
+    assert.equal(hit ? hit.cli.label : null, label, proc.cmd);
+    if (hit) assert.equal(isOtherTui(hit.args), interactive, proc.cmd);
+  }
+});
+
+test("other CLI terminals are listed, and one stopped by a limit is resumed after the meters' reset", async () => {
+  const dir = tmpdir();
+  const reset = NOW + 600_000;
+  let t = NOW;
+  let snap = { providers: [{ id: "grok", status: { state: "ok" }, windows: [{ kind: "weekly", used_pct: 100, resets_at: new Date(reset).toISOString() }] }] };
+  const start = toFiletime(NOW - 3600_000);
+  const cursor = "C:/c/cursor-agent/versions/1";
+  const procs = [
+    { pid: 11, ppid: 1, name: "grok", start, cwd: "D:/work/api/", cmd: '"C:/g/.grok/bin/grok.exe" ' },
+    { pid: 12, ppid: 1, name: "agy", start, cwd: "D:/work/web/", cmd: "agy" },
+    { pid: 13, ppid: 1, name: "node", start, cwd: "D:/work/cli/", cmd: `${cursor}/node.exe ${cursor}/index.js` },
+    { pid: 14, ppid: 13, name: "node", start, cwd: "D:/work/cli/", cmd: `${cursor}/node.exe ${cursor}/index.js` },
+    { pid: 15, ppid: 1, name: "copilot", start, cwd: "D:/ide/", cmd: "copilot --stdio" },
+  ];
+  const screens = {
+    11: "Thinking...\nYou hit your weekly limit.\n> \nGrok 4.7 Fast",
+    12: "Working... (4s · esc to cancel)\n>",
+    13: "Cursor Agent\n> Plan, search, build anything",
+    15: null, // no console: started by an editor
+  };
+  const typed = [];
+  const screenRead = [];
+  const request = async (req) => {
+    if (req.op === "scan") return { procs };
+    if (req.op === "screen") {
+      screenRead.push(req.pid);
+      return { text: screens[req.pid] ?? null };
+    }
+    typed.push(req);
+    return { ok: true };
+  };
+  const w = createWatcher({ getConfig: () => ({ auto_resume: true }), platform: "win32", now: () => t, request, snapshot: () => snap,
+    claudeDir: () => path.join(dir, "none"), codexDir: () => path.join(dir, "none"), grokDir: () => path.join(dir, "none"), cursorDir: () => path.join(dir, "none") });
+  let view = await w.scan();
+  assert.ok(!screenRead.includes(14), "a CLI's own worker is not read as another session");
+  assert.deepEqual(view.sessions.map((s) => [s.label, s.name, s.state]),
+    [["Cursor Agent", "cli", "idle"], ["Antigravity", "web", "working"], ["Grok Build", "api", "limited"]]);
+  const grok = view.sessions.find((s) => s.tool === "grok");
+  assert.equal(grok.resume, "scheduled");
+  assert.equal(grok.resets_at, new Date(reset).toISOString());
+  assert.equal(typed.length, 0);
+  // After the reset the meters move on; the remembered reset still applies to this terminal.
+  t = reset + GRACE_MS;
+  snap = { providers: [{ id: "grok", status: { state: "ok" }, windows: [{ kind: "weekly", used_pct: 0, resets_at: new Date(reset + 7 * 86400_000).toISOString() }] }] };
+  view = await w.scan();
+  assert.equal(view.sessions.find((s) => s.tool === "grok").resume, "sent");
+  assert.deepEqual(typed, [{ op: "type", pid: 11, start, text: "continue", expect: OTHER_LIMIT_ON_SCREEN, lines: OTHER_LINES }]);
+});
+
+test("a limit message with no reset the meters or the screen report is listed but never typed into", async () => {
+  const dir = tmpdir();
+  const start = toFiletime(NOW - 3600_000);
+  let t = NOW;
+  const typed = [];
+  const request = async (req) => {
+    if (req.op === "scan") return { procs: [{ pid: 21, ppid: 1, name: "agy", start, cwd: "D:/x", cmd: "agy" }] };
+    if (req.op === "screen") return { text: "You have exhausted your quota on this model.\n>" };
+    typed.push(req);
+    return { ok: true };
+  };
+  const w = createWatcher({ getConfig: () => ({ auto_resume: true }), platform: "win32", now: () => t, request,
+    claudeDir: () => path.join(dir, "none"), codexDir: () => path.join(dir, "none"), grokDir: () => path.join(dir, "none"), cursorDir: () => path.join(dir, "none") });
+  let view = await w.scan();
+  assert.deepEqual([view.sessions[0].state, view.sessions[0].resets_at, view.sessions[0].resume], ["limited", null, "scheduled"]);
+  t += 86400_000;
+  view = await w.scan();
+  assert.equal(typed.length, 0);
+});
+
+test("Copilot's rate-limit messages and their reset times are read", () => {
+  const re = new RegExp(OTHER_LIMIT_ON_SCREEN, "i");
+  const seen = new Date(2026, 9, 16, 9, 0).getTime();
+  const sorry = "Sorry, you've hit a rate limit that restricts the number of Copilot model requests you can make within a specific time period. Please try again in 4 hours.";
+  assert.ok(re.test(sorry));
+  assert.equal(resetOnScreen(sorry, seen), seen + 4 * 3600_000);
+  const wait = "You've hit your rate limit. Please wait for your limit to reset in 3 hours 49 minutes or switch to auto model to continue.";
+  assert.ok(re.test(wait));
+  assert.equal(resetOnScreen(wait, seen), seen + (3 * 60 + 49) * 60_000);
+  const model = "You've hit the rate limit for this model. Please switch models or wait for your limit to reset in under a minute.";
+  assert.ok(re.test(model));
+  assert.equal(resetOnScreen(model, seen), seen + 60_000);
+  // Cursor names the day its monthly cycle ends, month first, sometimes wrapped onto the next line.
+  assert.equal(resetOnScreen("Your usage limits will reset when your monthly cycle ends on\n8/14/2025.", seen), new Date(2025, 7, 14).getTime());
+});
+
+test("each CLI's busy hint is its own: a dialog's Esc to cancel is not a running turn", () => {
+  const cli = (label) => OTHER_CLIS.find((c) => c.label === label);
+  assert.equal(cli("Cursor Agent").working.test("Enter to send · Esc to cancel"), false);
+  assert.ok(cli("Cursor Agent").working.test("→ Add a follow-up                ctrl+c to stop"));
+  assert.ok(cli("Cursor Agent").idle.test("→ Plan, search, build anything"));
+  assert.ok(cli("Antigravity").working.test("Working... (12s · esc to cancel)"));
+  assert.equal(cli("Antigravity").working.test("Enter/Esc to cancel"), false);
+  assert.ok(cli("Antigravity").idle.test("? for shortcuts                Gemini 3.8 Flash · high"));
+  assert.ok(cli("Gemini CLI").working.test("⠋ Reading files (esc to cancel, 12s)"));
+});
+
+test("a Grok turn runs from turn_started until turn_ended; an open permission request waits for you", () => {
+  assert.deepEqual(grokState([{ type: "turn_started" }, { type: "phase_changed" }]), { busy: true });
+  assert.deepEqual(grokState([{ type: "turn_started" }, { type: "turn_ended", outcome: "completed" }, { type: "yolo_toggled" }]), { busy: false, error: false });
+  assert.deepEqual(grokState([{ type: "turn_ended", outcome: "error" }]), { busy: false, error: true });
+  assert.deepEqual(grokState([{ type: "tool_started" }, { type: "permission_requested" }]), { busy: false });
+  assert.deepEqual(grokState([]), { busy: false });
+});
+
+function grokFixture({ pid, cwd, id, title, events, openedAt }) {
+  const dir = tmpdir();
+  fs.writeFileSync(path.join(dir, "active_sessions.json"), JSON.stringify([{ session_id: id, pid, cwd, opened_at: openedAt }]));
+  const session = path.join(dir, "sessions", encodeURIComponent(cwd), id);
+  fs.mkdirSync(session, { recursive: true });
+  fs.writeFileSync(path.join(session, "summary.json"), JSON.stringify({ info: { id, cwd }, generated_title: title }));
+  fs.writeFileSync(path.join(session, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  return dir;
+}
+
+test("a Grok terminal shows its session title and turn state from Grok's own records", async () => {
+  const start = toFiletime(NOW - 3600_000);
+  const grokDir = grokFixture({ pid: 31, cwd: "D:/work/api", id: "01a1-grok", title: "Fix the billing parser",
+    events: [{ type: "turn_started" }, { type: "phase_changed", phase: "streaming_text" }], openedAt: new Date(NOW - 3590_000).toISOString() });
+  const request = async (req) => {
+    if (req.op === "scan") return { procs: [{ pid: 31, ppid: 1, name: "grok", start, cwd: "D:/work/api/", cmd: "grok" }] };
+    if (req.op === "screen") return { text: "> \nGrok 4.7 Fast" };
+    return { ok: true };
+  };
+  const none = path.join(grokDir, "none");
+  const w = createWatcher({ getConfig: () => ({}), platform: "win32", now: () => NOW, request,
+    claudeDir: () => none, codexDir: () => none, grokDir: () => grokDir, cursorDir: () => none });
+  let view = await w.scan();
+  assert.deepEqual(view.sessions.map((s) => [s.key, s.name, s.state]), [["grok:01a1-grok", "Fix the billing parser", "working"]]);
+  const events = path.join(grokDir, "sessions", encodeURIComponent("D:/work/api"), "01a1-grok", "events.jsonl");
+  fs.appendFileSync(events, JSON.stringify({ type: "turn_ended", outcome: "completed" }) + "\n");
+  view = await w.scan();
+  assert.equal(view.sessions[0].state, "idle");
+  // A record from an earlier process that had the same id is not this terminal's.
+  fs.writeFileSync(path.join(grokDir, "active_sessions.json"), JSON.stringify([{ session_id: "old", pid: 31, cwd: "D:/work/api", opened_at: new Date(NOW - 86400_000).toISOString() }]));
+  view = await w.scan();
+  assert.deepEqual([view.sessions[0].key.startsWith("grok:31:"), view.sessions[0].name, view.sessions[0].state], [true, "api", "running"]);
+});
+
+test("on macOS and Linux, Grok sessions are listed from its records without typing", async () => {
+  const grokDir = grokFixture({ pid: process.pid, cwd: "/home/u/api", id: "01a1-mac", title: "Port the parser",
+    events: [{ type: "turn_ended", outcome: "completed" }], openedAt: new Date(NOW).toISOString() });
+  const none = path.join(grokDir, "none");
+  let asked = 0;
+  const w = createWatcher({ getConfig: () => ({ auto_resume: true }), platform: "linux", now: () => NOW, request: async () => { asked++; return {}; },
+    claudeDir: () => none, codexDir: () => none, grokDir: () => grokDir, cursorDir: () => none });
+  const view = await w.scan();
+  assert.equal(asked, 0);
+  assert.deepEqual(view.sessions.map((s) => [s.label, s.name, s.state]), [["Grok Build", "Port the parser", "idle"]]);
+});
+
+test("a Cursor terminal shows the title of the chat it started", async () => {
+  const dir = tmpdir();
+  const start = toFiletime(NOW - 600_000);
+  const chat = (id, created, title) => {
+    fs.mkdirSync(path.join(dir, "chats", "h1", id), { recursive: true });
+    fs.writeFileSync(path.join(dir, "chats", "h1", id, "meta.json"), JSON.stringify({ schemaVersion: 1, createdAtMs: created, updatedAtMs: created + 1000, cwd: "D:\\work\\cli", title }));
+  };
+  chat("older", NOW - 86400_000, "Yesterday's chat");
+  chat("mine", NOW - 599_000, "Wire up the exporter");
+  const request = async (req) => {
+    if (req.op === "scan") return { procs: [{ pid: 41, ppid: 1, name: "node", start, cwd: "D:\\work\\cli\\", cmd: "C:/c/cursor-agent/versions/1/node.exe C:/c/cursor-agent/versions/1/index.js" }] };
+    if (req.op === "screen") return { text: "→ Add a follow-up" };
+    return { ok: true };
+  };
+  const none = path.join(dir, "none");
+  const w = createWatcher({ getConfig: () => ({}), platform: "win32", now: () => NOW, request,
+    claudeDir: () => none, codexDir: () => none, grokDir: () => none, cursorDir: () => dir });
+  const view = await w.scan();
+  assert.deepEqual(view.sessions.map((s) => [s.label, s.name, s.state]), [["Cursor Agent", "Wire up the exporter", "idle"]]);
 });

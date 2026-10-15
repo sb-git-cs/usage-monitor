@@ -176,7 +176,10 @@ function render(next) {
   setValue($("forecast"), s.forecast_alerts);
   setValue($("autoResume"), s.auto_resume);
   $("autoResume").disabled = next.platform !== "win32";
-  if (next.platform !== "win32") $("autoResumeHint").textContent = "Claude Code sessions running in a terminal are listed on the flyout and the chips. Resuming them automatically needs Windows; here a session stopped by a usage limit waits for you.";
+  if (next.platform !== "win32") {
+    $("autoResumeHint").textContent = "Claude Code sessions running in a terminal are listed on the flyout and the chips. Listing the other CLIs and resuming sessions automatically needs Windows; here a session stopped by a usage limit waits for you.";
+    $("folderMenuHint").textContent = "The folder menu that starts a CLI in the right-clicked folder is registered on Windows.";
+  }
   setValue($("quiet"), s.quiet_hours.enabled);
   setValue($("quietStart"), s.quiet_hours.start);
   setValue($("quietEnd"), s.quiet_hours.end);
@@ -240,6 +243,8 @@ function renderAccounts(rows) {
     block.append(head);
     if (row.detail) block.append(el("p", "hint", row.detail));
     if (row.choices && row.choices.length > 1) {
+      const choices = el("div", "account-choices");
+      block.append(choices);
       for (const choice of row.choices) {
         const label = el("label", "radio");
         const input = el("input");
@@ -250,7 +255,7 @@ function renderAccounts(rows) {
           if (input.checked) switchAccount(row.id, choice.id);
         });
         label.append(input, el("span", null, choice.label));
-        block.append(label);
+        choices.append(label);
       }
     }
     const button = el("button", "btn", row.signed_in ? "Switch account" : "Sign in");

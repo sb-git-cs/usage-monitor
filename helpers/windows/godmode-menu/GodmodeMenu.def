@@ -1,0 +1,5 @@
+LIBRARY GodmodeMenu.dll
+
+EXPORTS
+DllCanUnloadNow
+DllGetClassObject

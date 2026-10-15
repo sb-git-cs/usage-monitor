@@ -96,9 +96,24 @@ async function check(file) {
       assert.match(result.net, /Used in the last hour ?↓ 120 MB\s↑ 8\.00 MB/);
       assert.ok(result.net.includes(`Now: ${hostile} 1.0 MB/s · Teams 80 KB/s`), "app names render as text");
       assert.equal(result.cards, 4);
-      assert.match(result.sessions, /^›_Sessions Resume after limit Anthropic .* Limit reached · resumes in (1h 00m|59m) OpenAI api Working$/);
+      assert.match(result.sessions, /^›_Sessions2 · 1 at limit Resume after limit Anthropic .* Limit reached · resumes in (1h 00m|59m) OpenAI api Working$/);
       assert.ok(result.sessions.includes(hostile), "session names render as text");
       assert.equal(await win.webContents.executeJavaScript(`document.getElementById('autoResume').checked`), true);
+      const past = new Date(Date.now() - 600000).toISOString();
+      win.webContents.send("usage://sessions", { auto_resume: false, can_resume: true, sessions: [
+        { key: "claude:c", tool: "claude", name: "web", cwd: "D:/web", state: "limited", resets_at: past, resume_at: past, resume: "off" },
+        { key: "codex:d", tool: "codex", name: "cli", cwd: "D:/cli", state: "limited", resets_at: null, resume_at: null, resume: "scheduled" },
+        { key: "grok:7:1", tool: "grok", label: "Grok Build", name: "api", cwd: "D:/api", state: "running", resets_at: null, resume_at: null, resume: null },
+      ] });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.deepEqual(await win.webContents.executeJavaScript(`[...document.querySelectorAll('#sessionRows .session-state')].map((el) => el.textContent)`),
+        ["Limit reset · type continue to resume", "Limit reached · reset time not reported", "Running"], "a passed or unknown reset is not shown as a countdown");
+      assert.equal(await win.webContents.executeJavaScript(`document.querySelectorAll('#sessionRows .session-row')[2].title`), "Grok Build · D:/api");
+      assert.equal(await win.webContents.executeJavaScript(`document.querySelectorAll('#sessionRows .eta').length`), 0);
+      assert.equal(await win.webContents.executeJavaScript(`document.getElementById('autoResume').checked`), false);
+      assert.equal(await win.webContents.executeJavaScript(`document.getElementById('godmode')`), null, "the flyout has no Godmode switch");
+      win.webContents.send("usage://sessions", sessionsView);
+      await new Promise((resolve) => setTimeout(resolve, 100));
       assert.deepEqual(result.widths, ["25%", "90%", "80%", "0%"]);
       assert.equal(result.reds, 2);
       assert.match(result.text, /5h reaches 100% around \d{1,2}:\d\d [AP]M at this pace \(\+40%\/h\)/, "burn-rate forecast line");

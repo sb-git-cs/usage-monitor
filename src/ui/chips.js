@@ -183,15 +183,24 @@ window.usage.onNet(renderNet);
 // ---- coding sessions chip ---------------------------------------------------------
 
 const sessionChip = document.getElementById("sessionChip");
-const SESSION_TOOLS = { claude: "Claude Code", codex: "Codex" };
+const SESSION_TOOLS = { claude: "Claude Code", codex: "Codex", grok: "Grok Build", gemini: "Gemini", cursor: "Cursor Agent", copilot: "Copilot CLI" };
 let lastSessions = null;
 let sessionSig = "";
 
 function sessionTitle(s) {
-  const at = s.resume === "scheduled" ? s.resume_at : s.resets_at;
-  const state = s.state === "working" ? "working" : s.state !== "limited" ? "waiting for you"
-    : s.resume === "sent" ? "resumed" : s.resume === "scheduled" ? `limit reached, resumes in ${formatEta(at)}` : `limit reached, resets in ${formatEta(at)}`;
-  return `${SESSION_TOOLS[s.tool] || s.tool} · ${s.name}: ${state}`;
+  const reset = Date.parse(s.resets_at);
+  const resume = {
+    scheduled: () => `limit reached, resumes in ${formatEta(s.resume_at)}`,
+    retrying: () => "limit reset, resuming",
+    pending: () => "limit reset, meters still full",
+    sent: () => "resumed",
+    failed: () => "limit reset, couldn't type into the terminal",
+  }[s.resume];
+  const state = s.state === "working" ? "working" : s.state === "running" ? "running" : s.state !== "limited" ? "waiting for you"
+    : !Number.isFinite(reset) ? "limit reached"
+    : resume ? resume()
+    : reset > Date.now() ? `limit reached, resets in ${formatEta(s.resets_at)}` : "limit reset, type continue to resume";
+  return `${s.label || SESSION_TOOLS[s.tool] || s.tool} · ${s.name}: ${state}`;
 }
 
 // "1h05" / "42m": the strip has room for four characters.
@@ -213,7 +222,7 @@ function renderSessions(view) {
     return;
   }
   const stopped = list.filter((s) => s.state === "limited");
-  const next = stopped.map((s) => Date.parse(s.resume === "scheduled" ? s.resume_at : s.resets_at)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+  const next = stopped.map((s) => Date.parse(s.resume === "scheduled" ? s.resume_at : s.resets_at)).filter((t) => t > Date.now()).sort((a, b) => a - b)[0];
   const working = list.filter((s) => s.state === "working").length;
   const lower = stopped.length ? `⏸ ${next ? shortEta(next) : stopped.length}` : `▶ ${working}`;
   const sig = `${list.length}|${lower}|${list.map(sessionTitle).join("\n")}`;

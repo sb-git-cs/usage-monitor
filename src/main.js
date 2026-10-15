@@ -18,6 +18,7 @@ const { Insights } = require("./insights");
 const insightsWindow = require("./insights-window");
 const { PhoneLink } = require("./phone");
 const accounts = require("./accounts");
+const folderMenu = require("./folder-menu");
 const claude = require("./adapters/claude");
 const codex = require("./adapters/codex");
 const gemini = require("./adapters/gemini");
@@ -618,7 +619,7 @@ function broadcastSessions(view) {
 // Reports a resume once it was typed, or once every attempt failed.
 function sessionResumed(session, attempt) {
   if (!attempt.sent && attempt.count < sessions.MAX_ATTEMPTS) return;
-  const where = `${session.tool === "codex" ? "Codex" : "Claude Code"} · ${session.name}`;
+  const where = `${session.label || session.tool} · ${session.name}`;
   const title = attempt.sent ? "Session resumed" : "Couldn't resume a session";
   const body = attempt.sent
     ? `${where}: typed "${sessions.RESUME_TEXT}" after the usage limit reset.`
@@ -632,6 +633,7 @@ function setAutoResume(enabled) {
   if (typeof enabled !== "boolean" || enabled === cfg.auto_resume) return;
   cfg.auto_resume = enabled;
   config.save(cfg);
+  if (latestSessions) broadcastSessions({ ...latestSessions, auto_resume: enabled });
   if (sessionWatch) sessionWatch.refresh();
   sendSettings();
 }
@@ -1402,7 +1404,9 @@ function wireIpc() {
     }
   });
   ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
-  ipcMain.handle("usage://get-sessions", () => latestSessions);
+  ipcMain.handle("usage://get-sessions", () => latestSessions || {
+    auto_resume: cfg.auto_resume === true, can_resume: process.platform === "win32", sessions: [],
+  });
   ipcMain.on("usage://set-auto-resume", (e, enabled) => {
     if (flyout && !flyout.isDestroyed() && e.sender === flyout.webContents) setAutoResume(enabled);
   });
@@ -1482,6 +1486,14 @@ if (!gotLock) {
     );
     if (process.platform === "darwin" && app.dock) app.dock.hide();
     cfg = config.ensure();
+    if (IS_WINDOWS) {
+      try {
+        const menu = folderMenu.install({ icon: app.isPackaged ? `${process.execPath},0` : path.join(__dirname, "ui", "icon.ico") });
+        if (!menu.ok) log.error("folder menu", menu.error || "failed");
+      } catch (err) {
+        log.error("folder menu", err);
+      }
+    }
     cfg.autostart = autostart.apply(cfg.autostart !== false);
     config.save(cfg);
     insights = new Insights();

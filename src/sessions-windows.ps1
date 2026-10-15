@@ -3,9 +3,11 @@
 # stdin closes, so the process never outlives the app.
 #   {"op":"scan","pids":[1,2],"names":["codex"]}  start time, folder and command line of those processes
 #   {"op":"type","pid":1,"start":"...","text":"continue","expect":"regex"}  types the text, then Enter,
-#     into that console, only while its screen shows text matching expect (the limit message);
-#     "lines":N checks only the last N non-blank lines
+#     into that console, only while its screen shows text matching expect (the limit message,
+#     or a permission prompt). Empty text sends Enter alone. "lines":N checks only the last N
+#     non-blank lines. A miss returns shown:false and types nothing.
 #   {"op":"peek","pid":1,"start":"...","expect":"regex","lines":N}  the same screen check, typing nothing
+#   {"op":"screen","pid":1,"start":"...","lines":N}  the last N non-blank lines of that console, or null
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 using System;
@@ -89,9 +91,9 @@ public static class SessionConsole {
     return System.Text.Encoding.Unicode.GetString(text);
   }
 
-  // [folder, command line] of a 64-bit process owned by this user; nulls when unreadable.
+  // [folder, command line, parent id] of a 64-bit process owned by this user; nulls when unreadable.
   public static string[] Details(int pid) {
-    string[] result = new string[2];
+    string[] result = new string[3];
     IntPtr h = OpenProcess(QUERY_INFO | VM_READ, false, pid);
     if (h == IntPtr.Zero) return result;
     try {
@@ -99,6 +101,7 @@ public static class SessionConsole {
       if (IntPtr.Size != 8 || (IsWow64Process(h, out wow) && wow)) return result;
       PROCESS_BASIC_INFORMATION pbi = new PROCESS_BASIC_INFORMATION(); int ret;
       if (NtQueryInformationProcess(h, 0, ref pbi, Marshal.SizeOf(pbi), out ret) != 0) return result;
+      result[2] = pbi.Reserved3.ToInt64().ToString();
       IntPtr parameters = ReadPtr(h, pbi.PebBaseAddress + 0x20);
       if (parameters == IntPtr.Zero) return result;
       result[0] = ReadUnicode(h, parameters + 0x38);
@@ -141,6 +144,21 @@ public static class SessionConsole {
     }
   }
 
+  // The newest non-blank lines of that console; null when it has none or cannot be read.
+  public static string Screen(int pid, int lastLines) {
+    FreeConsole();
+    if (!AttachConsole(pid)) return null;
+    SetConsoleCtrlHandler(IntPtr.Zero, true);
+    try {
+      string text = ScreenText(120, lastLines > 0 ? lastLines : 120);
+      // Control characters left in a cell would break the JSON reply.
+      return text == null ? null : System.Text.RegularExpressions.Regex.Replace(text, "[\x00-\x09\x0B-\x1F]", " ");
+    } finally {
+      FreeConsole();
+      SetConsoleCtrlHandler(IntPtr.Zero, false);
+    }
+  }
+
   // lastLines limits the check to the newest lines, so an older message that scrolled up does not count.
   public static string Type(int pid, string text, int enterDelayMs, string expect, int lastLines) {
     FreeConsole();
@@ -150,13 +168,13 @@ public static class SessionConsole {
       if (!String.IsNullOrEmpty(expect)) {
         string screen = ScreenText(120, lastLines > 0 ? lastLines : 120);
         if (screen == null) return "terminal screen unreadable";
-        if (!System.Text.RegularExpressions.Regex.IsMatch(screen, expect, System.Text.RegularExpressions.RegexOptions.IgnoreCase)) return "limit message not on that terminal";
+        if (!System.Text.RegularExpressions.Regex.IsMatch(screen, expect, System.Text.RegularExpressions.RegexOptions.IgnoreCase)) return "not shown";
       }
       IntPtr input = CreateFileW("CONIN$", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
       if (input == new IntPtr(-1)) return "console input unavailable (" + Marshal.GetLastWin32Error() + ")";
       try {
         List<INPUT_RECORD> recs = new List<INPUT_RECORD>();
-        foreach (char ch in text) {
+        if (text != null) foreach (char ch in text) {
           ushort vk = (ushort)(VkKeyScanW(ch) & 0xff);
           if (vk == 0xff) vk = 0;
           recs.Add(Key(ch, vk, true));
@@ -192,7 +210,7 @@ function Get-Scan($req) {
     if ($seen.ContainsKey($p.Id)) { continue }
     $seen[$p.Id] = $true
     $details = [SessionConsole]::Details($p.Id)
-    $procs += @{ pid = $p.Id; name = $p.ProcessName; start = (Get-Start $p); cwd = $details[0]; cmd = $details[1] }
+    $procs += @{ pid = $p.Id; name = $p.ProcessName; start = (Get-Start $p); cwd = $details[0]; cmd = $details[1]; ppid = [int]$details[2] }
   }
   @{ procs = $procs }
 }
@@ -203,14 +221,25 @@ function Invoke-Peek($req) {
   @{ shown = ([SessionConsole]::Shows([int]$req.pid, [string]$req.expect, [int]$req.lines) -eq $true) }
 }
 
+function Invoke-Screen($req) {
+  try { $p = [Diagnostics.Process]::GetProcessById([int]$req.pid) } catch { return @{ text = $null } }
+  if ($req.start -and (Get-Start $p) -ne [string]$req.start) { return @{ text = $null } }
+  @{ text = [SessionConsole]::Screen([int]$req.pid, [int]$req.lines) }
+}
+
 function Invoke-Type($req) {
   try { $p = [Diagnostics.Process]::GetProcessById([int]$req.pid) } catch { return @{ ok = $false; error = 'terminal closed' } }
   # A reused process id belongs to another program; never type into it.
   if ($req.start -and (Get-Start $p) -ne [string]$req.start) { return @{ ok = $false; error = 'terminal closed' } }
   $err = [SessionConsole]::Type([int]$req.pid, [string]$req.text, 600, [string]$req.expect, [int]$req.lines)
+  # shown:false is "the prompt is not on this screen", not a failure to type.
+  if ($err -eq 'not shown') { return @{ ok = $false; shown = $false; error = 'limit message not on that terminal' } }
   if ($err) { return @{ ok = $false; error = $err } }
   @{ ok = $true }
 }
+
+# Folders, command lines and screen text can hold any character; Node reads the replies as UTF-8.
+try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch {}
 
 while ($null -ne ($line = [Console]::In.ReadLine())) {
   if ($line -eq 'exit') { break }
@@ -219,6 +248,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     if ($req.op -eq 'scan') { $result = Get-Scan $req }
     elseif ($req.op -eq 'type') { $result = Invoke-Type $req }
     elseif ($req.op -eq 'peek') { $result = Invoke-Peek $req }
+    elseif ($req.op -eq 'screen') { $result = Invoke-Screen $req }
     else { $result = @{ error = 'unknown request' } }
     $json = $result | ConvertTo-Json -Depth 5 -Compress
   } catch { $json = '{"error":true}' }

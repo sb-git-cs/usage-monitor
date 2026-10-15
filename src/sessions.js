@@ -1,11 +1,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { claudeConfigDir, codexHome } = require("./paths");
+const { claudeConfigDir, codexHome, grokHome, cursorCliDir } = require("./paths");
 const { createWorker, spawnWorker } = require("./system");
 
 // Coding sessions running in a terminal, and resuming the ones a usage limit stopped.
 // Claude Code records each running session in ~/.claude/sessions/<pid>.json; Codex has no such
 // record, so a running `codex` process is matched to its rollout by folder and start time.
+// Grok Build, Antigravity, Gemini CLI, Cursor Agent and Copilot CLI keep no record we can read:
+// they are found by process (Windows), and their own terminal's screen shows whether a limit stopped them.
 // A session stopped by a limit gets "continue" typed into its own terminal once the limit has reset.
 // Nothing is typed when the terminal has closed, when it no longer shows the limit message, while
 // the session is busy, or on macOS/Linux.
@@ -26,6 +28,47 @@ const LIMIT_ON_SCREEN = "hit your [\\w -]*limit|limit reached";
 // shows its composer and footer below it), and only within hours of the reset the meters reported.
 const ORPHAN_LINES = 10;
 const ORPHAN_WINDOW_MS = 6 * 3600_000;
+// The usage-limit messages of the other CLIs. Grok: "You hit your weekly limit.", "You've reached
+// your free Grok Build usage limit"; Antigravity and Gemini CLI: "You have exhausted your quota on
+// this model."; Cursor: "You've hit your usage limit"; Copilot: "Sorry, you've hit a rate limit that
+// restricts the number of Copilot model requests ... Please try again in 4 hours.", "You've hit your
+// rate limit. Please wait for your limit to reset in 3 hours 49 minutes", "you've exceeded your ... quota".
+// A spending cap or an empty credit balance does not reset on its own and is left out. Runs in
+// .NET too (the helper checks it again before typing), so it keeps to syntax both share.
+const OTHER_LIMIT_ON_SCREEN = [
+  "hit your (?:[\\w-]+ ){0,4}limit",
+  "hit (?:a|the) rate limit",
+  "reached your (?:[\\w-]+ ){0,5}limit",
+  "exhausted your (?:[\\w-]+ ){0,4}quota",
+  "exceeded your (?:[\\w-]+ ){0,4}(?:quota|limit|allowance)",
+  "usage limit reached",
+  "quota exceeded for quota metric",
+].join("|");
+// The message must be among the newest lines: below it are only the prompt box and footer.
+const OTHER_LINES = 12;
+// Launch forms that are not an interactive session.
+const OTHER_NON_TUI = new Set(["-p", "--print", "--prompt", "-v", "-V", "--version", "-h", "--help", "help", "login", "logout",
+  "update", "upgrade", "mcp", "acp", "serve", "server", "daemon", "worker-server", "status", "completion", "doctor"]);
+const OTHER_PROMPT_FLAGS = new Set(["-p", "--print", "--prompt"]);
+// exe: the process name; script: the program on a node.exe command line. working / idle: what that
+// CLI draws while a turn runs and while it waits at an empty prompt (from each CLI's own interface
+// text). A dialog's "Esc to cancel" is not a running turn, so each CLI has its own pattern.
+// Grok's state comes from its session events instead; its screen pattern is the fallback.
+const OTHER_CLIS = [
+  { tool: "grok", label: "Grok Build", exe: /^grok$/i, working: /send a message to interrupt/i },
+  // Grok installs a second name for the same program; "agent" alone is too common a name.
+  { tool: "grok", label: "Grok Build", exe: /^agent$/i, path: /[\\/]\.grok[\\/]bin[\\/]agent\.exe/i, working: /send a message to interrupt/i },
+  // Antigravity: "Working... (12s · esc to cancel)", "Press esc to interrupt generation."; idle footer "? for shortcuts".
+  { tool: "gemini", label: "Antigravity", exe: /^agy$/i, working: /esc to interrupt|\(\s*\d[^)\n]*esc to cancel\)|generating\.\.\./i, idle: /\? for shortcuts/i },
+  // Gemini CLI: "(esc to cancel, 12s)".
+  { tool: "gemini", label: "Gemini CLI", exe: /^gemini$/i, script: /[\\/]@google[\\/]gemini-cli[\\/][^"\s]*\.js"?/i, working: /\(esc to cancel, \d+s\)/i },
+  // Cursor: the prompt shows "ctrl+c to stop" while a turn runs, "Plan, search, build anything" or "Add a follow-up" when empty.
+  { tool: "cursor", label: "Cursor Agent", exe: /^cursor-agent$/i, script: /[\\/]cursor-agent[\\/]versions[\\/][^\\/"]+[\\/]index\.js"?/i,
+    working: /ctrl\+c to stop/i, idle: /plan, search, build anything|add a follow-up/i },
+  // Copilot: the npm loader starts the native copilot.exe in the same terminal; the loader is the session.
+  { tool: "copilot", label: "Copilot CLI", exe: /^copilot$/i, script: /[\\/]@github[\\/]copilot[\\/][^"\s]*\.js"?/i, working: /\(esc to cancel\b|esc to interrupt/i },
+];
+const OTHER_NAMES = ["grok", "agent", "agy", "gemini", "cursor-agent", "copilot", "node"];
 // `codex <subcommand>` forms that are not an interactive terminal session.
 const CODEX_NON_TUI = new Set(["app-server", "exec", "e", "mcp", "mcp-server", "login", "logout", "apply", "a", "proto",
   "completion", "sandbox", "debug", "cloud", "features", "help", "-h", "--help", "-V", "--version"]);
@@ -211,6 +254,90 @@ function isCodexTui(proc) {
   return !first || !CODEX_NON_TUI.has(first);
 }
 
+// Which of the other CLIs a process is, with its arguments; null for anything else.
+function otherCli(proc) {
+  const cmd = String(proc.cmd || "");
+  for (const cli of OTHER_CLIS) {
+    let args = null;
+    if (cli.exe.test(proc.name || "") && (!cli.path || cli.path.test(cmd))) {
+      args = codexArgs(cmd);
+    } else if (cli.script && /^node$/i.test(proc.name || "")) {
+      const m = cli.script.exec(cmd);
+      if (m) args = cmd.slice(m.index + m[0].length).trim().split(/\s+/).filter(Boolean);
+    }
+    if (args) return { cli, args };
+  }
+  return null;
+}
+
+function isOtherTui(args) {
+  if (args.some((arg) => OTHER_PROMPT_FLAGS.has(arg))) return false;
+  const first = args.find((arg) => !arg.startsWith("-") || OTHER_NON_TUI.has(arg));
+  return !first || !OTHER_NON_TUI.has(first);
+}
+
+// A reset time in a limit message: "resets 10:10pm", "try again at 6:05 PM", "try again in 2h 30m".
+function resetOnScreen(text, seenAt) {
+  const s = String(text || "");
+  const clock = /(?:resets?|try again|available again)(?: at)? (\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\b/i.exec(s);
+  if (clock) {
+    const d = new Date(seenAt);
+    d.setHours((Number(clock[1]) % 12) + (clock[3].toLowerCase() === "p" ? 12 : 0), Number(clock[2] || 0), 0, 0);
+    if (d.getTime() <= seenAt) d.setDate(d.getDate() + 1);
+    return d.getTime();
+  }
+  // Cursor: "Your usage limits will reset when your monthly cycle ends on 8/14/2025." (month first)
+  const date = /(?:resets?|ends|renews)\b[\s\S]{0,80}?\bon\s+(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})\b/i.exec(s);
+  if (date) {
+    const year = Number(date[3]) < 100 ? 2000 + Number(date[3]) : Number(date[3]);
+    return new Date(year, Number(date[1]) - 1, Number(date[2])).getTime();
+  }
+  if (/(?:resets?|try again) in under a minute/i.test(s)) return seenAt + 60_000;
+  const rel = /(?:resets?|try again|available again) in ((?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m)\b[\s,]*(?:and\s+)?)+)/i.exec(s);
+  if (!rel) return null;
+  let ms = 0;
+  for (const [, n, unit] of rel[1].matchAll(/(\d+)\s*([a-z]+)/gi)) {
+    const u = unit.toLowerCase();
+    ms += Number(n) * (u.startsWith("d") ? 86400_000 : u.startsWith("h") ? 3600_000 : 60_000);
+  }
+  return ms ? seenAt + ms : null;
+}
+
+// Grok Build: whether a turn is running, from the session's events.jsonl. A permission request
+// with no answer yet waits for the user.
+function grokState(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const type = entries[i] && entries[i].type;
+    if (type === "turn_ended") return { busy: false, error: entries[i].outcome === "error" };
+    if (type === "permission_requested") return { busy: false };
+    if (["turn_started", "loop_started", "first_token", "phase_changed", "tool_started", "tool_completed", "permission_resolved"].includes(type)) return { busy: true };
+  }
+  return { busy: false };
+}
+
+// Grok writes its session folders under the folder path, URL-encoded.
+function grokSessionDir(root, cwd, id) {
+  const direct = path.join(root, "sessions", encodeURIComponent(String(cwd || "")), id);
+  if (fs.existsSync(direct)) return direct;
+  try {
+    for (const dir of fs.readdirSync(path.join(root, "sessions"))) {
+      const candidate = path.join(root, "sessions", dir, id);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  } catch {
+    /* no sessions folder */
+  }
+  return null;
+}
+
+// The latest reset of a window the meters read as used up.
+function spentReset(snapshot, tool, now) {
+  const p = (snapshot?.providers || []).find((item) => item.id === tool && item.status?.state === "ok");
+  const at = (p?.windows || []).filter((w) => Number.isFinite(w.used_pct) && w.used_pct >= 100 && Date.parse(w.resets_at) > now)
+    .map((w) => Date.parse(w.resets_at));
+  return at.length ? Math.max(...at) : null;
+}
+
 function processAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -229,14 +356,17 @@ function helperRequest(req) {
 function createWatcher({
   getConfig = () => ({}), snapshot = () => null, onChange = () => {}, onResume = () => {},
   platform = process.platform, now = Date.now, request = helperRequest,
-  claudeDir = claudeConfigDir, codexDir = codexHome, text = RESUME_TEXT,
+  claudeDir = claudeConfigDir, codexDir = codexHome, grokDir = grokHome, cursorDir = cursorCliDir, text = RESUME_TEXT,
 } = {}) {
   const attempts = new Map();
   const transcripts = new Map(); // sessionId -> path
   const tails = new Map(); // path -> { key, state }
   const heads = new Map(); // rollout path -> session header
+  const limitsSeen = new Map(); // other CLI session key -> { resets }, fixed when its limit message first showed
+  const spentSeen = new Map(); // provider -> latest used-up reset the meters reported
   let view = { auto_resume: false, can_resume: platform === "win32", sessions: [] };
   let busy = false;
+  let again = false; // a refresh asked for while a scan was running
   let codexSpent = null;
 
   function cachedState(file, read) {
@@ -367,11 +497,67 @@ function createWatcher({
     return names;
   }
 
+  // Grok Build lists its open sessions with their process ids, like Claude Code.
+  function grokRecords() {
+    try {
+      const list = JSON.parse(fs.readFileSync(path.join(grokDir(), "active_sessions.json"), "utf8"));
+      return Array.isArray(list) ? list.filter((r) => r && Number.isInteger(r.pid) && typeof r.session_id === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // Title and turn state of one Grok session.
+  function grokSession(record) {
+    const dir = grokSessionDir(grokDir(), record.cwd, record.session_id);
+    if (!dir) return { name: null, state: null };
+    let name = null;
+    try {
+      const summary = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
+      name = summary.generated_title || summary.session_summary || null;
+    } catch {
+      /* not written yet */
+    }
+    const state = cachedState(path.join(dir, "events.jsonl"), grokState);
+    return { name, state };
+  }
+
+  // Cursor Agent writes chats/<folder hash>/<chat id>/meta.json: folder, title and times. A chat
+  // created as the process started is that terminal's; with one Cursor terminal in a folder, its
+  // latest chat is.
+  function cursorChats() {
+    const out = [];
+    const root = path.join(cursorDir(), "chats");
+    let groups = [];
+    try {
+      groups = fs.readdirSync(root);
+    } catch {
+      return out;
+    }
+    for (const group of groups) {
+      let ids = [];
+      try {
+        ids = fs.readdirSync(path.join(root, group));
+      } catch {
+        continue;
+      }
+      for (const id of ids) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(path.join(root, group, id, "meta.json"), "utf8"));
+          if (Number.isFinite(meta.createdAtMs)) out.push({ id, cwd: meta.cwd, title: meta.title || null, created: meta.createdAtMs, updated: meta.updatedAtMs || meta.createdAtMs });
+        } catch {
+          /* not a chat */
+        }
+      }
+    }
+    return out;
+  }
+
   async function collect() {
     const records = claudeRecords();
     let procs = [];
     if (platform === "win32") {
-      const reply = await request({ op: "scan", pids: records.map((r) => r.pid), names: ["codex"] });
+      const reply = await request({ op: "scan", pids: records.map((r) => r.pid), names: ["codex", ...OTHER_NAMES] });
       procs = (reply && Array.isArray(reply.procs) ? reply.procs : []).filter((p) => p && Number.isInteger(p.pid));
     }
     const byPid = new Map(procs.map((p) => [p.pid, p]));
@@ -383,7 +569,7 @@ function createWatcher({
       const file = claudeTranscript(r);
       const state = (file && cachedState(file, claudeState)) || { limited: false };
       sessions.push({
-        key: `claude:${r.sessionId}`, tool: "claude", pid: r.pid, start: proc ? proc.start : null,
+        key: `claude:${r.sessionId}`, tool: "claude", label: "Claude Code", pid: r.pid, start: proc ? proc.start : null,
         name: r.name || path.basename(r.cwd || "") || "Claude Code", cwd: r.cwd || "",
         state: state.limited && r.status !== "busy" ? "limited" : r.status === "busy" ? "working" : "idle",
         resets_at: state.limited ? state.resets_at : null, limit: state.limited ? state.limit : null,
@@ -401,7 +587,7 @@ function createWatcher({
       for (const p of codexProcs) {
         const r = matched.get(p.pid);
         const cwd = (r && r.cwd) || (p.cwd || "").replace(/[\\/]+$/, "");
-        const base = { tool: "codex", pid: p.pid, start: p.start, cwd, limit: null, started: p.started };
+        const base = { tool: "codex", label: "Codex", pid: p.pid, start: p.start, cwd, limit: null, started: p.started };
         if (r) {
           const state = cachedState(r.file, codexState) || { limited: false, busy: false };
           sessions.push({ ...base, key: `codex:${r.id}`, name: names.get(r.id) || path.basename(cwd) || "Codex",
@@ -428,11 +614,95 @@ function createWatcher({
           state: shown ? "limited" : "idle", resets_at: shown ? resets : null, can_type: true, lines: ORPHAN_LINES });
       }
     }
+    if (platform === "win32") {
+      sessions.push(...await collectOthers(procs));
+    } else {
+      // Without the Windows helper, Grok's own records still list its sessions; nothing is typed.
+      for (const r of grokRecords()) {
+        if (!processAlive(r.pid)) continue;
+        const info = grokSession(r);
+        const cwd = String(r.cwd || "").replace(/[\\/]+$/, "");
+        sessions.push({ key: `grok:${r.session_id}`, tool: "grok", label: "Grok Build", pid: r.pid, start: null, cwd,
+          name: info.name || path.basename(cwd) || "Grok Build", state: info.state && info.state.busy ? "working" : "idle",
+          resets_at: null, limit: null, can_type: false, started: Date.parse(r.opened_at) || null });
+      }
+    }
     return sessions;
   }
 
+  async function collectOthers(procs) {
+    const found = [];
+    for (const p of procs) {
+      const hit = otherCli(p);
+      if (hit && isOtherTui(hit.args)) found.push({ ...p, cli: hit.cli });
+    }
+    // A worker a CLI starts for itself is part of that session, not another one.
+    const pids = new Set(found.map((p) => p.pid));
+    const out = [];
+    const live = new Set();
+    const grok = found.some((p) => p.cli.tool === "grok") ? grokRecords() : [];
+    const chats = found.some((p) => p.cli.tool === "cursor") ? cursorChats() : [];
+    const cursors = found.filter((p) => p.cli.tool === "cursor" && !pids.has(p.ppid));
+    for (const p of found) {
+      if (pids.has(p.ppid)) continue;
+      let screen = null;
+      try {
+        screen = (await request({ op: "screen", pid: p.pid, start: p.start, lines: OTHER_LINES }))?.text ?? null;
+      } catch {
+        screen = null;
+      }
+      // No screen to read: started by an editor or another program, not in a terminal.
+      if (typeof screen !== "string") continue;
+      const started = filetimeMs(p.start);
+      let key = `${p.cli.tool}:${p.pid}:${p.start}`;
+      let name = null;
+      let busy = null; // null: the screen decides
+      if (p.cli.tool === "grok") {
+        // The record must be this process's, not one left by a process that had the same id.
+        const r = grok.find((item) => item.pid === p.pid && !(Date.parse(item.opened_at) < started - 5000));
+        if (r) {
+          const info = grokSession(r);
+          key = `grok:${r.session_id}`;
+          name = info.name;
+          if (info.state) busy = info.state.busy;
+        }
+      } else if (p.cli.tool === "cursor") {
+        const mine = chats.filter((c) => sameFolder(c.cwd, p.cwd, platform) && c.created >= started - 5000);
+        const alone = cursors.filter((q) => sameFolder(q.cwd, p.cwd, platform)).length === 1;
+        const chat = alone ? mine.sort((a, b) => b.updated - a.updated)[0]
+          : mine.filter((c) => c.created <= started + 120_000).sort((a, b) => a.created - b.created)[0];
+        if (chat && chat.title) name = chat.title;
+      }
+      const working = busy != null ? busy : !!(p.cli.working && p.cli.working.test(screen));
+      const limited = !working && new RegExp(OTHER_LIMIT_ON_SCREEN, "i").test(screen);
+      let resets = null;
+      if (limited) {
+        live.add(key);
+        // The reset is worked out once, when the message first shows: "in 2h" means from then.
+        const seen = limitsSeen.get(key) || { resets: resetOnScreen(screen, now()) };
+        if (!Number.isFinite(seen.resets)) {
+          const spent = spentSeen.get(p.cli.tool);
+          seen.resets = Number.isFinite(spent) && now() < spent + ORPHAN_WINDOW_MS ? spent : null;
+        }
+        limitsSeen.set(key, seen);
+        resets = seen.resets;
+      }
+      const cwd = (p.cwd || "").replace(/[\\/]+$/, "");
+      // Waiting for you: Grok's events say no turn runs, or the CLI's empty prompt is showing.
+      const waiting = busy === false || !!(p.cli.idle && p.cli.idle.test(screen));
+      out.push({ key, tool: p.cli.tool, label: p.cli.label, pid: p.pid, start: p.start, cwd, name: name || path.basename(cwd) || p.cli.label,
+        state: limited ? "limited" : working ? "working" : waiting ? "idle" : "running", resets_at: resets, limit: null, can_type: true,
+        started, lines: OTHER_LINES, expect: OTHER_LIMIT_ON_SCREEN });
+    }
+    for (const key of limitsSeen.keys()) if (!live.has(key)) limitsSeen.delete(key);
+    return out;
+  }
+
   async function scan() {
-    if (busy) return view;
+    if (busy) {
+      again = true;
+      return view;
+    }
     busy = true;
     try {
       const cfg = getConfig() || {};
@@ -441,6 +711,10 @@ function createWatcher({
       const spentAt = (meters?.windows || []).filter((w) => Number.isFinite(w.used_pct) && w.used_pct >= 100 && Date.parse(w.resets_at) > now())
         .map((w) => Date.parse(w.resets_at));
       if (spentAt.length) codexSpent = Math.max(...spentAt);
+      for (const cli of OTHER_CLIS) {
+        const at = spentReset(snapshot(), cli.tool, now());
+        if (at != null) spentSeen.set(cli.tool, at);
+      }
       let sessions;
       try {
         sessions = await collect();
@@ -460,7 +734,7 @@ function createWatcher({
         const prev = attempts.get(id) || { count: 0, last: 0, sent: false };
         let result;
         try {
-          result = await request({ op: "type", pid: s.pid, start: s.start, text, expect: LIMIT_ON_SCREEN, ...(s.lines ? { lines: s.lines } : {}) });
+          result = await request({ op: "type", pid: s.pid, start: s.start, text, expect: s.expect || LIMIT_ON_SCREEN, ...(s.lines ? { lines: s.lines } : {}) });
         } catch (err) {
           result = { ok: false, error: err.message };
         }
@@ -474,13 +748,15 @@ function createWatcher({
         }
       }
       for (const id of attempts.keys()) if (!live.has(id)) attempts.delete(id);
+      // A switch flipped during this scan shows as it is now, not as it was when the scan began.
+      const shown = getConfig() || {};
       view = {
-        auto_resume: cfg.auto_resume === true,
+        auto_resume: shown.auto_resume === true,
         can_resume: platform === "win32",
         sessions: sessions
           .sort((a, b) => a.tool.localeCompare(b.tool) || (a.started || 0) - (b.started || 0))
           .map((s) => ({
-            key: s.key, tool: s.tool, name: s.name, cwd: s.cwd, state: s.state, limit: s.limit,
+            key: s.key, tool: s.tool, label: s.label, name: s.name, cwd: s.cwd, state: s.state, limit: s.limit,
             resets_at: Number.isFinite(s.resets_at) ? new Date(s.resets_at).toISOString() : null,
             resume_at: Number.isFinite(s.resets_at) ? new Date(s.resets_at + GRACE_MS).toISOString() : null,
             resume: s.resume || null,
@@ -490,6 +766,10 @@ function createWatcher({
       return view;
     } finally {
       busy = false;
+      if (again) {
+        again = false;
+        setImmediate(scan);
+      }
     }
   }
 
@@ -515,5 +795,6 @@ function start(opts) {
 
 module.exports = {
   start, createWatcher, claudeState, codexState, resumeStatus, matchCodex, isCodexTui, stillLimited,
+  otherCli, isOtherTui, resetOnScreen, grokState, OTHER_CLIS, OTHER_LIMIT_ON_SCREEN, OTHER_LINES,
   filetimeMs, clockAfter, readTail, GRACE_MS, MAX_ATTEMPTS, RETRY_MS, RESUME_TEXT, LIMIT_ON_SCREEN,
 };

@@ -26,6 +26,11 @@ function grokHome() {
   return process.env.GROK_HOME || path.join(home(), ".grok");
 }
 
+// Cursor Agent (the CLI) keeps its chats here; the editor's files are under cursorDir().
+function cursorCliDir() {
+  return process.env.CURSOR_CONFIG_DIR || path.join(home(), ".cursor");
+}
+
 function grokAuth() {
   return path.join(grokHome(), "auth.json");
 }
@@ -142,6 +147,7 @@ function fileExists(p) {
 }
 
 module.exports = {
+  cursorCliDir,
   home,
   claudeConfigDir,
   claudeCredentials,

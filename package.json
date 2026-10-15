@@ -109,6 +109,17 @@
             "NetCapture.cs",
             "setup.ps1"
           ]
+        },
+        {
+          "from": "helpers/windows/godmode-menu",
+          "to": "godmode-menu",
+          "filter": [
+            "register.ps1",
+            "AppxManifest.xml",
+            "GodmodeMenu.dll",
+            "GodmodeMenu.c",
+            "UsageMonitorShell.cs"
+          ]
         }
       ]
     },

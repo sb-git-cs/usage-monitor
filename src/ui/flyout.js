@@ -177,19 +177,23 @@ window.usage.onNet(renderNet);
 
 const sessionCard = document.getElementById("sessions");
 const autoResume = document.getElementById("autoResume");
-const TOOL_NAMES = { claude: "Claude Code", codex: "Codex" };
+const TOOL_NAMES = { claude: "Claude Code", codex: "Codex", grok: "Grok Build", gemini: "Gemini", cursor: "Cursor Agent", copilot: "Copilot CLI" };
 
 // [text, element carrying a countdown]
 function sessionLine(s) {
   if (s.state === "working") return ["Working", null];
+  // Claude Code and Codex say when they wait for input; the other CLIs only that they are open.
+  if (s.state === "running") return ["Running", null];
   if (s.state !== "limited") return ["Waiting for you", null];
+  const reset = Date.parse(s.resets_at);
+  if (!Number.isFinite(reset)) return [s.resume === "scheduled" ? "Limit reached · reset time not reported" : "Limit reached", null];
   switch (s.resume) {
     case "scheduled": return ["Limit reached · resumes in", s.resume_at];
-    case "retrying":
-    case "pending": return ["Limit reset · resuming shortly", null];
+    case "retrying": return ["Limit reset · resuming", null];
+    case "pending": return ["Limit reset · meters still full", null];
     case "sent": return ["Resumed", null];
     case "failed": return ["Limit reset · couldn't type into the terminal", null];
-    default: return ["Limit reached · resets in", s.resets_at];
+    default: return reset > Date.now() ? ["Limit reached · resets in", s.resets_at] : ["Limit reset · type continue to resume", null];
   }
 }
 
@@ -201,17 +205,19 @@ function renderSessions(view) {
     if (!wasHidden) requestAnimationFrame(fitFlyout);
     return;
   }
+  const stopped = list.filter((s) => s.state === "limited").length;
+  document.getElementById("sessionCount").textContent = stopped ? `${list.length} · ${stopped} at limit` : String(list.length);
   document.getElementById("autoResumeRow").hidden = !view.can_resume;
   autoResume.checked = !!view.auto_resume;
   document.getElementById("autoResumeRow").title = 'Type "continue" into the terminal where a usage limit stopped a session, once the limit resets. Only while that terminal is open, still shows the limit message, and the session is idle.';
   document.getElementById("sessionRows").innerHTML = list.map((s) => {
     const [text, at] = sessionLine(s);
     const tone = s.state === "limited" ? (s.resume === "failed" ? " alert" : " limited") : s.state === "working" ? " working" : "";
-    return `<div class="session-row${tone} accent-${escapeHtml(s.tool)}" title="${escapeHtml(`${TOOL_NAMES[s.tool] || s.tool} · ${s.cwd}`)}">
+    return `<div class="session-row${tone} accent-${escapeHtml(s.tool)}" title="${escapeHtml(`${s.label || TOOL_NAMES[s.tool] || s.tool} · ${s.cwd}`)}">
       <span class="session-who">${mark(s.tool)}</span>
       <span class="session-name">${escapeHtml(s.name)}</span>
-      <span class="session-state">${escapeHtml(text)}</span>
-      <span class="eta" ${at ? `data-reset="${escapeHtml(at)}"` : ""}>${at ? formatEta(at) : ""}</span>
+      <span class="session-state${at ? "" : " wide"}">${escapeHtml(text)}</span>
+      ${at ? `<span class="eta" data-reset="${escapeHtml(at)}">${formatEta(at)}</span>` : ""}
     </div>`;
   }).join("");
   requestAnimationFrame(fitFlyout);

@@ -150,13 +150,21 @@ function createWorker({ start = spawnWorker, timeoutMs = SAMPLE_TIMEOUT_MS, rest
   return { sample, stop, get pid() { return child ? child.pid : null; } };
 }
 
+// Reads the script from stdin up to SCRIPT_END, then runs it; requests follow on the same stream.
+const SCRIPT_END = "# end of script";
+const BOOTSTRAP = `$s = New-Object Text.StringBuilder; while ($null -ne ($l = [Console]::In.ReadLine()) -and $l -ne '${SCRIPT_END}') { [void]$s.AppendLine($l) }; Invoke-Expression $s.ToString()`;
+
 function spawnWorker(file = "system-windows.ps1") {
-  // Electron can read inside app.asar; PowerShell cannot run a -File path inside it.
+  // Electron can read inside app.asar; PowerShell cannot run a -File path inside it. The script goes
+  // in on stdin, not the command line, which Windows limits to 32,767 characters.
   const script = fs.readFileSync(path.join(__dirname, file), "utf8");
-  return spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+  const proc = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(BOOTSTRAP, "utf16le").toString("base64")], {
     windowsHide: true,
     stdio: ["pipe", "pipe", "ignore"],
   });
+  proc.stdin.on("error", () => {});
+  proc.stdin.write(`${script.replace(/\r\n/g, "\n")}\n${SCRIPT_END}\n`);
+  return proc;
 }
 
 let worker = null;
