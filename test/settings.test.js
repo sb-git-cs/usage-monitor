@@ -98,7 +98,7 @@ test("a forecast warning is shown once per window, only when enabled and half us
 test("the settings window can only change known settings, to allowed values", () => {
   const saved = [];
   const electron = {
-    app: { setName() {}, on() {}, commandLine: { appendSwitch() {} }, setAppUserModelId() {}, requestSingleInstanceLock: () => false, quit() {}, getVersion: () => "1.3.0" },
+    app: { setName() {}, on() {}, commandLine: { appendSwitch() {} }, setAppUserModelId() {}, disableHardwareAcceleration() {}, requestSingleInstanceLock: () => false, quit() {}, getVersion: () => "1.3.0" },
     ipcMain: { on() {}, handle() {} },
     BrowserWindow: { fromWebContents: () => null },
   };

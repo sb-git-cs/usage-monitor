@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, Notification, nativeImage, nativeTheme, ipcMain, shell, screen, dialog } = require("electron");
+const { app, BrowserWindow, Menu, Tray, Notification, nativeImage, nativeTheme, ipcMain, shell, screen, dialog, powerMonitor } = require("electron");
 const path = require("path");
 const os = require("os");
 const config = require("./config");
@@ -307,6 +307,7 @@ function restoreVisibility() {
   if (cfg) {
     cfg.chips_hidden = false;
     config.save(cfg);
+    applyActivity();
   }
   if (!chips || chips.isDestroyed()) return;
   sendChipsLoading();
@@ -379,9 +380,42 @@ function refreshTrayMenu() {
   tray.setContextMenu(buildMenu());
 }
 
+// Nobody is at the computer while the screen is locked or the system sleeps, or after five idle
+// minutes. Then providers are asked once a minute and sessions every 30 seconds (limits still get
+// resumed). The chips' system readings pause while the screen is locked or the strip is hidden.
+const IDLE_SECS = 300;
+let screenLocked = false;
+function applyActivity() {
+  if (!cfg) return;
+  let idle = false;
+  try {
+    idle = powerMonitor.getSystemIdleTime() >= IDLE_SECS;
+  } catch {
+    /* idle time unavailable */
+  }
+  const away = screenLocked || idle;
+  if (poll) poll.setAway(away);
+  if (sessionWatch) sessionWatch.setAway(away);
+  if (systemPoll) systemPoll.setPaused(screenLocked || !!cfg.chips_hidden);
+}
+
+function watchActivity() {
+  const set = (locked) => () => {
+    screenLocked = locked;
+    applyActivity();
+  };
+  powerMonitor.on("lock-screen", set(true));
+  powerMonitor.on("suspend", set(true));
+  powerMonitor.on("unlock-screen", set(false));
+  powerMonitor.on("resume", set(false));
+  setInterval(applyActivity, 30_000);
+  applyActivity();
+}
+
 function setChipsHidden(hidden) {
   cfg.chips_hidden = !!hidden;
   config.save(cfg);
+  applyActivity();
   if (!chips || chips.isDestroyed()) return;
   if (cfg.chips_hidden) chips.hide();
   else {
@@ -657,7 +691,7 @@ function broadcastInterval() {
 const TRAY_TIP = "Usage Monitor — click to show chips";
 let lastTrayTip = TRAY_TIP;
 function broadcastNet() {
-  if (!cfg) return;
+  if (!cfg || screenLocked) return;
   const flyoutOpen = !!(flyout && !flyout.isDestroyed() && flyout.isVisible());
   const chipsOn = !!(chips && !chips.isDestroyed() && !cfg.chips_hidden);
   let summary = null;
@@ -1461,6 +1495,9 @@ app.on("web-contents-created", (_event, contents) => {
 });
 process.on("SIGHUP", () => {});
 process.on("SIGINT", () => {});
+// The windows are small and mostly text. Software rendering keeps the GPU process about 50 MB
+// smaller and used less CPU in a 30-second comparison with a transparent chips-like window.
+app.disableHardwareAcceleration();
 if (process.platform === "win32") {
   app.setAppUserModelId("Shivam.UsageMonitor");
   app.commandLine.appendSwitch("wm-window-animations-disabled");
@@ -1620,12 +1657,13 @@ if (!gotLock) {
     }, 1000);
 
     setInterval(() => {
-      if (dragState) return;
+      if (dragState || screenLocked) return;
       recoverChipsIfNeeded();
     }, 800);
     setInterval(refreshAccounts, 60_000);
     if (process.platform === "linux") setInterval(refreshTrayMenu, 3000);
     setInterval(broadcastNet, 1000);
+    watchActivity();
     setInterval(() => {
       if (dragState) return;
       if (chips && !cfg.chips_hidden && !chips.isDestroyed() && cfg.chips_docked) {

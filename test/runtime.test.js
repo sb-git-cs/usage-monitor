@@ -144,3 +144,28 @@ test("taskbar converts physical pixels, detects negative-monitor edges and rejec
   assert.equal(layout.isWellDocked(-10, -40, 100, 28), false);
   assert.equal(layout.isWellDocked(10, -40, 100, 28), true);
 });
+
+test("while nobody is at the computer providers are asked once a minute, and at once on return", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  let calls = 0;
+  const mocks = { "./cache": { loadSnapshot: () => null, saveSnapshot() {} } };
+  for (const id of PLAN_IDS) mocks[`./adapters/${id}`] = { fetchUsage: async () => { if (id === "claude") calls++; return provider(id); } };
+  const poller = load("src/poller.js", mocks);
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+  const poll = poller.start({ poll_interval_secs: 5 }, () => {});
+  await settle();
+  assert.equal(calls, 1);
+  poll.setAway(true);
+  for (let i = 0; i < 11; i++) { t.mock.timers.tick(5000); await settle(); }
+  assert.equal(calls, 1, "no reading for 55 seconds while away");
+  t.mock.timers.tick(5000);
+  await settle();
+  assert.equal(calls, 2, "one reading a minute while away");
+  poll.setAway(false);
+  await settle();
+  assert.equal(calls, 3, "back: read at once");
+  t.mock.timers.tick(5000);
+  await settle();
+  assert.equal(calls, 4, "then at the chosen interval");
+  poll.stop();
+});

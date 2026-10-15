@@ -1,13 +1,22 @@
 # Long-lived hardware sampler. Usage Monitor keeps one copy running and writes "sample" on
-# stdin every 5 seconds; each request gets one JSON line back. Starting PowerShell for every
+# stdin every 5 seconds ("sample storage" every 30 seconds also lists the local drives);
+# each request gets one JSON line back. Starting PowerShell for every
 # sample cost about half of the CPU the sampling used. The loop ends when stdin closes, so
 # the process never outlives the app.
 $ErrorActionPreference = 'Stop'
 $script:gpuPresent = $null
 $script:gpuCheckedAt = [DateTime]::MinValue
 
-function Get-Sample {
+function Get-Sample($withStorage) {
   $result = @{ gpuPresent = $null; gpu = $null; disks = @() }
+  if ($withStorage) {
+    # Local fixed drives, here instead of a new PowerShell process for every storage reading.
+    try {
+      $result.volumes = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' |
+        Where-Object { $_.Size -gt 0 } |
+        ForEach-Object { @{ mount = $_.DeviceID; size = [double]$_.Size; used = [double]($_.Size - $_.FreeSpace) } })
+    } catch {}
+  }
   # Graphics adapters rarely change, so the adapter list is refreshed every 5 minutes.
   if (([DateTime]::UtcNow - $script:gpuCheckedAt).TotalMinutes -ge 5) {
     try { $script:gpuPresent = @(Get-CimInstance Win32_VideoController).Count -gt 0 } catch {}
@@ -34,8 +43,8 @@ function Get-Sample {
 
 while ($null -ne ($line = [Console]::In.ReadLine())) {
   if ($line -eq 'exit') { break }
-  if ($line -ne 'sample') { continue }
-  try { $json = Get-Sample } catch { $json = '{"error":true}' }
+  if ($line -ne 'sample' -and $line -ne 'sample storage') { continue }
+  try { $json = Get-Sample ($line -eq 'sample storage') } catch { $json = '{"error":true}' }
   [Console]::Out.WriteLine($json)
   [Console]::Out.Flush()
 }

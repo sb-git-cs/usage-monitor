@@ -13,6 +13,8 @@ const { createWorker, spawnWorker } = require("./system");
 // the session is busy, or on macOS/Linux.
 
 const SCAN_MS = 10_000;
+// While nobody is at the computer the list is not watched, but limits still reset and get resumed.
+const AWAY_SCAN_MS = 30_000;
 const GRACE_MS = 60_000; // after the reported reset, so a slightly fast clock does not hit the limit again
 const RETRY_MS = 60_000;
 const MAX_ATTEMPTS = 3;
@@ -69,6 +71,8 @@ const OTHER_CLIS = [
   { tool: "copilot", label: "Copilot CLI", exe: /^copilot$/i, script: /[\\/]@github[\\/]copilot[\\/][^"\s]*\.js"?/i, working: /\(esc to cancel\b|esc to interrupt/i },
 ];
 const OTHER_NAMES = ["grok", "agent", "agy", "gemini", "cursor-agent", "copilot", "node"];
+// Of the node.exe processes (editors, servers, tools), the helper returns only these CLIs.
+const NODE_ONLY = { name: "node", cmd: OTHER_CLIS.filter((c) => c.script).map((c) => c.script.source).join("|") };
 // `codex <subcommand>` forms that are not an interactive terminal session.
 const CODEX_NON_TUI = new Set(["app-server", "exec", "e", "mcp", "mcp-server", "login", "logout", "apply", "a", "proto",
   "completion", "sandbox", "debug", "cloud", "features", "help", "-h", "--help", "-V", "--version"]);
@@ -557,7 +561,7 @@ function createWatcher({
     const records = claudeRecords();
     let procs = [];
     if (platform === "win32") {
-      const reply = await request({ op: "scan", pids: records.map((r) => r.pid), names: ["codex", ...OTHER_NAMES] });
+      const reply = await request({ op: "scan", pids: records.map((r) => r.pid), names: ["codex", ...OTHER_NAMES], only: NODE_ONLY });
       procs = (reply && Array.isArray(reply.procs) ? reply.procs : []).filter((p) => p && Number.isInteger(p.pid));
     }
     const byPid = new Map(procs.map((p) => [p.pid, p]));
@@ -779,10 +783,18 @@ function createWatcher({
 function start(opts) {
   const watcher = createWatcher(opts);
   watcher.scan();
-  const timer = setInterval(() => watcher.scan(), SCAN_MS);
+  let away = false;
+  let timer = setInterval(() => watcher.scan(), SCAN_MS);
   return {
     refresh: () => watcher.scan(),
     view: () => watcher.view(),
+    setAway(next) {
+      if (!!next === away) return;
+      away = !!next;
+      clearInterval(timer);
+      timer = setInterval(() => watcher.scan(), away ? AWAY_SCAN_MS : SCAN_MS);
+      if (!away) watcher.scan();
+    },
     stop() {
       clearInterval(timer);
       if (worker) {

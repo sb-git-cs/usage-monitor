@@ -6,7 +6,7 @@ function mainHarness(taskbar = {}) {
   const events = {};
   const ipc = {};
   const electron = {
-    app: { setName() {}, on: (event, cb) => { events[event] = cb; }, commandLine: { appendSwitch() {} }, setAppUserModelId() {}, requestSingleInstanceLock: () => false, quit() {} },
+    app: { setName() {}, on: (event, cb) => { events[event] = cb; }, commandLine: { appendSwitch() {} }, setAppUserModelId() {}, disableHardwareAcceleration() {}, requestSingleInstanceLock: () => false, quit() {} },
     ipcMain: { on: (event, cb) => { ipc[event] = cb; }, handle() {} },
     BrowserWindow: { fromWebContents: () => null },
   };

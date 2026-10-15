@@ -1,7 +1,8 @@
 # Long-lived terminal helper for coding sessions. Usage Monitor keeps one copy running and writes
 # one JSON request per line on stdin; each request gets one JSON line back. The loop ends when
 # stdin closes, so the process never outlives the app.
-#   {"op":"scan","pids":[1,2],"names":["codex"]}  start time, folder and command line of those processes
+#   {"op":"scan","pids":[1,2],"names":["codex"],"only":{"name":"node","cmd":"regex"}}  start time, folder,
+#     command line and parent of those processes; "only" drops processes of that name whose command line does not match
 #   {"op":"type","pid":1,"start":"...","text":"continue","expect":"regex"}  types the text, then Enter,
 #     into that console, only while its screen shows text matching expect (the limit message,
 #     or a permission prompt). Empty text sends Enter alone. "lines":N checks only the last N
@@ -210,6 +211,8 @@ function Get-Scan($req) {
     if ($seen.ContainsKey($p.Id)) { continue }
     $seen[$p.Id] = $true
     $details = [SessionConsole]::Details($p.Id)
+    # "only": a name whose command line must match, so other node.exe programs are not sent back.
+    if ($req.only -and $p.ProcessName -eq [string]$req.only.name -and [string]$details[1] -notmatch [string]$req.only.cmd) { continue }
     $procs += @{ pid = $p.Id; name = $p.ProcessName; start = (Get-Start $p); cwd = $details[0]; cmd = $details[1]; ppid = [int]$details[2] }
   }
   @{ procs = $procs }

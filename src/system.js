@@ -169,16 +169,20 @@ function spawnWorker(file = "system-windows.ps1") {
 
 let worker = null;
 
-function windowsSample() {
+function windowsSample(request = "sample") {
   if (!worker) worker = createWorker();
-  return worker.sample();
+  return worker.sample(request);
 }
 
-async function hardwareSample() {
+// withStorage: on Windows the same helper also reads the drives (systeminformation would start
+// a new PowerShell process for each storage reading).
+async function hardwareSample(withStorage = false) {
   if (process.platform === "win32") {
-    const data = await windowsSample();
+    const data = await windowsSample(withStorage ? "sample storage" : "sample");
     const disks = (data.disks || []).filter((d) => percent(d.busy) !== null);
-    return { gpuPresent: data.gpuPresent, gpu: percent(data.gpu), disk: disks.length ? Math.max(...disks.map((d) => d.busy)) : null, disks, diskRate: null };
+    const out = { gpuPresent: data.gpuPresent, gpu: percent(data.gpu), disk: disks.length ? Math.max(...disks.map((d) => d.busy)) : null, disks, diskRate: null };
+    if (withStorage && Array.isArray(data.volumes)) Object.assign(out, storageUsage(data.volumes));
+    return out;
   }
   const [graphics, io] = await Promise.allSettled([si.graphics(), si.fsStats()]);
   const controllers = graphics.status === "fulfilled" ? graphics.value.controllers || [] : null;
@@ -219,13 +223,37 @@ function start(onUpdate) {
     collect("memory", async () => ({ mem: await memoryUsage() }), { mem: null });
   };
   // gpuPresent is deliberately not reset here: a stalled or failed probe must not hide the GPU chip.
-  const hardware = () => collect("hardware", hardwareSample, { gpu: null, disk: null, diskRate: null, disks: [] });
+  // On Windows every sixth hardware sample (30 seconds) also reads the drives.
+  const windows = process.platform === "win32";
+  let hardwareCount = 0;
+  const hardware = () => {
+    const withStorage = windows && hardwareCount++ % 6 === 0;
+    collect("hardware", () => hardwareSample(withStorage), { gpu: null, disk: null, diskRate: null, disks: [] });
+  };
   const storage = () => collect("storage", async () => storageUsage(await si.fsSize()), { space: null, volumes: [] });
-  tick();
-  hardware();
-  storage();
-  const timers = [setInterval(tick, 2000), setInterval(hardware, 5000), setInterval(storage, 30000)];
+  let timers = [];
+  function run() {
+    tick();
+    hardwareCount = 0;
+    hardware();
+    if (!windows) storage();
+    timers = [setInterval(tick, 2000), setInterval(hardware, 5000)];
+    if (!windows) timers.push(setInterval(storage, 30000));
+  }
+  run();
+  let paused = false;
   return {
+    // Nothing reads the chips while the screen is locked or the strip is hidden.
+    setPaused(next) {
+      if (stopped || !!next === paused) return;
+      paused = !!next;
+      timers.forEach(clearInterval);
+      timers = [];
+      if (!paused) {
+        previous = cpuTimes();
+        run();
+      }
+    },
     stop() {
       stopped = true;
       timers.forEach(clearInterval);

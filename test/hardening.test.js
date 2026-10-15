@@ -87,7 +87,7 @@ test("A-10: floating chips on an unplugged monitor are pulled back onto a remain
   const moves = [];
   const primary = { bounds: { x: 0, y: 0, width: 1920, height: 1080 }, workArea: { x: 0, y: 0, width: 1920, height: 1040 } };
   const electron = {
-    app: { setName() {}, on() {}, commandLine: { appendSwitch() {} }, setAppUserModelId() {}, requestSingleInstanceLock: () => false, quit() {} },
+    app: { setName() {}, on() {}, commandLine: { appendSwitch() {} }, setAppUserModelId() {}, disableHardwareAcceleration() {}, requestSingleInstanceLock: () => false, quit() {} },
     ipcMain: { on() {}, handle() {} },
     BrowserWindow: { fromWebContents: () => null },
     screen: { getDisplayNearestPoint: () => primary, getPrimaryDisplay: () => primary },

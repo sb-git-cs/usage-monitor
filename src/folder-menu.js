@@ -69,8 +69,9 @@ function install({
   rename,
 } = {}) {
   if (platform !== "win32") return { ok: false, error: "Windows only" };
+  // Windows only (install returns above elsewhere), so the paths are Windows paths on any host.
   const folder = dir || shellDir();
-  const file = path.join(folder, "godmode-commands.txt");
+  const file = path.win32.join(folder, "godmode-commands.txt");
   const text = commandFileText();
   const write = writeFile || ((target, body) => {
     fs.mkdirSync(folder, { recursive: true });
@@ -81,7 +82,7 @@ function install({
   move(`${file}.tmp`, file);
   if (icon && !String(icon).includes(",") && !writeFile) {
     try {
-      fs.copyFileSync(icon, path.join(folder, "icon.ico"));
+      fs.copyFileSync(icon, path.win32.join(folder, "icon.ico"));
     } catch {
       /* the menu still works without an icon */
     }

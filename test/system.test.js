@@ -21,8 +21,8 @@ function fakeWorker(answer = () => ({ gpuPresent: false, gpu: null, disks: [] })
     proc.stdin.on("data", (chunk) => {
       proc.written += chunk;
       for (const line of String(chunk).split("\n")) {
-        if (line !== "sample") continue;
-        const reply = answer(n++, proc);
+        if (line !== "sample" && line !== "sample storage") continue;
+        const reply = answer(n++, proc, line);
         if (reply !== undefined) proc.stdout.write(`${JSON.stringify(reply)}\n`);
       }
     });
@@ -125,7 +125,8 @@ test("collector consumes failed probes and does not publish results after stoppi
   assert.equal(seen.at(-1).space, null);
   poll.stop();
   const count = seen.length;
-  finishStorage([{ mount: "C:", used: 50, size: 100 }]);
+  // On Windows the drives come from the hardware helper, not systeminformation.
+  if (finishStorage) finishStorage([{ mount: "C:", used: 50, size: 100 }]);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(seen.length, count);
 });
@@ -164,4 +165,46 @@ test("a stalled hardware probe clears its readings but keeps the GPU chip", asyn
   poll.stop();
   assert.equal(seen.at(-1).gpu, null, "stale usage is discarded after 15 seconds");
   assert.equal(seen.at(-1).gpuPresent, true, "the GPU chip stays visible");
+});
+
+test("on Windows the hardware helper also reads the drives, every sixth sample", { skip: process.platform !== "win32" }, async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"] });
+  const requests = [];
+  const fake = fakeWorker((n, _proc, line) => {
+    requests.push(line);
+    return { gpuPresent: false, gpu: null, disks: [], ...(line === "sample storage" ? { volumes: [{ mount: "C:", used: 90, size: 100 }] } : {}) };
+  });
+  const api = load("src/system.js", {
+    systeminformation: { fsSize: async () => { throw new Error("si.fsSize starts PowerShell on Windows"); } },
+    "node:child_process": { spawn: () => fake.start() },
+  });
+  const seen = [];
+  const poll = api.start((s) => seen.push(s));
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  await flush();
+  assert.equal(seen.at(-1).space, 90);
+  for (let i = 0; i < 6; i++) { t.mock.timers.tick(5000); await flush(); }
+  poll.stop();
+  assert.deepEqual(requests, ["sample storage", "sample", "sample", "sample", "sample", "sample", "sample storage"]);
+});
+
+test("paused sampling stops reading until it resumes", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"] });
+  let reads = 0;
+  const fake = fakeWorker(() => { reads++; return { gpuPresent: false, gpu: null, disks: [] }; });
+  const api = load("src/system.js", {
+    systeminformation: { fsSize: async () => [], graphics: async () => { reads++; return { controllers: [] }; }, fsStats: async () => ({ rx_sec: 0, wx_sec: 0 }), mem: async () => ({ total: 1, available: 1 }) },
+    "node:child_process": { spawn: () => fake.start() },
+  });
+  const poll = api.start(() => {});
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  await flush();
+  poll.setPaused(true);
+  const before = reads;
+  for (let i = 0; i < 4; i++) { t.mock.timers.tick(5000); await flush(); }
+  assert.equal(reads, before, "nothing is sampled while paused");
+  poll.setPaused(false);
+  await flush();
+  assert.ok(reads > before, "sampling restarts at once");
+  poll.stop();
 });

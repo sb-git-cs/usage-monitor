@@ -16,6 +16,8 @@ const pendingScope = {};
 let activePoll = null;
 let activeKey = null;
 const ADAPTER_TIMEOUT_MS = 12000;
+// While the screen is locked or the computer is idle, providers are asked at most this often.
+const AWAY_INTERVAL_SECS = 60;
 
 function withTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {
@@ -135,6 +137,7 @@ function start(cfg, onSnapshot) {
   let inflight = false;
   let stopped = false;
   let requested = false;
+  let away = false;
 
   async function tick() {
     if (stopped) return;
@@ -155,7 +158,8 @@ function start(cfg, onSnapshot) {
 
   function arm() {
     if (timer) clearInterval(timer);
-    timer = setInterval(tick, (cfg.poll_interval_secs || 5) * 1000);
+    const secs = cfg.poll_interval_secs || 5;
+    timer = setInterval(tick, (away ? Math.max(secs, AWAY_INTERVAL_SECS) : secs) * 1000);
   }
 
   tick();
@@ -167,6 +171,13 @@ function start(cfg, onSnapshot) {
       arm();
       tick();
     },
+    // Away: slower; back: read at once, then at the chosen interval.
+    setAway(next) {
+      if (stopped || !!next === away) return;
+      away = !!next;
+      arm();
+      if (!away) tick();
+    },
     stop() {
       stopped = true;
       if (timer) clearInterval(timer);
@@ -174,4 +185,4 @@ function start(cfg, onSnapshot) {
   };
 }
 
-module.exports = { start, pollOnce };
+module.exports = { start, pollOnce, AWAY_INTERVAL_SECS };
