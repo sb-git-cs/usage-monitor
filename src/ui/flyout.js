@@ -35,7 +35,7 @@ function applyFlyoutState(state) {
   root.classList.toggle("docked", !!state.docked);
 }
 
-bindDrag(root, "button, select, a, .icon-btn, .interval, .pct-icon, .tb-item, .provider, .net-card, .pair-card");
+bindDrag(root, "button, select, a, .icon-btn, .interval, .pct-icon, .tb-item, .provider, .net-card, .pair-card, .session-auto");
 window.usage.onFlyoutState(applyFlyoutState);
 window.usage.getFlyoutState().then(applyFlyoutState);
 
@@ -172,6 +172,57 @@ netCard.addEventListener("keydown", (e) => {
   }
 });
 window.usage.onNet(renderNet);
+
+// ---- coding sessions -------------------------------------------------------------
+
+const sessionCard = document.getElementById("sessions");
+const autoResume = document.getElementById("autoResume");
+const TOOL_NAMES = { claude: "Claude Code", codex: "Codex" };
+
+// [text, element carrying a countdown]
+function sessionLine(s) {
+  if (s.state === "working") return ["Working", null];
+  if (s.state !== "limited") return ["Waiting for you", null];
+  switch (s.resume) {
+    case "scheduled": return ["Limit reached · resumes in", s.resume_at];
+    case "retrying":
+    case "pending": return ["Limit reset · resuming shortly", null];
+    case "sent": return ["Resumed", null];
+    case "failed": return ["Limit reset · couldn't type into the terminal", null];
+    default: return ["Limit reached · resets in", s.resets_at];
+  }
+}
+
+function renderSessions(view) {
+  const list = (view && view.sessions) || [];
+  const wasHidden = sessionCard.hidden;
+  sessionCard.hidden = !list.length;
+  if (!list.length) {
+    if (!wasHidden) requestAnimationFrame(fitFlyout);
+    return;
+  }
+  document.getElementById("autoResumeRow").hidden = !view.can_resume;
+  autoResume.checked = !!view.auto_resume;
+  document.getElementById("autoResumeRow").title = 'Type "continue" into the terminal where a usage limit stopped a session, once the limit resets. Only while that terminal is open, still shows the limit message, and the session is idle.';
+  document.getElementById("sessionRows").innerHTML = list.map((s) => {
+    const [text, at] = sessionLine(s);
+    const tone = s.state === "limited" ? (s.resume === "failed" ? " alert" : " limited") : s.state === "working" ? " working" : "";
+    return `<div class="session-row${tone} accent-${escapeHtml(s.tool)}" title="${escapeHtml(`${TOOL_NAMES[s.tool] || s.tool} · ${s.cwd}`)}">
+      <span class="session-who">${mark(s.tool)}</span>
+      <span class="session-name">${escapeHtml(s.name)}</span>
+      <span class="session-state">${escapeHtml(text)}</span>
+      <span class="eta" ${at ? `data-reset="${escapeHtml(at)}"` : ""}>${at ? formatEta(at) : ""}</span>
+    </div>`;
+  }).join("");
+  requestAnimationFrame(fitFlyout);
+}
+
+autoResume.addEventListener("change", (e) => {
+  e.stopPropagation();
+  window.usage.setAutoResume(autoResume.checked);
+});
+window.usage.onSessions(renderSessions);
+window.usage.getSessions().then(renderSessions, () => {});
 
 // ---- version and automatic updates -------------------------------------------------
 

@@ -85,6 +85,7 @@ function applyPrefs(next) {
   lastKey = "";
   if (window.__last) render(window.__last);
   renderSystem(lastSystem);
+  renderSessions(lastSessions);
 }
 
 function render(snapshot) {
@@ -179,6 +180,60 @@ netChip.addEventListener("contextmenu", (e) => {
 });
 window.usage.onNet(renderNet);
 
+// ---- coding sessions chip ---------------------------------------------------------
+
+const sessionChip = document.getElementById("sessionChip");
+const SESSION_TOOLS = { claude: "Claude Code", codex: "Codex" };
+let lastSessions = null;
+let sessionSig = "";
+
+function sessionTitle(s) {
+  const at = s.resume === "scheduled" ? s.resume_at : s.resets_at;
+  const state = s.state === "working" ? "working" : s.state !== "limited" ? "waiting for you"
+    : s.resume === "sent" ? "resumed" : s.resume === "scheduled" ? `limit reached, resumes in ${formatEta(at)}` : `limit reached, resets in ${formatEta(at)}`;
+  return `${SESSION_TOOLS[s.tool] || s.tool} · ${s.name}: ${state}`;
+}
+
+// "1h05" / "42m": the strip has room for four characters.
+function shortEta(at) {
+  const mins = Math.max(0, Math.round((at - Date.now()) / 60000));
+  if (mins >= 24 * 60) return `${Math.round(mins / 1440)}d`;
+  return mins >= 60 ? `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, "0")}` : `${mins}m`;
+}
+
+function renderSessions(view) {
+  lastSessions = view;
+  const list = (view && view.sessions) || [];
+  if (!list.length || prefs.chips_show.sessions === false) {
+    if (!sessionChip.hidden) {
+      sessionChip.hidden = true;
+      sessionSig = "";
+      requestAnimationFrame(fitBar);
+    }
+    return;
+  }
+  const stopped = list.filter((s) => s.state === "limited");
+  const next = stopped.map((s) => Date.parse(s.resume === "scheduled" ? s.resume_at : s.resets_at)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+  const working = list.filter((s) => s.state === "working").length;
+  const lower = stopped.length ? `⏸ ${next ? shortEta(next) : stopped.length}` : `▶ ${working}`;
+  const sig = `${list.length}|${lower}|${list.map(sessionTitle).join("\n")}`;
+  if (sig === sessionSig) return;
+  sessionSig = sig;
+  sessionChip.hidden = false;
+  sessionChip.classList.toggle("limited", stopped.length > 0);
+  sessionChip.replaceChildren(netSpan("session-glyph", "›_"), netSpan("session-val", String(list.length)), netSpan("session-glyph", lower.slice(0, 1)), netSpan("session-val", lower.slice(2)));
+  sessionChip.title = `${list.length} coding session${list.length === 1 ? "" : "s"}\n${list.map(sessionTitle).join("\n")}`;
+  requestAnimationFrame(fitBar);
+}
+
+sessionChip.addEventListener("click", () => window.usage.toggleFlyout());
+sessionChip.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  window.usage.openTrayMenu();
+});
+window.usage.onSessions(renderSessions);
+window.usage.getSessions().then(renderSessions, () => {});
+
 // Fixed-width values prevent the widget from shifting with every hardware sample.
 const systemRoot = document.getElementById("system");
 const systemFields = [["cpu", "CPU"], ["mem", "MEM"], ["gpu", "GPU"], ["disk", "DISK"], ["space", "SPACE"]];
@@ -233,6 +288,8 @@ window.usage.onSnapshot((s) => {
 window.usage.onLoading(() => showLoading());
 requestAnimationFrame(fitBar);
 setInterval(() => {
+  // The resume countdown on the sessions chip.
+  if (lastSessions) renderSessions(lastSessions);
   if (!window.__last) return;
   const next = applyLocalResets(window.__last);
   if (next.changed) {

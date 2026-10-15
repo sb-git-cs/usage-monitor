@@ -113,7 +113,7 @@ function createWorker({ start = spawnWorker, timeoutMs = SAMPLE_TIMEOUT_MS, rest
     return proc;
   }
 
-  function sample() {
+  function sample(request = "sample") {
     if (waiting) return Promise.reject(new Error("a hardware sample is already running"));
     if (!child && now() - startedAt < restartGapMs) return Promise.reject(new Error("hardware sampler is restarting"));
     const proc = child || launch();
@@ -123,7 +123,7 @@ function createWorker({ start = spawnWorker, timeoutMs = SAMPLE_TIMEOUT_MS, rest
         settle(new Error("hardware sample timed out"));
       }, timeoutMs);
       waiting = { resolve, reject, timer };
-      proc.stdin.write("sample\n");
+      proc.stdin.write(`${request}\n`);
     });
   }
 
@@ -150,9 +150,9 @@ function createWorker({ start = spawnWorker, timeoutMs = SAMPLE_TIMEOUT_MS, rest
   return { sample, stop, get pid() { return child ? child.pid : null; } };
 }
 
-function spawnWorker() {
+function spawnWorker(file = "system-windows.ps1") {
   // Electron can read inside app.asar; PowerShell cannot run a -File path inside it.
-  const script = fs.readFileSync(path.join(__dirname, "system-windows.ps1"), "utf8");
+  const script = fs.readFileSync(path.join(__dirname, file), "utf8");
   return spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
     windowsHide: true,
     stdio: ["pipe", "pipe", "ignore"],

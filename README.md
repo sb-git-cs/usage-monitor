@@ -59,6 +59,7 @@ The meter requires an explicit total, a weekly period/reset, and reported Cursor
 | **Tray icon** | A Usage Monitor icon in the notification area / menu bar; its tooltip shows the live network speed. **Click** it to show the chips again. **Right-click** for the menu (on Linux the menu opens on click). **Double-click** opens the flyout. |
 | **Notifications** | A silent notification the first time a plan bar crosses your warning level (80% unless you change it), when a window is on course to run out before it resets, when an app reaches its network data cap, and when Usage Monitor updates itself. None are shown during quiet hours. |
 | **Forecast** | Under each provider card in the flyout: when the window reaches 100% at the current pace (from the last hour of readings, or six hours for weekly windows), shown only if that is before it resets. |
+| **Sessions** | Claude Code and (on Windows) Codex sessions running in a terminal, as a card in the flyout (working, waiting for you, or stopped by a usage limit with the time to its reset) and a chip with the session count and the next resume countdown. With **Resume sessions automatically** on (Windows, off by default), a session stopped by a limit gets `continue` typed into the same terminal where it hit the limit, a minute after the limit resets. That terminal's screen must still show the limit message; nothing is typed if it doesn't, if the terminal was closed, while the session is busy, or while the meters still show the window used up. |
 
 The chips now stack in **two compact rows**, with short provider percentages and stacked download/upload speeds. **CPU**, **MEM**, **GPU** (when detected), **DISK** activity and **SPACE** used sit alongside them. CPU and memory refresh every 2 seconds, GPU/disk activity every 5 seconds, and storage every 30 seconds. Hover DISK or SPACE for drive details: DISK shows the busiest physical HDD/SSD on Windows; SPACE shows the fullest mounted volume. On macOS/Linux, DISK shows read/write throughput and GPU utilization depends on driver support. An unavailable reading is shown as a dash.
 
@@ -121,7 +122,8 @@ Open **Settings…** from the right-click menu, or the ⚙ button in the flyout.
 | Start at login, refresh interval | Same as the menu items. |
 | Warn at | The percentage (50–95%) at which chips and bars turn amber and the plan notification fires. |
 | Notifications | Limit warnings, forecast warnings, and quiet hours (for example 22:00 to 07:00) when nothing is shown. |
-| Chips | Which providers and system readings the chips strip shows, and whether network speed is on it. |
+| Coding sessions | **Resume sessions automatically when a usage limit resets** (Windows; off by default). Also on the flyout's Sessions card. |
+| Chips | Which providers, sessions and system readings the chips strip shows, and whether network speed is on it. |
 | Updates | Install updates automatically, the **Stable** or **Beta** channel, and **Check now**. |
 | Phone | Share this computer's plan meters with the Android app. **Pair a phone** shows a QR code and a code immediately. See and remove paired phones. |
 
@@ -305,6 +307,7 @@ The screenshots in `docs/screenshots` are produced by `npm run screenshots`, whi
 - Reverse DNS for recorded addresses is off by default; when on, lookups go to your DNS server
 - Reads the credentials the tools already wrote (`~/.claude`, `.codex`, `.gemini`, `.grok`; Cursor's `auth.json` and the `cursorAuth/cachedEmail` entry in its editor database; GitHub CLI `hosts.yml` or, on Windows, the Credential Manager entry `git:https://github.com`; on Windows also the Credential Manager entry `gemini:antigravity`; on macOS the Keychain item `Claude Code-credentials`). Those reads are read-only.
 - Polls each provider’s usage endpoint; never sends prompts, files, or chat history
+- Lists running sessions from Claude Code's session records (`~/.claude/sessions`) and the end of their transcripts, and from Codex rollouts (`~/.codex/sessions`) matched to running `codex` processes by folder. It reads only the last turn's status and limit reset. With automatic resume on, it reads the bottom of that session's terminal screen to confirm the limit message, and the only input it ever types is `continue` and Enter, into that terminal
 - Phone sharing is off until you turn it on or click **Pair a phone**. When on, the computer listens on your local network (port 47329) and answers only phones paired with a code shown on its screen, with encrypted plan meters and system readings. Remove a phone in **Settings → Phone**
 - The Android app reads your phone's data counts with Usage access and keeps them on the phone. It only contacts your paired computer and GitHub (for updates)
 - Update checks only contact GitHub: `git fetch` for a clone, the release feed and files for an installed copy, and the public releases API for portable/zip/macOS copies. No personal data is sent

@@ -8,6 +8,7 @@ const CHIP_LABELS = [
   ["grok", "Grok Build"],
   ["cursor", "Cursor"],
   ["copilot", "Copilot"],
+  ["sessions", "Coding sessions"],
   ["network", "Network speed"],
   ["cpu", "CPU"],
   ["mem", "Memory"],
@@ -173,6 +174,9 @@ function render(next) {
   setValue($("threshold"), s.alert_threshold);
   setValue($("notifyLimit"), s.notify_on_limit_reached);
   setValue($("forecast"), s.forecast_alerts);
+  setValue($("autoResume"), s.auto_resume);
+  $("autoResume").disabled = next.platform !== "win32";
+  if (next.platform !== "win32") $("autoResumeHint").textContent = "Claude Code sessions running in a terminal are listed on the flyout and the chips. Resuming them automatically needs Windows; here a session stopped by a usage limit waits for you.";
   setValue($("quiet"), s.quiet_hours.enabled);
   setValue($("quietStart"), s.quiet_hours.start);
   setValue($("quietEnd"), s.quiet_hours.end);
@@ -275,6 +279,7 @@ function bind() {
   $("threshold").addEventListener("change", (e) => save({ alert_threshold: Number(e.target.value) }));
   $("notifyLimit").addEventListener("change", (e) => save({ notify_on_limit_reached: e.target.checked }));
   $("forecast").addEventListener("change", (e) => save({ forecast_alerts: e.target.checked }));
+  $("autoResume").addEventListener("change", (e) => save({ auto_resume: e.target.checked }));
   $("quiet").addEventListener("change", (e) => save({ quiet_hours: { enabled: e.target.checked } }));
   $("quietStart").addEventListener("change", (e) => e.target.value && save({ quiet_hours: { start: e.target.value } }));
   $("quietEnd").addEventListener("change", (e) => e.target.value && save({ quiet_hours: { end: e.target.value } }));

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Sessions** card on the flyout and a sessions chip: Claude Code and Codex sessions running in a terminal, shown as working, waiting for you, or stopped by a usage limit with the time to its reset. Hide the chip in **Settings → Chips**.
+- **Resume sessions automatically when a usage limit resets** (Windows, off by default): one minute after the reported reset, `continue` is typed into the same terminal where each session hit the limit. Before typing, that terminal's screen is read and must still show the limit message. Nothing happens if that terminal was closed or no longer shows the message, the process ID now belongs to another program, the session is busy, or the meters still read the window as used up. Each reset is resumed once, with up to three attempts a minute apart; results appear in Insights notifications. A Codex terminal that cannot be linked to one rollout (for example two opened together in one folder) is resumed when the limit message is among its newest lines on screen, using the reset its rollouts or the Codex meter reported. macOS and Linux list Claude Code sessions without typing; Codex sessions are detected on Windows only.
+
 ## 1.6.0 — 2026-10-14
 
 - Added a persisted **Use combined X Subscription** toggle on desktop and Android, off by default. Combined mode shows one verified shared weekly meter across chips, flyout, Home, summaries and Plan widgets; Additional Usage credits stay separate and both account controls remain available.

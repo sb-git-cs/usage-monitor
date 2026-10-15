@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, ipcMain, shell, screen, dialog } = require("electron");
+const { app, BrowserWindow, Menu, Tray, Notification, nativeImage, nativeTheme, ipcMain, shell, screen, dialog } = require("electron");
 const path = require("path");
 const os = require("os");
 const config = require("./config");
@@ -12,6 +12,7 @@ const updater = require("./updater");
 const log = require("./log");
 const netUsage = require("./net");
 const systemUsage = require("./system");
+const sessions = require("./sessions");
 const { History } = require("./history");
 const { Insights } = require("./insights");
 const insightsWindow = require("./insights-window");
@@ -38,6 +39,8 @@ let poll;
 let latest;
 let systemPoll;
 let latestSystem;
+let sessionWatch;
+let latestSessions = null;
 let history;
 let insights;
 let phone;
@@ -605,6 +608,34 @@ function broadcast(snap) {
   }
 }
 
+function broadcastSessions(view) {
+  latestSessions = view;
+  for (const win of [flyout, chips]) {
+    if (win && !win.isDestroyed()) win.webContents.send("usage://sessions", view);
+  }
+}
+
+// Reports a resume once it was typed, or once every attempt failed.
+function sessionResumed(session, attempt) {
+  if (!attempt.sent && attempt.count < sessions.MAX_ATTEMPTS) return;
+  const where = `${session.tool === "codex" ? "Codex" : "Claude Code"} · ${session.name}`;
+  const title = attempt.sent ? "Session resumed" : "Couldn't resume a session";
+  const body = attempt.sent
+    ? `${where}: typed "${sessions.RESUME_TEXT}" after the usage limit reset.`
+    : `${where}: ${attempt.error || "the terminal did not accept input"}.`;
+  const muted = config.inQuietHours(cfg) || insights.isSnoozed();
+  insights.event(title, body, muted ? "suppressed" : Notification.isSupported() ? "requested" : "unsupported");
+  if (!muted && Notification.isSupported()) new Notification({ title, body, silent: true }).show();
+}
+
+function setAutoResume(enabled) {
+  if (typeof enabled !== "boolean" || enabled === cfg.auto_resume) return;
+  cfg.auto_resume = enabled;
+  config.save(cfg);
+  if (sessionWatch) sessionWatch.refresh();
+  sendSettings();
+}
+
 function setPollInterval(secs) {
   const next = config.ALLOWED_INTERVALS.includes(Number(secs)) ? Number(secs) : 5;
   cfg.poll_interval_secs = next;
@@ -826,7 +857,7 @@ function broadcastPrefs() {
 
 function settingsView() {
   const keys = ["autostart", "poll_interval_secs", "chips_hidden", "chips_docked", "chips_show_network", "chips_show", "alert_threshold",
-    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel", "subscription_regime"];
+    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel", "subscription_regime", "auto_resume"];
   return {
     platform: process.platform,
     version: app.getVersion(),
@@ -1047,6 +1078,7 @@ function applySettings(patch) {
   if (config.ALERT_THRESHOLDS.includes(Number(patch.alert_threshold))) cfg.alert_threshold = Number(patch.alert_threshold);
   if (bool(patch.notify_on_limit_reached) !== null) cfg.notify_on_limit_reached = patch.notify_on_limit_reached;
   if (bool(patch.forecast_alerts) !== null) cfg.forecast_alerts = patch.forecast_alerts;
+  if (bool(patch.auto_resume) !== null) setAutoResume(patch.auto_resume);
   if (patch.quiet_hours && typeof patch.quiet_hours === "object") {
     cfg.quiet_hours = config.normalize({ quiet_hours: { ...cfg.quiet_hours, ...patch.quiet_hours } }).quiet_hours;
   }
@@ -1251,6 +1283,7 @@ function createChips() {
     win.webContents.send("usage://prefs", prefs());
     if (latest) win.webContents.send("usage://snapshot", latest);
     if (latestSystem) win.webContents.send("usage://system", latestSystem);
+    if (latestSessions) win.webContents.send("usage://sessions", latestSessions);
   });
   win.webContents.on("render-process-gone", () => {
     try {
@@ -1369,6 +1402,10 @@ function wireIpc() {
     }
   });
   ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
+  ipcMain.handle("usage://get-sessions", () => latestSessions);
+  ipcMain.on("usage://set-auto-resume", (e, enabled) => {
+    if (flyout && !flyout.isDestroyed() && e.sender === flyout.webContents) setAutoResume(enabled);
+  });
   ipcMain.handle("usage://get-update", () => updater.getState());
   ipcMain.handle("usage://get-prefs", () => prefs());
   ipcMain.on("usage://open-settings", () => openSettings());
@@ -1511,6 +1548,7 @@ if (!gotLock) {
       flyout.webContents.send("usage://update", updater.getState());
       flyout.webContents.send("usage://prefs", prefs());
       if (latest) flyout.webContents.send("usage://snapshot", latest);
+      if (latestSessions) flyout.webContents.send("usage://sessions", latestSessions);
       sendPairing();
       if (flyoutStaysOpen()) showFlyout();
     });
@@ -1558,6 +1596,7 @@ if (!gotLock) {
         onClick: () => showFlyout(),
       });
     });
+    sessionWatch = sessions.start({ getConfig: () => cfg, snapshot: () => latest, onChange: broadcastSessions, onResume: sessionResumed });
 
     setInterval(() => {
       if (!latest) return;

@@ -2,6 +2,8 @@
 
 ## Objective
 
+Current request (2026-10-15): list running Claude Code/Codex sessions on the flyout and chips; when a usage limit stops one, resume it automatically after the reset, but only if its terminal is still open (closed terminal: no action) and only in the same terminal where the limit was hit: the helper reads that console's screen and types only if the limit message is showing (live-verified with two terminals, only the one showing the limit received input). Codex terminals not linkable to one rollout are resumed when the message is among their last 10 screen lines (live-verified; a scrolled-up message is ignored). Implemented in `src/sessions.js` + `src/sessions-windows.ps1`; opt-in setting `auto_resume` (default off). Not released; not pushed.
+
 Current request (2026-10-13): implement persisted legacy/combined X Subscription regimes on desktop and Android; fix confirmed billing, source/cache, alert, reset and UI defects; refresh sanitized native screenshots; verify and publish stable 1.6.0. Production Android signing is unavailable, so publish desktop assets and keep an APK signed with the existing development key locally. Remote main's intervening UI/screenshot/dependency work has been preserved by fast-forward integration.
 
 Current request (2026-10-11): implement the competitor-inspired roadmap, fix discovered issues, install the tested latest Android build on the connected phone, and push the verified repository changes. Version 1.5.0 adds desktop/Android Insights; no public release was requested.
@@ -36,6 +38,7 @@ Not yet verified: (1) **link end to end**, because the running desktop app preda
 
 | Owner | Assignment | Status | Evidence |
 | --- | --- | --- | --- |
+| Development | Running-session list (flyout card, chip) and automatic resume after a usage-limit reset | Complete locally; 165 tests + 1 skip, source UI checks passed; typing verified live in Windows Terminal against real Claude Code 2.1.300 and Codex 0.162.1 TUIs; closed terminal verified as no action. Packaged build, macOS/Linux and a real limit reset not exercised | `test/sessions.test.js`, `scripts/ui-smoke.js`, `.qa/flyout.png`, `.qa/chips-fill.png` |
 | Codex | X Subscription regimes, defect fixes, screenshots and stable 1.6.0 release | Complete; both branches integrated, cross-platform CI passed, stable release published and downloads verified | `review.md`; 151 desktop tests plus one skip; 101 Android tests; `.qa/subscription-phone-results.json`; `.qa/subscription-published-release.json`; release `v1.6.0` |
 | Codex | Implement Insights roadmap, fix defects, build desktop/Android 1.5.0, install on phone and update Git | Complete implementation/build/native acceptance; committed and pushed with this update on the existing work branch | `review.md`; 137 desktop and 78 Android tests; `.qa/mobile-features-results.json`, `.qa/packaged-source-results.json` |
 | Codex | Research competitor features and improve the local desktop flyout | Complete locally; 130 tests passed, one platform skip; Electron checks and visual inspection passed; installed executable not rebuilt | `docs/product-improvements.md`, `src/ui/overview.js`, `test/overview.test.js`, `.qa/flyout.png`, `review.md` |

@@ -30,6 +30,10 @@ const snapshot = { providers: [
   ] },
   { id: "grok", display_name: "Grok Build", status: { state: "logged_out", hint: "Sign in" }, windows: [] },
 ] };
+const sessionsView = { auto_resume: true, can_resume: true, sessions: [
+  { key: "claude:a", tool: "claude", name: '<img src="x" onerror="window.injected=true">', cwd: "D:\\work", state: "limited", resets_at: future, resume_at: future, resume: "scheduled" },
+  { key: "codex:b", tool: "codex", name: "api", cwd: "D:\\api", state: "working", resets_at: null, resume_at: null, resume: null },
+] };
 const systemSummary = { cpu: 42, mem: 67, gpuPresent: true, gpu: 18, disk: 9, space: 84,
   disks: [{ name: "0 C:", busy: 9 }], volumes: [{ name: '<img src="x" onerror="window.injected=true">', used: 84 * 1024 ** 3, size: 100 * 1024 ** 3 }] };
 
@@ -49,8 +53,13 @@ async function check(file) {
     win.webContents.send("usage://net", netSummary);
     if (file === "flyout") win.webContents.send("usage://update", { current: "1.1.0", build: null, status: "skipped", auto: true, message: hostile });
     win.webContents.send("usage://system", systemSummary);
+    win.webContents.send("usage://sessions", sessionsView);
     await new Promise((resolve) => setTimeout(resolve, 200));
     const result = await win.webContents.executeJavaScript(`({
+      sessions: (() => {
+        const el = document.getElementById('sessions') || document.getElementById('sessionChip');
+        return el.hidden ? null : el.textContent.replace(/\\s+/g, ' ').trim();
+      })(),
       text: document.body.textContent,
       injected: !!window.injected || !!document.querySelector('img'),
       widths: [...document.querySelectorAll('.fill')].map(el => el.style.width),
@@ -87,6 +96,9 @@ async function check(file) {
       assert.match(result.net, /Used in the last hour ?↓ 120 MB\s↑ 8\.00 MB/);
       assert.ok(result.net.includes(`Now: ${hostile} 1.0 MB/s · Teams 80 KB/s`), "app names render as text");
       assert.equal(result.cards, 4);
+      assert.match(result.sessions, /^›_Sessions Resume after limit Anthropic .* Limit reached · resumes in (1h 00m|59m) OpenAI api Working$/);
+      assert.ok(result.sessions.includes(hostile), "session names render as text");
+      assert.equal(await win.webContents.executeJavaScript(`document.getElementById('autoResume').checked`), true);
       assert.deepEqual(result.widths, ["25%", "90%", "80%", "0%"]);
       assert.equal(result.reds, 2);
       assert.match(result.text, /5h reaches 100% around \d{1,2}:\d\d [AP]M at this pace \(\+40%\/h\)/, "burn-rate forecast line");
@@ -115,6 +127,7 @@ async function check(file) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     } else {
       assert.equal(result.chips, 4);
+      assert.match(result.sessions, /^›_2⏸(1h00|59m)$/);
       assert.equal(result.net, "↓1.5 MB/s↑30 KB/s");
       assert.match(result.text, /25%/);
       assert.doesNotMatch(result.text, /90%/);
@@ -138,13 +151,15 @@ async function check(file) {
         netDisplay: getComputedStyle(document.getElementById('net')).display,
         rows: new Set([...document.querySelectorAll('#root .pct-icon')].map(el => el.getBoundingClientRect().top)).size,
         width: document.getElementById('bar').getBoundingClientRect().width,
+        session: document.getElementById('sessionChip').getBoundingClientRect().width,
       })`);
       assert.equal(fill.bar, 48);
       assert.equal(fill.rows, 2);
       assert.equal(fill.chip, 21);
       assert.equal(fill.net, 44);
       assert.equal(fill.netDisplay, "grid");
-      assert.ok(fill.width < 420, `compact strip including system metrics: ${fill.width}px`);
+      assert.ok(fill.session <= 50, `compact sessions chip: ${fill.session}px`);
+      assert.ok(fill.width - fill.session < 420, `compact strip including system metrics: ${fill.width}px`);
       renderedFrame = null;
       const fillDeadline = Date.now() + 5000;
       while (!renderedFrame && Date.now() < fillDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -456,6 +471,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("usage://get-update", () => null);
   ipcMain.handle("usage://get-prefs", () => ({ alert_threshold: 80, chips_show: {} }));
   ipcMain.handle("usage://get-pairing", () => null);
+  ipcMain.handle("usage://get-sessions", () => null);
   ipcMain.handle("usage://pair-phone", () => null);
   ipcMain.handle("usage://pair-cancel", () => null);
   ipcMain.handle("net:state", () => netState);

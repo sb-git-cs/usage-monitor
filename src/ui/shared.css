@@ -90,7 +90,10 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 .flyout.narrow .caption-detail { display: none; }
 .flyout.light { --hud-bg: #f5f7fc; --text: #17243a; --muted: #506078; --bar-track: #dbe3ef; background: #f5f7fc; color: var(--text); border-color: #cbd5e1; }
 .flyout.light .head, .flyout.light .row, .flyout.light .p-name, .flyout.light .net-value { color: var(--text); }
-.flyout.light .provider, .flyout.light .net-card { background: #fff; border-color: #d5deeb; }
+.flyout.light .provider, .flyout.light .net-card, .flyout.light .session-card { background: #fff; border-color: #d5deeb; }
+.flyout.light .session-row { color: var(--text); }
+.flyout.light .session-row.limited .session-state, .flyout.light .session-row.limited .eta { color: #955400; }
+.flyout.light .session-row.alert .session-state { color: #b91c1c; }
 .flyout.light .icon-btn, .flyout.light .pair-btn, .flyout.light .link-btn { color: #345780; }
 .flyout.light .interval { background: #fff; color: var(--text); border-color: #cbd5e1; }
 .flyout.light .at-risk, .flyout.light .badge, .flyout.light .forecast { color: #955400; }
@@ -340,6 +343,41 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 .net-value.small { font-size: 12.5px; padding-top: 3px; }
 /* width 0 + min-width 100%: long app names never widen the flyout */
 .net-top { margin-top: 6px; font-size: 11px; color: #d1d5db; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 0; min-width: 100%; }
+/* coding sessions: card in the flyout, chip on the strip */
+.session-card {
+  margin-top: 8px; padding: 8px 10px 9px 12px;
+  background: rgba(31, 41, 55, 0.42); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px;
+  box-shadow: inset 2px 0 0 var(--codex);
+}
+.session-card[hidden] { display: none; }
+.session-auto { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); cursor: pointer; }
+.session-auto[hidden] { display: none; }
+.session-auto input { margin: 0; }
+#sessionRows { display: flex; flex-direction: column; gap: 4px; }
+.session-row {
+  display: grid; grid-template-columns: 13px minmax(60px, 1fr) max-content max-content; gap: 6px;
+  align-items: center; font-size: 11px; color: #d1d5db; box-shadow: none;
+}
+.session-who { display: inline-flex; color: var(--muted); }
+.session-row.accent-claude .session-who { color: var(--claude); }
+.session-row.accent-codex .session-who { color: var(--codex); }
+.session-name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 0; min-width: 100%; }
+.session-state { color: var(--muted); white-space: nowrap; }
+.session-row.working .session-state { color: var(--green); }
+.session-row.limited .session-state, .session-row.limited .eta { color: #fcd34d; }
+.session-row.alert .session-state { color: #fca5a5; }
+.session-row .eta { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+.session-chip {
+  height: 100%; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 700; color: #e5e7eb;
+  background: rgba(17, 24, 39, 0.7); border: 1px solid rgba(75, 85, 99, 0.85);
+  display: grid; grid-template-columns: auto auto; grid-template-rows: repeat(2, 1fr); align-items: center; column-gap: 3px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; flex: 0 0 auto;
+}
+.session-chip[hidden] { display: none; }
+.session-chip.limited { border-color: var(--amber); color: #fde68a; }
+.session-glyph { color: var(--codex); font-weight: 800; }
+.session-chip.limited .session-glyph { color: var(--amber); }
+.session-val { text-align: right; }
 .forecast { margin-top: 4px; font-size: 11px; color: #fcd34d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Version and automatic update status under the flyout cards. */
 .update-bar {

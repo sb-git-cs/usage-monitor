@@ -5,7 +5,7 @@ const { displayPrefs } = require("./insights");
 
 const ALLOWED_INTERVALS = [5, 15, 30, 60];
 const ALERT_THRESHOLDS = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
-const CHIP_KEYS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "cpu", "mem", "gpu", "disk", "space"];
+const CHIP_KEYS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "sessions", "cpu", "mem", "gpu", "disk", "space"];
 const UPDATE_CHANNELS = ["stable", "beta"];
 const PHONE_PORT = 47329;
 
@@ -33,6 +33,8 @@ const DEFAULTS = {
   notify_on_limit_reached: true,
   alert_threshold: 80,
   forecast_alerts: true,
+  // Typing into terminals is opt-in, also for copies that update themselves to this version.
+  auto_resume: false,
   quiet_hours: { enabled: false, start: "22:00", end: "07:00" },
   chips_show: Object.fromEntries(CHIP_KEYS.map((k) => [k, true])),
   update_channel: "stable",
