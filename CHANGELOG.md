@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-10-16
 
 - **Open in terminal (godmode)** on the File Explorer folder-background menu (right-click empty space in a folder; on Windows 11 it is on the main right-click menu). It starts Claude Code, Codex, Grok Build, Gemini or Cursor in that folder with that CLI's own skip-permissions flag (`claude --dangerously-skip-permissions`, `codex --dangerously-bypass-approvals-and-sandbox`, `grok --always-approve`, `agy --dangerously-skip-permissions`, `cursor-agent --force`). Usage Monitor registers the menu for the current user when it starts. The flyout, Settings and the tray menu do not have an auto-accept switch and do not launch these terminals.
 - **Sessions** card on the flyout and a sessions chip: Claude Code, Codex, Grok Build, Antigravity, Gemini CLI, Cursor Agent and Copilot CLI sessions running in a terminal, shown as working, waiting for you, or stopped by a usage limit with the time to its reset. Hide the chip in **Settings → Chips**.

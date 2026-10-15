@@ -1,6 +1,6 @@
 {
   "name": "usage-monitor",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Plan meters for Claude Code, Codex, Gemini, Grok Build, Cursor and GitHub Copilot, plus per-app network usage, for Windows, macOS and Linux",
   "main": "src/main.js",
   "private": true,

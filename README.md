@@ -41,6 +41,8 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 ## What you see
 
+**New in 1.7.0:** the flyout's **Sessions** card and a sessions chip list coding sessions running in a terminal: Claude Code and Codex, and on Windows Grok Build, Antigravity, Gemini CLI, Cursor Agent and Copilot CLI. With **Resume after limit** on (Windows), a session stopped by a usage limit gets `continue` typed into its own terminal a minute after the limit resets. In File Explorer, right-click empty folder space for **Open in terminal (godmode)**.
+
 **New in 1.6.0:** Settings → **Use combined X Subscription** replaces the separate Grok and Cursor meters with one shared weekly pool. It defaults to off, including after an upgrade. Additional Usage credits remain separate. Paired/linked phone readings follow the computer's selection; phone sign-ins follow the phone toggle. Unverified shared usage shows unavailable with a dashboard link, and cached readings stay marked stale.
 
 The meter requires an explicit total, a weekly period/reset, and reported Cursor coverage in the billing response. It never adds product percentages or converts a monthly allowance to a weekly quota. Provider responses that do not expose that evidence remain unavailable. See the [official shared-pool description](https://docs.x.ai/x-subscription/usage-limits) and [account migration FAQ](https://docs.x.ai/x-subscription/faq).

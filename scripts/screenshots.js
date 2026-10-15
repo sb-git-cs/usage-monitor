@@ -52,6 +52,13 @@ const netSummary = {
 };
 
 const updateState = { kind: "installer", status: "up-to-date", current: require("../package.json").version, build: null, auto: true, checked_at: now };
+const sessionReset = new Date(now + 47 * 60_000).toISOString();
+const sessionsView = { auto_resume: true, can_resume: true, sessions: [
+  { key: "claude:demo", tool: "claude", label: "Claude Code", name: "api-gateway", cwd: "D:\\work\\api-gateway", state: "working", resets_at: null, resume_at: null, resume: null },
+  { key: "cursor:demo", tool: "cursor", label: "Cursor Agent", name: "Wire up the exporter", cwd: "D:\\work\\exporter", state: "idle", resets_at: null, resume_at: null, resume: null },
+  { key: "grok:demo", tool: "grok", label: "Grok Build", name: "web-dashboard", cwd: "D:\\work\\web-dashboard", state: "limited",
+    resets_at: sessionReset, resume_at: new Date(Date.parse(sessionReset) + 60_000).toISOString(), resume: "scheduled" },
+] };
 
 function findDefender() {
   const base = "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform";
@@ -242,6 +249,7 @@ async function main() {
   ipcMain.handle("usage://get-prefs", () => ({ alert_threshold: 80, chips_show: {}, dark: true }));
   ipcMain.handle("usage://get-pairing", () => null);
   ipcMain.handle("usage://get-update", () => updateState);
+  ipcMain.handle("usage://get-sessions", () => sessionsView);
   ipcMain.handle("net:state", () => netState);
   ipcMain.handle("net:settings", () => netState);
   ipcMain.handle("net:series", () => edgeSeries);
@@ -261,6 +269,7 @@ async function main() {
         crop: page === "flyout" ? "#root" : "#bar", setup: async (w) => {
           w.webContents.send("usage://snapshot", demo); w.webContents.send("usage://net", netSummary);
           w.webContents.send("usage://update", updateState);
+          w.webContents.send("usage://sessions", sessionsView);
           if (page === "chips") w.webContents.send("usage://chips-fill", 44);
         } });
       fs.writeFileSync(path.join(OUT, `${page}-${regime}.png`), shot.toPNG());
@@ -279,6 +288,7 @@ async function main() {
         w.webContents.send("usage://snapshot", snapshot);
         w.webContents.send("usage://net", netSummary);
         w.webContents.send("usage://update", updateState);
+        w.webContents.send("usage://sessions", sessionsView);
       },
     })
   );
@@ -295,6 +305,7 @@ async function main() {
         w.webContents.send("usage://system", { cpu: 24, mem: 52, gpuPresent: true, gpu: 12, disk: 8, space: 68 });
         w.webContents.send("usage://snapshot", snapshot);
         w.webContents.send("usage://net", netSummary);
+        w.webContents.send("usage://sessions", sessionsView);
       },
     })
   );
