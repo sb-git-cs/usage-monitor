@@ -73,7 +73,7 @@ async function removeClassic(exec) {
 // register.ps1 writes "<package version>|<DLL hash>" after a successful install.
 function packageCurrent(folder, script) {
   try {
-    const stamp = fs.readFileSync(path.win32.join(folder, "package-stamp.txt"), "utf8").trim();
+    const stamp = fs.readFileSync(path.join(folder, "package-stamp.txt"), "utf8").trim();
     const dll = fs.readFileSync(path.join(path.dirname(script), "GodmodeMenu.dll"));
     const hash = crypto.createHash("sha256").update(dll).digest("hex");
     return stamp.split("|")[1].toLowerCase() === hash;
