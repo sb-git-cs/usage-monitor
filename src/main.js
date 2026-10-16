@@ -1524,12 +1524,15 @@ if (!gotLock) {
     if (process.platform === "darwin" && app.dock) app.dock.hide();
     cfg = config.ensure();
     if (IS_WINDOWS) {
-      try {
-        const menu = folderMenu.install({ icon: app.isPackaged ? `${process.execPath},0` : path.join(__dirname, "ui", "icon.ico") });
-        if (!menu.ok) log.error("folder menu", menu.error || "failed");
-      } catch (err) {
-        log.error("folder menu", err);
-      }
+      // In the background once startup has settled; registering can take minutes.
+      setTimeout(() => {
+        folderMenu.install({ icon: app.isPackaged ? `${process.execPath},0` : path.join(__dirname, "ui", "icon.ico") })
+          .then((menu) => {
+            if (menu.skipped) log.info("folder menu not installed:", menu.error);
+            else if (!menu.ok) log.error("folder menu", menu.error || "failed");
+          })
+          .catch((err) => log.error("folder menu", err));
+      }, 20000);
     }
     cfg.autostart = autostart.apply(cfg.autostart !== false);
     config.save(cfg);

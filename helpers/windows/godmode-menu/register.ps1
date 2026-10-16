@@ -1,5 +1,8 @@
 # Registers the Windows 11 folder-background menu and removes the classic
 # "Show more options" verb once that package is installed. Safe to run again.
+# Exits 2 without changing anything when this PC cannot install the package: the
+# Windows SDK packaging tools are missing, or the signing certificate is not trusted
+# for the machine yet and this run is not elevated.
 $ErrorActionPreference = "Stop"
 
 $Name = "Shivam.UsageMonitor.Shell"
@@ -26,6 +29,12 @@ function Fail($message) {
     exit 1
 }
 
+function Skip($message) {
+    try { Write-Log "skipped: $message" } catch { }
+    [Console]::Error.WriteLine($message)
+    exit 2
+}
+
 function Remove-ClassicMenu {
     $keys = @(
         "HKCU\Software\Classes\Directory\Background\shell\UsageMonitor.Godmode",
@@ -42,15 +51,21 @@ function Remove-ClassicMenu {
 }
 
 function Find-KitTool($tool) {
-    $roots = @(
-        "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64",
-        "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64"
-    )
-    foreach ($root in $roots) {
-        $path = Join-Path $root $tool
+    $bin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+    $dirs = Get-ChildItem -Path $bin -Directory -Filter "10.*" -ErrorAction SilentlyContinue |
+        Sort-Object { [version]$_.Name } -Descending
+    foreach ($dir in $dirs) {
+        $path = Join-Path $dir.FullName "x64\$tool"
         if (Test-Path $path) { return $path }
     }
     return $null
+}
+
+function Test-MachineTrust($thumbprint) {
+    foreach ($store in @("Cert:\LocalMachine\TrustedPeople", "Cert:\LocalMachine\Root")) {
+        if (Get-ChildItem $store -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $thumbprint }) { return $true }
+    }
+    return $false
 }
 
 function Stop-MenuSurrogate {
@@ -89,10 +104,20 @@ try {
         }
     }
 
+    # Check everything this PC needs before creating or trusting a certificate.
+    $makeappx = Find-KitTool "makeappx.exe"
+    $signtool = Find-KitTool "signtool.exe"
+    if (-not $makeappx -or -not $signtool) { Skip "the Windows SDK packaging tools (makeappx.exe, signtool.exe) are not installed" }
+    $csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+    if (-not (Test-Path $csc)) { Skip "csc.exe was not found" }
     $cert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
         Where-Object { $_.Subject -eq $Subject -and $_.HasPrivateKey } |
         Sort-Object NotAfter -Descending |
         Select-Object -First 1
+    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $admin -and -not ($cert -and (Test-MachineTrust $cert.Thumbprint))) {
+        Skip "the signing certificate must be trusted for this PC once; start Usage Monitor as administrator one time"
+    }
     if (-not $cert) {
         $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $Subject -CertStoreLocation Cert:\CurrentUser\My -FriendlyName "Usage Monitor Shell" -NotAfter (Get-Date).AddYears(5)
     }
@@ -103,14 +128,10 @@ try {
     if (-not $trusted) {
         Import-Certificate -FilePath $cer -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
     }
-    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    if ($admin) {
-        $machinePeople = Get-ChildItem Cert:\LocalMachine\TrustedPeople -ErrorAction SilentlyContinue |
-            Where-Object { $_.Thumbprint -eq $cert.Thumbprint }
-        if (-not $machinePeople) { Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null }
-        $machineRoot = Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue |
-            Where-Object { $_.Thumbprint -eq $cert.Thumbprint }
-        if (-not $machineRoot) { Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null }
+    # Trusted People on the machine is enough to install a sideloaded package; the
+    # certificate is never added to the Trusted Root store.
+    if ($admin -and -not (Test-MachineTrust $cert.Thumbprint)) {
+        Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
     }
 
     if (Test-Path $Layout) { Remove-Item -Recurse -Force $Layout }
@@ -122,8 +143,6 @@ try {
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [IO.File]::WriteAllText((Join-Path $Layout "AppxManifest.xml"), $text, $utf8)
 
-    $csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-    if (-not (Test-Path $csc)) { Fail "csc.exe was not found" }
     & $csc /nologo /target:exe /out:"$(Join-Path $Layout 'UsageMonitorShell.exe')" (Join-Path $Source "UsageMonitorShell.cs")
     if ($LASTEXITCODE -ne 0) { Fail "could not compile UsageMonitorShell.exe" }
 
@@ -140,9 +159,6 @@ try {
     New-Logo (Join-Path $Layout "Assets\Square150x150Logo.png") 150
     New-Logo (Join-Path $Layout "Assets\Square44x44Logo.png") 44
 
-    $makeappx = Find-KitTool "makeappx.exe"
-    $signtool = Find-KitTool "signtool.exe"
-    if (-not $makeappx -or -not $signtool) { Fail "Windows SDK makeappx.exe or signtool.exe was not found" }
     & $makeappx pack /d $Layout /p $Msix /o
     if ($LASTEXITCODE -ne 0) { Fail "makeappx failed" }
     & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint $Msix

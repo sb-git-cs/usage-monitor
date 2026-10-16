@@ -2,10 +2,12 @@
 // menu only for a packaged Explorer command, so install writes the command list and
 // lets helpers/windows/godmode-menu/register.ps1 put that package in place. The classic
 // registry verb is removed after the package is installed, because Windows 11 files it
-// under Show more options.
+// under Show more options. Registration runs in the background and is skipped while the
+// installed package matches the bundled DLL, so it never holds up the app.
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const crypto = require("node:crypto");
+const childProcess = require("node:child_process");
 const godmode = require("./godmode-launch");
 
 const MENU_KEY = "HKCU\\Software\\Classes\\Directory\\Background\\shell\\UsageMonitor.Godmode";
@@ -40,31 +42,52 @@ function shellDir() {
   return path.join(base, "UsageMonitor", "shell");
 }
 
-function reg(exec, args) {
-  exec("reg.exe", args, { windowsHide: true, stdio: "ignore" });
+function run(file, args, options) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(file, args, options, (err, stdout, stderr) => {
+      if (err) reject(Object.assign(err, { stdout, stderr }));
+      else resolve(stdout);
+    });
+  });
 }
 
-function removeClassic(exec) {
+function reg(exec, args) {
+  return exec("reg.exe", args, { windowsHide: true });
+}
+
+async function removeClassic(exec) {
   try {
-    reg(exec, ["delete", MENU_KEY, "/f"]);
+    await reg(exec, ["delete", MENU_KEY, "/f"]);
   } catch {
     /* the classic menu is not registered */
   }
   for (const item of commands()) {
     try {
-      reg(exec, ["delete", `${STORE}\\${item.verb}`, "/f"]);
+      await reg(exec, ["delete", `${STORE}\\${item.verb}`, "/f"]);
     } catch {
       /* this CLI is not registered */
     }
   }
 }
 
-function install({
+// register.ps1 writes "<package version>|<DLL hash>" after a successful install.
+function packageCurrent(folder, script) {
+  try {
+    const stamp = fs.readFileSync(path.win32.join(folder, "package-stamp.txt"), "utf8").trim();
+    const dll = fs.readFileSync(path.join(path.dirname(script), "GodmodeMenu.dll"));
+    const hash = crypto.createHash("sha256").update(dll).digest("hex");
+    return stamp.split("|")[1].toLowerCase() === hash;
+  } catch {
+    return false;
+  }
+}
+
+async function install({
   icon,
   platform = process.platform,
   shellDir: dir,
   script = scriptPath(),
-  execFile = execFileSync,
+  execFile = run,
   writeFile,
   rename,
 } = {}) {
@@ -87,17 +110,22 @@ function install({
       /* the menu still works without an icon */
     }
   }
+  if (packageCurrent(folder, script)) return { ok: true, current: true };
   try {
-    execFile(
+    await execFile(
       "powershell.exe",
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
       { windowsHide: true, encoding: "utf8", timeout: 180000 }
     );
   } catch (err) {
-    const detail = [err && err.stderr, err && err.stdout, err && err.message].filter(Boolean).join("\n");
-    return { ok: false, error: detail || "Could not register the folder menu" };
+    // Exit code 2: this PC lacks what the package needs, and register.ps1 changed nothing.
+    const skipped = err && err.code === 2;
+    const detail = skipped
+      ? String(err.stderr || "").trim()
+      : [err && err.stderr, err && err.stdout, err && err.message].filter(Boolean).join("\n");
+    return { ok: false, skipped, error: detail || "Could not register the folder menu" };
   }
-  removeClassic(execFile);
+  await removeClassic(execFile);
   return { ok: true };
 }
 
