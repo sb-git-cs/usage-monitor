@@ -116,7 +116,8 @@ async function check(file) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.deepEqual(result.widths, ["25%", "90%", "80%", "0%"]);
       assert.equal(result.reds, 2);
-      assert.match(result.text, /5h reaches 100% around \d{1,2}:\d\d [AP]M at this pace \(\+40%\/h\)/, "burn-rate forecast line");
+      // Within half an hour of midnight the forecast falls on the next day and is prefixed with it.
+      assert.match(result.text, /5h reaches 100% around (?:[A-Z][a-z]{2} )?\d{1,2}:\d\d [AP]M at this pace \(\+40%\/h\)/, "burn-rate forecast line");
       const gear = await win.webContents.executeJavaScript(`(() => { const b = document.getElementById('settings'); const r = b.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b; })()`);
       assert.equal(gear, true, "the settings button receives clicks");
       assert.equal(await win.webContents.executeJavaScript(`document.getElementById('pair').textContent`), "Pair");

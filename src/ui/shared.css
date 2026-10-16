@@ -353,12 +353,14 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
   box-shadow: inset 2px 0 0 var(--codex);
 }
 .session-card[hidden] { display: none; }
+/* width 0 + min-width 100%: session names and states never widen the flyout */
+.session-card { width: 0; min-width: 100%; }
 .session-auto { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); cursor: pointer; }
 .session-auto[hidden] { display: none; }
 .session-auto input { margin: 0; }
 #sessionRows { display: flex; flex-direction: column; gap: 4px; }
 .session-row {
-  display: grid; grid-template-columns: 13px minmax(60px, 1fr) max-content max-content; gap: 6px;
+  display: grid; grid-template-columns: 13px minmax(60px, 1fr) minmax(0, max-content) max-content; gap: 6px;
   align-items: center; font-size: 11px; color: #d1d5db; box-shadow: none;
 }
 .session-who { display: inline-flex; color: var(--muted); }
@@ -369,7 +371,7 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 .session-row.accent-cursor .session-who { color: var(--cursor); }
 .session-row.accent-copilot .session-who { color: var(--copilot); }
 .session-name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 0; min-width: 100%; }
-.session-state { color: var(--muted); white-space: nowrap; }
+.session-state { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .session-state.wide { grid-column: span 2; text-align: right; }
 .session-count { margin-left: 6px; font-size: 11px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
 .session-row.working .session-state { color: var(--green); }
@@ -377,9 +379,9 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 .session-row.alert .session-state { color: #fca5a5; }
 .session-row .eta { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
 .session-chip {
-  height: 100%; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 700; color: #e5e7eb;
+  height: 100%; padding: 0 4px; border-radius: 4px; font-size: 10px; font-weight: 700; color: #e5e7eb;
   background: rgba(17, 24, 39, 0.7); border: 1px solid rgba(75, 85, 99, 0.85);
-  display: grid; grid-template-columns: auto auto; grid-template-rows: repeat(2, 1fr); align-items: center; column-gap: 3px;
+  display: grid; grid-template-columns: auto auto; grid-template-rows: repeat(2, 1fr); align-items: center; column-gap: 2px;
   font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; flex: 0 0 auto;
 }
 .session-chip[hidden] { display: none; }
