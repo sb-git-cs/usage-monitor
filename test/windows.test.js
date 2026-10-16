@@ -13,13 +13,48 @@ function mainHarness(taskbar = {}) {
   const signals = new Map(["SIGHUP", "SIGINT"].map(name => [name, new Set(process.listeners(name))]));
   const api = load("src/main.js", {
     electron, "./config": { save() {} }, "./poller": {}, "./alerts": {}, "./taskbarLayout": taskbar, "./autostart": {}, "./updater": {},
-  }, ["wireIpc", "keepWidgetOnTop", "placeChipsDocked", "setState: (state) => { cfg = state.cfg; chips = state.chips; flyout = state.flyout; }"]);
+  }, ["wireIpc", "keepWidgetOnTop", "placeChipsDocked", "noteTaskbarShown", "recoverChipsIfNeeded", "setState: (state) => { cfg = state.cfg; chips = state.chips; flyout = state.flyout; }"]);
   for (const [name, existing] of signals) {
     for (const listener of process.listeners(name)) if (!existing.has(listener)) process.removeListener(name, listener);
   }
   api.wireIpc();
   return { api, ipc, events };
 }
+
+test("a taskbar slid off the monitor counts as hidden, and a full strip counts as shown", () => {
+  const layout = load("src/taskbarLayout.js");
+  const monitor = { x: 0, y: 0, w: 1920, h: 1080 };
+  assert.equal(layout.taskbarShown({ x: 0, y: 1032, w: 1920, h: 48 }, monitor), true);
+  assert.equal(layout.taskbarShown({ x: 0, y: 1078, w: 1920, h: 48 }, monitor), false);
+  assert.equal(layout.taskbarShown({ x: 1920, y: 400, w: 48, h: 400 }, monitor), false);
+  assert.equal(layout.taskbarShown({ x: 0, y: 1032, w: 1920, h: 48 }, monitor, false), false);
+  assert.equal(layout.taskbarShown(null, null), true);
+});
+
+test("docked chips hide with the taskbar and are not brought back while it is away", () => {
+  const { api } = mainHarness();
+  let visible = true;
+  const chips = {
+    isDestroyed: () => false,
+    isVisible: () => visible,
+    hide() { visible = false; },
+    showInactive() { visible = true; },
+    setAlwaysOnTop() {},
+    webContents: { setBackgroundThrottling() {} },
+  };
+  api.setState({ cfg: { chips_docked: true, chips_hidden: false }, chips });
+  api.noteTaskbarShown(false);
+  assert.equal(visible, false);
+  api.keepWidgetOnTop(chips, true);
+  api.recoverChipsIfNeeded();
+  assert.equal(visible, false);
+  const floating = mainHarness();
+  let stayed = true;
+  const loose = { ...chips, isVisible: () => stayed, hide() { stayed = false; } };
+  floating.api.setState({ cfg: { chips_docked: false, chips_hidden: false }, chips: loose });
+  floating.api.noteTaskbarShown(false);
+  assert.equal(stayed, true);
+});
 
 test("hidden chips stay hidden when other windows request always-on-top", () => {
   const { api } = mainHarness();

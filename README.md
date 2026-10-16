@@ -41,6 +41,8 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 ## What you see
 
+**New in 1.7.2:** the chips strip hides when the taskbar hides, so a screen share that leaves the taskbar out does not show the strip on its own.
+
 **New in 1.7.1:** **Open in terminal (godmode)** is on the main Windows 11 right-click menu after an update. The first launch asks once for administrator approval so Windows can trust the menu. A session stopped by a 5-hour limit resumes when that window resets, even if a weekly window is still full.
 
 **New in 1.7.0:** the flyout's **Sessions** card and a sessions chip list coding sessions running in a terminal: Claude Code and Codex, and on Windows Grok Build, Antigravity, Gemini CLI, Cursor Agent and Copilot CLI. With **Resume after limit** on (Windows), a session stopped by a usage limit gets `continue` typed into its own terminal a minute after the limit resets. In File Explorer, right-click empty folder space for **Open in terminal (godmode)**.
@@ -58,7 +60,7 @@ The meter requires an explicit total, a weekly period/reset, and reported Cursor
 | Surface | What it does |
 | --- | --- |
 | **Flyout** | Two-by-two provider cards (5-hour / weekly, `used/total %`), plus a **Network** card with live download and upload speed, the data used in the last hour, and the apps using the network right now. Click the Network card (or the ⇅ button) to open the full Network usage window. The footer shows the version and the [automatic update](#automatic-updates) status (**Up to date**, **Downloading 1.2.0… 42%**, …) with **Check now**. It rests flush on top of the taskbar. **Open flyout** / **Hide flyout**. Click outside the panel to close it. On Windows, **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks the panel just above the taskbar. |
-| **Chips** | Compact two-row strip with provider marks and percentages, stacked network speeds (click to open Network usage), and live system readings. On Windows, **Snap chips to taskbar** keeps the strip in an empty gap; if there is no room, it pops out above the taskbar. On macOS/Linux it floats and can be dragged anywhere. Click a provider to open the flyout; right-click for the menu. |
+| **Chips** | Compact two-row strip with provider marks and percentages, stacked network speeds (click to open Network usage), and live system readings. On Windows, **Snap chips to taskbar** keeps the strip in an empty gap; if there is no room, it pops out above the taskbar. The strip hides when the taskbar hides, so a screen share that leaves the taskbar out does not show the strip on its own. On macOS/Linux it floats and can be dragged anywhere. Click a provider to open the flyout; right-click for the menu. |
 | **Network usage window** | Live download and upload speed for every app, history for the chosen time range, per-minute charts, data caps, blocking and connection logs. Open it from the tray menu (**Network usage…**) or start the app with `--network`. |
 | **Tray icon** | A Usage Monitor icon in the notification area / menu bar; its tooltip shows the live network speed. **Click** it to show the chips again. **Right-click** for the menu (on Linux the menu opens on click). **Double-click** opens the flyout. |
 | **Notifications** | A silent notification the first time a plan bar crosses your warning level (80% unless you change it), when a window is on course to run out before it resets, when an app reaches its network data cap, and when Usage Monitor updates itself. None are shown during quiet hours. |

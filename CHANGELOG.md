@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.2 — 2026-10-16
+
+- **Chips follow the taskbar.** While the taskbar is hidden, the docked strip hides with it. A screen share that does not include the taskbar no longer shows the strip as a bar on its own.
+
 ## 1.7.1 — 2026-10-16
 
 - **Open in terminal (godmode) on the main Windows 11 menu after an update.** The signed menu package ships with the app, so the other PC does not need the Windows SDK. The first launch asks once for administrator approval to trust that package, and the item is then on the main right-click menu. A declined prompt is asked again next launch.

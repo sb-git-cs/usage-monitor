@@ -16,7 +16,25 @@ let refreshing = false;
 let rerun = false;
 // Which window (chips) should be owned by the taskbar; the probe script applies it on every run,
 // which also re-attaches the chips after Explorer restarts and replaces the taskbar.
-const owner = { hwnd: null, own: false, applied: null };
+const owner = { hwnd: null, own: false, capture: false, applied: null };
+let watchProc = null;
+let watchCallbacks = [];
+let watchRestart = null;
+
+// The on-screen thickness of the taskbar. A collapsed auto-hide bar is a sliver or is
+// off the monitor entirely; a shown bar is the full strip. Missing information stays shown
+// so the chips are not hidden just because the probe could not see the taskbar.
+function taskbarShown(tray, monitor, windowVisible = true) {
+  if (windowVisible === false) return false;
+  if (!tray || !monitor) return true;
+  const left = Math.max(tray.x, monitor.x);
+  const top = Math.max(tray.y, monitor.y);
+  const right = Math.min(tray.x + tray.w, monitor.x + monitor.w);
+  const bottom = Math.min(tray.y + tray.h, monitor.y + monitor.h);
+  if (right - left <= 0 || bottom - top <= 0) return false;
+  const thick = tray.w >= tray.h ? bottom - top : right - left;
+  return thick >= 12;
+}
 
 function fallbackFromScreen() {
   try {
@@ -52,8 +70,8 @@ function refreshAsync() {
   }
   refreshing = true;
   const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", layoutScript()];
-  const want = owner.hwnd ? `${owner.hwnd}:${owner.own ? 1 : 0}` : null;
-  if (want) args.push("-Hwnd", owner.hwnd, "-Own", owner.own ? "1" : "0", "-AppPid", String(process.pid));
+  const want = owner.hwnd ? `${owner.hwnd}:${owner.own ? 1 : 0}:${owner.capture ? 1 : 0}` : null;
+  if (want) args.push("-Hwnd", owner.hwnd, "-Own", owner.own ? "1" : "0", "-Capture", owner.capture ? "1" : "0", "-AppPid", String(process.pid));
   execFile("powershell.exe", args, { encoding: "utf8", timeout: 6000, windowsHide: true }, (err, stdout) => {
     refreshing = false;
     if (!err && stdout) {
@@ -72,11 +90,65 @@ function refreshAsync() {
   });
 }
 
-function setChipsOwner(hwnd, own) {
+function setChipsOwner(hwnd, own, capture) {
   if (process.platform !== "win32" || !hwnd || !/^\d+$/.test(String(hwnd))) return;
   owner.hwnd = String(hwnd);
   owner.own = !!own;
-  if (owner.applied !== `${owner.hwnd}:${owner.own ? 1 : 0}`) refreshAsync();
+  owner.capture = !!capture;
+  if (owner.applied !== `${owner.hwnd}:${owner.own ? 1 : 0}:${owner.capture ? 1 : 0}`) refreshAsync();
+}
+
+// One hidden PowerShell process reports when the taskbar slides away or comes back.
+function startTaskbarWatch() {
+  if (watchProc || process.platform !== "win32") return;
+  const { spawn } = require("child_process");
+  const proc = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", layoutScript(), "-Watch"], {
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  watchProc = proc;
+  let buffer = "";
+  proc.stdout.setEncoding("utf8");
+  proc.stdout.on("data", (chunk) => {
+    if (watchProc !== proc) return;
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, index).trim();
+      buffer = buffer.slice(index + 1);
+      if (line !== "shown=0" && line !== "shown=1") continue;
+      const shown = line === "shown=1";
+      for (const cb of watchCallbacks) cb(shown);
+    }
+  });
+  const ended = () => {
+    if (watchProc !== proc) return;
+    watchProc = null;
+    if (!watchCallbacks.length) return;
+    watchRestart = setTimeout(() => {
+      watchRestart = null;
+      startTaskbarWatch();
+    }, 5000);
+    if (watchRestart.unref) watchRestart.unref();
+  };
+  proc.on("exit", ended);
+  proc.on("error", ended);
+}
+
+function watchTaskbar(onChange) {
+  if (process.platform !== "win32" || typeof onChange !== "function") return;
+  watchCallbacks.push(onChange);
+  startTaskbarWatch();
+}
+
+function stopTaskbarWatch() {
+  watchCallbacks = [];
+  if (watchRestart) clearTimeout(watchRestart);
+  watchRestart = null;
+  const proc = watchProc;
+  watchProc = null;
+  if (!proc) return;
+  try { proc.kill(); } catch { /* already gone */ }
 }
 
 function toDipLayout(layout) {
@@ -286,6 +358,9 @@ module.exports = {
   defaultDocked,
   anchorAboveTaskbar,
   setChipsOwner,
+  taskbarShown,
+  watchTaskbar,
+  stopTaskbarWatch,
   isWellDocked,
   overlapsOccupied,
   dockRoom,

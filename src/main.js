@@ -173,6 +173,9 @@ function applyDockedPos(win, pos) {
 
 // Docked on a horizontal taskbar, the strip fills the taskbar with 2px spare above and below (0 = natural size).
 let chipsFill = 0;
+// Docked chips follow the taskbar. While it is slid off screen they stay hidden, so a
+// screen share that does not show the taskbar does not show the strip on its own.
+let taskbarConcealed = false;
 
 function taskbarFillHeight() {
   const layout = taskbarLayout.loadLayout();
@@ -197,7 +200,9 @@ function setChipsFill(height) {
   // While docked in the taskbar the strip is owned by it, so it stays visible when Windows
   // raises the taskbar above other windows (Start menu, Quick Settings). Floating or popped-out
   // chips must not be owned, or they would cover the Start menu.
-  if (taskbarLayout.setChipsOwner) taskbarLayout.setChipsOwner(chipsHandle(), next > 0);
+  // Owned only while the strip fills the taskbar. Capture exclusion covers the popped-out
+  // strip too, so a share still does not show it as a bar of its own.
+  if (taskbarLayout.setChipsOwner) taskbarLayout.setChipsOwner(chipsHandle(), next > 0, !!(cfg && cfg.chips_docked));
   if (next === chipsFill) return;
   chipsFill = next;
   if (chips && !chips.isDestroyed()) chips.webContents.send("usage://chips-fill", chipsFill);
@@ -220,12 +225,16 @@ function popChipsAboveTaskbar(w, h, extras) {
   applyDockedPos(chips, pos);
   setChipsPopped(true);
   keepWidgetOnTop(chips, true);
-  if (!chips.isVisible() && !cfg.chips_hidden) chips.showInactive();
+  if (!chips.isVisible() && !cfg.chips_hidden && !taskbarConcealed) chips.showInactive();
   return true;
 }
 
 function placeChipsDocked() {
   if (!chips || chips.isDestroyed()) return;
+  if (taskbarConcealed) {
+    if (chips.isVisible()) chips.hide();
+    return;
+  }
   const [w, currentHeight] = chips.getSize();
   // Test the docked height, not the taller floating window (which includes its outer margin).
   const fillHeight = taskbarFillHeight();
@@ -292,7 +301,7 @@ function sendChipsLoading() {
 
 function keepWidgetOnTop(win, docked) {
   if (!win || win.isDestroyed()) return;
-  if (win === chips && cfg?.chips_hidden) return;
+  if (win === chips && (cfg?.chips_hidden || taskbarConcealed)) return;
   const level = docked ? "screen-saver" : "pop-up-menu";
   win.setAlwaysOnTop(true, level, 1);
   try {
@@ -304,6 +313,7 @@ function keepWidgetOnTop(win, docked) {
 }
 
 function restoreVisibility() {
+  taskbarConcealed = false;
   if (cfg) {
     cfg.chips_hidden = false;
     config.save(cfg);
@@ -328,8 +338,24 @@ function restoreVisibility() {
   }
 }
 
+function noteTaskbarShown(shown) {
+  const conceal = shown === false && !!(cfg && cfg.chips_docked && !cfg.chips_hidden);
+  if (conceal === taskbarConcealed) return;
+  taskbarConcealed = conceal;
+  if (!chips || chips.isDestroyed()) return;
+  if (conceal) {
+    chips.hide();
+    return;
+  }
+  if (!cfg.chips_hidden) {
+    placeChips();
+    chips.showInactive();
+    keepWidgetOnTop(chips, cfg.chips_docked);
+  }
+}
+
 function recoverChipsIfNeeded() {
-  if (!chips || chips.isDestroyed() || !cfg || cfg.chips_hidden || dragState) return;
+  if (!chips || chips.isDestroyed() || !cfg || cfg.chips_hidden || taskbarConcealed || dragState) return;
   let crashed = false;
   let hidden = false;
   try {
@@ -417,7 +443,7 @@ function setChipsHidden(hidden) {
   config.save(cfg);
   applyActivity();
   if (!chips || chips.isDestroyed()) return;
-  if (cfg.chips_hidden) chips.hide();
+  if (cfg.chips_hidden || taskbarConcealed) chips.hide();
   else {
     placeChips();
     keepWidgetOnTop(chips, cfg.chips_docked);
@@ -426,6 +452,7 @@ function setChipsHidden(hidden) {
 
 function setChipsDocked(docked, opts = {}) {
   cfg.chips_docked = !!docked;
+  if (!cfg.chips_docked) taskbarConcealed = false;
   if (!cfg.chips_docked && chips) {
     const pos = chips.getPosition();
     cfg.chips_x = opts.keepPos && opts.x != null ? opts.x : pos[0];
@@ -1691,6 +1718,23 @@ if (!gotLock) {
         placeChipsDocked();
       }
     }, 8000);
+    if (taskbarLayout.watchTaskbar) {
+      let taskbarHideTimer = null;
+      taskbarLayout.watchTaskbar((shown) => {
+        if (shown) {
+          if (taskbarHideTimer) clearTimeout(taskbarHideTimer);
+          taskbarHideTimer = null;
+          noteTaskbarShown(true);
+          return;
+        }
+        if (taskbarHideTimer) return;
+        // A short delay ignores the taskbar's slide. It has to stay away before the strip hides.
+        taskbarHideTimer = setTimeout(() => {
+          taskbarHideTimer = null;
+          noteTaskbarShown(false);
+        }, 300);
+      });
+    }
   });
 }
 
@@ -1711,5 +1755,6 @@ app.on("before-quit", () => {
   updater.stop();
   if (systemPoll) systemPoll.stop();
   netUsage.shutdown();
+  if (taskbarLayout.stopTaskbarWatch) taskbarLayout.stopTaskbarWatch();
   if (tray && !tray.isDestroyed()) tray.destroy();
 });
