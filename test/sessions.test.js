@@ -35,7 +35,27 @@ test("a Codex turn that ended at its usage limit reports the window's reset", ()
     error: { message: "You've hit your usage limit. ... or try again at 6:05 PM.", codex_error_info: "usage_limit_exceeded" } } };
   const started = { type: "event_msg", payload: { type: "task_started" } };
   const late = { type: "event_msg", payload: { type: "item_completed" } };
-  assert.deepEqual(codexState([started, tokens, done, late]), { limited: true, busy: false, resets_at: 1792074052000, limit: null });
+  assert.deepEqual(codexState([started, tokens, done, late]), { limited: true, busy: false, resets_at: 1792074052000, limit: "five_hour" });
+  // Both windows used up: the 5-hour one is what resumes, not the weekly reset days later.
+  const both = { type: "event_msg", payload: { type: "token_count", rate_limits: {
+    primary: { used_percent: 100, window_minutes: 300, resets_at: 1792074052 },
+    secondary: { used_percent: 100, window_minutes: 10080, resets_at: 1792660852 } } } };
+  const unnamed = { ...done, payload: { ...done.payload, error: { message: "You've hit your usage limit.", codex_error_info: "usage_limit_exceeded" } } };
+  assert.equal(codexState([started, both, unnamed, late]).resets_at, 1792074052000);
+  assert.equal(codexState([started, both, unnamed, late]).limit, "five_hour");
+  // The message names the later window, so that reset is the one to wait for.
+  const weekAt = 1792660852;
+  const namedTokens = { type: "event_msg", payload: { type: "token_count", rate_limits: {
+    primary: { used_percent: 100, window_minutes: 300, resets_at: 1792074052 },
+    secondary: { used_percent: 100, window_minutes: 10080, resets_at: weekAt } } } };
+  const namedAt = new Date(weekAt * 1000);
+  const hh = namedAt.getHours() % 12 || 12;
+  const mm = String(namedAt.getMinutes()).padStart(2, "0");
+  const ap = namedAt.getHours() >= 12 ? "PM" : "AM";
+  const named = { ...done, timestamp: new Date(weekAt * 1000 - 60_000).toISOString(), payload: { ...done.payload,
+    error: { message: `You've hit your usage limit. try again at ${hh}:${mm} ${ap}.`, codex_error_info: "usage_limit_exceeded" } } };
+  assert.equal(codexState([started, namedTokens, named]).resets_at, weekAt * 1000);
+  assert.equal(codexState([started, namedTokens, named]).limit, "weekly");
   assert.deepEqual(codexState([started, tokens, done, started]), { limited: false, busy: true });
   assert.deepEqual(codexState([started, { type: "event_msg", payload: { type: "task_complete" } }]), { limited: false, busy: false });
   // Without reported limits the clock time in the message is used.
@@ -79,6 +99,24 @@ test("resume waits for the reset plus grace, the meters and the retry gap", () =
   assert.equal(resumeStatus(s, { count: 1, last: ctx.now - 1000, sent: false }, ctx), "retrying");
   assert.equal(resumeStatus(s, { count: 1, last: ctx.now - RETRY_MS, sent: false }, ctx), "due");
   assert.equal(resumeStatus(s, { count: MAX_ATTEMPTS, last: 0, sent: false }, ctx), "failed");
+});
+
+test("a 5-hour limit resumes when that window resets, even if the weekly window is still full", () => {
+  const s = { tool: "claude", can_type: true, resets_at: NOW, limit: "five_hour" };
+  const ctx = { enabled: true, platform: "win32", now: NOW + GRACE_MS };
+  const held = { providers: [{ id: "claude", status: { state: "ok" }, windows: [
+    { kind: "five_hour", used_pct: 100, resets_at: new Date(NOW + 3600_000).toISOString() },
+    { kind: "weekly", used_pct: 10, resets_at: new Date(NOW + 5 * 86400_000).toISOString() },
+  ] }] };
+  assert.equal(resumeStatus(s, null, { ...ctx, snapshot: held }), "pending");
+  const cleared = { providers: [{ id: "claude", status: { state: "ok" }, windows: [
+    { kind: "five_hour", used_pct: 4, resets_at: new Date(NOW + 5 * 3600_000).toISOString() },
+    { kind: "weekly", used_pct: 100, resets_at: new Date(NOW + 5 * 86400_000).toISOString() },
+  ] }] };
+  assert.equal(resumeStatus(s, null, { ...ctx, snapshot: cleared }), "due");
+  // A weekly stop still waits on the weekly window.
+  const week = { ...s, limit: "seven_day", resets_at: NOW };
+  assert.equal(resumeStatus(week, null, { ...ctx, snapshot: cleared }), "pending");
 });
 
 test("only interactive codex invocations count as terminal sessions", () => {
@@ -267,7 +305,7 @@ test("macOS and Linux list live Claude sessions but never type", async () => {
   const fx = claudeFixture({ pid: process.pid, entries: [limitEntry((NOW - GRACE_MS - 1000) / 1000)] });
   let asked = 0;
   const w = createWatcher({ getConfig: () => ({ auto_resume: true }), platform: "linux", now: () => NOW, request: async () => { asked++; return {}; },
-    claudeDir: () => fx.dir, codexDir: () => path.join(fx.dir, "none") });
+    claudeDir: () => fx.dir, codexDir: () => path.join(fx.dir, "none"), grokDir: () => path.join(fx.dir, "none") });
   const view = await w.scan();
   assert.equal(asked, 0);
   assert.equal(view.can_resume, false);

@@ -1528,7 +1528,25 @@ if (!gotLock) {
       setTimeout(() => {
         folderMenu.install({ icon: app.isPackaged ? `${process.execPath},0` : path.join(__dirname, "ui", "icon.ico") })
           .then((menu) => {
-            if (menu.skipped) log.info("folder menu not installed:", menu.error);
+            if (menu.needsAdmin) {
+              log.info("folder menu waiting for administrator approval:", menu.error || "");
+              if (menu.notify && Notification.isSupported()) {
+                new Notification({
+                  title: "Open in terminal (godmode)",
+                  body: "Allow the administrator prompt to add it to the main right-click menu.",
+                  silent: true,
+                }).show();
+              }
+            } else if (menu.classic) {
+              log.info("folder menu is under Show more options:", menu.error || "the main Windows 11 menu was not installed");
+              if (menu.notify && Notification.isSupported()) {
+                new Notification({
+                  title: "Open in terminal (godmode)",
+                  body: "The main right-click menu could not be installed. The item is under Show more options for now.",
+                  silent: true,
+                }).show();
+              }
+            } else if (menu.skipped) log.info("folder menu not installed:", menu.error);
             else if (!menu.ok) log.error("folder menu", menu.error || "failed");
           })
           .catch((err) => log.error("folder menu", err));

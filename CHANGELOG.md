@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1 — 2026-10-16
+
+- **Open in terminal (godmode) on the main Windows 11 menu after an update.** The signed menu package ships with the app, so the other PC does not need the Windows SDK. The first launch asks once for administrator approval to trust that package, and the item is then on the main right-click menu. A declined prompt is asked again next launch.
+- **Auto-resume follows a 5-hour limit.** When a session stops on the 5-hour window, `continue` is typed a minute after that window resets, even if a weekly window is still full. A weekly limit still waits for the weekly reset. Codex's 5-hour window is the one reported at about 300 minutes.
+
 ## 1.7.0 — 2026-10-16
 
 - **Lighter on the system.** While the screen is locked, the computer sleeps, or nobody has used it for five minutes, providers are read once a minute instead of at the chosen interval and coding sessions are checked every 30 seconds (limits are still resumed); everything refreshes at once on return. The chips' CPU, memory, GPU and disk readings pause while the screen is locked or the chips are hidden, and network speed stops updating while locked. The SPACE reading comes from the hardware helper that is already running instead of a new PowerShell process every 30 seconds, and on Windows it counts local fixed drives only. Windows are drawn without GPU acceleration, which keeps about 50 MB less memory and uses less CPU. The session helper returns only coding CLIs among `node` processes.

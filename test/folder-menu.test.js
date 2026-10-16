@@ -48,7 +48,7 @@ test("install writes the command file, registers the package, then removes the c
   assert.equal(calls.some((call) => call[1].includes("SubCommands")), false);
 });
 
-test("a failed package registration leaves the classic menu in place", async () => {
+test("a failed package registration still adds the classic folder menu", async () => {
   const calls = [];
   const result = await install({
     platform: "win32",
@@ -56,35 +56,79 @@ test("a failed package registration leaves the classic menu in place", async () 
     script: "C:\\app\\register.ps1",
     writeFile: () => {},
     rename: () => {},
-    execFile: (file) => {
-      calls.push(file);
-      if (file === "powershell.exe") {
+    execFile: (file, args) => {
+      calls.push([file, args.slice()]);
+      if (file === "powershell.exe" && args.includes("-File")) {
         const err = new Error("no");
         err.stderr = "install failed";
         throw err;
       }
     },
   });
-  assert.equal(result.ok, false);
+  assert.equal(result.ok, true);
+  assert.equal(result.classic, true);
   assert.match(result.error, /install failed/);
-  assert.equal(calls.includes("reg.exe"), false);
+  const added = calls.filter((call) => call[0] === "reg.exe" && call[1][0] === "add");
+  assert.equal(added.some((call) => call[1][1] === MENU_KEY && call[1].includes("SubCommands")), true);
+  assert.equal(calls.some((call) => call[0] === "reg.exe" && call[1][0] === "delete"), false);
 });
 
-test("a PC without the packaging tools is skipped quietly", async () => {
+test("a PC without the packaging tools gets the classic menu instead of nothing", async () => {
+  const calls = [];
   const result = await install({
     platform: "win32",
-    shellDir: "C:\temp\shell",
-    script: "C:\app\register.ps1",
+    shellDir: "C:\\temp\\shell",
+    script: "C:\\app\\register.ps1",
+    icon: "C:\\app\\icon.ico",
     writeFile: () => {},
     rename: () => {},
-    execFile: () => {
-      const err = new Error("Command failed");
-      err.code = 2;
-      err.stderr = "the Windows SDK packaging tools are not installed\r\n";
-      throw err;
+    execFile: (file, args) => {
+      calls.push([file, args.slice()]);
+      if (file === "powershell.exe" && args.includes("-File")) {
+        const err = new Error("Command failed");
+        err.code = 2;
+        err.stderr = "the Windows SDK packaging tools are not installed\r\n";
+        throw err;
+      }
     },
   });
-  assert.deepEqual(result, { ok: false, skipped: true, error: "the Windows SDK packaging tools are not installed" });
+  assert.equal(result.ok, true);
+  assert.equal(result.classic, true);
+  assert.equal(result.notify, false);
+  assert.equal(result.error, "the Windows SDK packaging tools are not installed");
+  const added = calls.filter((call) => call[0] === "reg.exe" && call[1][0] === "add");
+  const parent = added.find((call) => call[1][1] === MENU_KEY && call[1].includes("SubCommands"));
+  assert.match(parent[1].at(-2), /UsageMonitor\.Godmode\.claude/);
+  assert.match(parent[1].at(-2), /UsageMonitor\.Godmode\.cursor/);
+  const command = added.find((call) => String(call[1][1]).endsWith("UsageMonitor.Godmode.grok\\command"));
+  assert.match(command[1].at(-2), /grok --always-approve/);
+  const icon = added.find((call) => call[1][1] === MENU_KEY && call[1].includes("Icon"));
+  assert.equal(icon[1].at(-2), "C:\\app\\icon.ico");
+});
+
+test("a declined administrator prompt is asked again and is not filed under Show more options", async () => {
+  const calls = [];
+  const result = await install({
+    platform: "win32",
+    shellDir: "C:\\temp\\shell",
+    script: "C:\\app\\register.ps1",
+    writeFile: () => {},
+    rename: () => {},
+    execFile: (file, args) => {
+      calls.push([file, args.slice()]);
+      if (file === "powershell.exe" && args.includes("-File")) {
+        const err = new Error("Command failed");
+        err.code = 2;
+        err.stderr = "administrator approval is required once to add the menu to the main right-click menu\r\n";
+        throw err;
+      }
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.needsAdmin, true);
+  assert.equal(result.classic, undefined);
+  assert.equal(result.notify, false);
+  assert.equal(calls.some((call) => call[0] === "reg.exe"), false);
 });
 
 test("an installed package that matches the bundled DLL is not registered again", async (t) => {

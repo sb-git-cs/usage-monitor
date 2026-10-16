@@ -172,9 +172,33 @@ function clockAfter(text, afterMs) {
   return d.getTime();
 }
 
+// Codex primary is the 5-hour window when window_minutes is about 300; secondary at
+// about 10080 minutes is the weekly window. Same bounds the usage meter uses, in minutes.
+function codexWindowKind(window) {
+  const mins = Number(window && window.window_minutes);
+  if (mins >= 240 && mins <= 360) return "five_hour";
+  if (mins >= 8640 && mins <= 11520) return "weekly";
+  return null;
+}
+
+// The window that actually stopped the turn. One spent window is that window. When the
+// 5-hour window and a later one are both spent, the 5-hour reset wins unless the message
+// names the later time.
+function pickCodexWindow(limits, message, at) {
+  const spent = [limits && limits.primary, limits && limits.secondary].filter((w) => w && w.used_percent >= 100 && Number.isFinite(w.resets_at));
+  if (!spent.length) return { resets_at: clockAfter(message, at), limit: null };
+  let chosen = spent.length === 1 ? spent[0] : null;
+  const msgAt = clockAfter(message, at);
+  if (!chosen && msgAt != null) {
+    const nearest = spent.reduce((best, w) => (Math.abs(w.resets_at * 1000 - msgAt) < Math.abs(best.resets_at * 1000 - msgAt) ? w : best));
+    if (Math.abs(nearest.resets_at * 1000 - msgAt) <= 15 * 60 * 1000) chosen = nearest;
+  }
+  if (!chosen) chosen = spent.find((w) => codexWindowKind(w) === "five_hour") || spent.reduce((a, b) => (a.resets_at <= b.resets_at ? a : b));
+  return { resets_at: chosen.resets_at * 1000, limit: codexWindowKind(chosen) };
+}
+
 // Codex: a turn that ended with usage_limit_exceeded, with no turn started after it.
 function codexState(entries) {
-  let resets = null;
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
     const p = e && e.type === "event_msg" && e.payload;
@@ -184,25 +208,59 @@ function codexState(entries) {
     if (!p.error || p.error.codex_error_info !== "usage_limit_exceeded") return { limited: false, busy: false };
     const at = Date.parse(e.timestamp);
     // The rate limits reported just before the error say which window ran out and when it resets.
-    for (let j = i - 1; j >= 0 && resets == null; j--) {
-      const limits = entries[j]?.type === "event_msg" && entries[j].payload?.type === "token_count" && entries[j].payload.rate_limits;
-      if (!limits) continue;
-      const spent = [limits.primary, limits.secondary].filter((w) => w && w.used_percent >= 100 && Number.isFinite(w.resets_at));
-      if (spent.length) resets = Math.max(...spent.map((w) => w.resets_at * 1000));
-      break;
+    // Primary at about 300 minutes is the 5-hour window. When that one is used up, its reset is
+    // the one to wait for, not a weekly window that happens to be full as well.
+    let limits = null;
+    for (let j = i - 1; j >= 0 && limits == null; j--) {
+      const found = entries[j]?.type === "event_msg" && entries[j].payload?.type === "token_count" && entries[j].payload.rate_limits;
+      if (found) limits = found;
     }
-    if (resets == null) resets = clockAfter(p.error.message, at);
-    return { limited: true, busy: false, resets_at: resets, limit: null };
+    const picked = pickCodexWindow(limits, p.error.message, at);
+    return { limited: true, busy: false, resets_at: picked.resets_at, limit: picked.limit };
   }
   return { limited: false, busy: false };
 }
 
-// True while the meters still read that provider's window as used up; resuming then would only
-// hit the limit again.
-function stillLimited(snapshot, tool, now) {
+// A 5-hour window is the session limit (Claude "five_hour", Codex primary at about 300 minutes).
+// A weekly window resetting days later must not hold that resume.
+function limitKind(limit) {
+  const s = String(limit || "");
+  if (/five_hour|^session$/i.test(s)) return "five_hour";
+  if (/seven_day|weekly/i.test(s)) return "weekly";
+  return null;
+}
+
+function isFiveHour(window) {
+  return window.kind === "five_hour";
+}
+
+function isWeekly(window) {
+  return window.kind === "weekly" || window.kind === "weekly_scoped";
+}
+
+function openWindows(snapshot, tool, now) {
+  const p = (snapshot?.providers || []).find((item) => item.id === tool && item.status?.state === "ok");
+  return (p?.windows || []).filter((w) => Number.isFinite(w.used_pct) && w.used_pct >= 100 && Date.parse(w.resets_at) > now);
+}
+
+// True while the meters still read the limit that stopped this session as used up.
+// A 5-hour stop is blocked only by the 5-hour window, so a weekly window that is still
+// full does not keep the session waiting. Resuming then would only hit the same limit again.
+function stillLimited(snapshot, tool, now, resetsAt, limit) {
   const p = (snapshot?.providers || []).find((item) => item.id === tool);
   if (!p || p.status?.state !== "ok") return false;
-  return (p.windows || []).some((w) => Number.isFinite(w.used_pct) && w.used_pct >= 100 && Date.parse(w.resets_at) > now);
+  const open = (p.windows || []).filter((w) => Number.isFinite(w.used_pct) && w.used_pct >= 100 && Date.parse(w.resets_at) > now);
+  if (!open.length) return false;
+  const kind = limitKind(limit);
+  if (kind === "five_hour") return open.some(isFiveHour);
+  if (kind === "weekly") return open.some(isWeekly);
+  if (!Number.isFinite(resetsAt)) return true;
+  const slack = 15 * 60 * 1000;
+  if (open.some((w) => Math.abs(Date.parse(w.resets_at) - resetsAt) <= slack)) return true;
+  // The reset this session was waiting on has passed. A window that ends much later
+  // is a different limit (the weekly cap beside a 5-hour one).
+  if (now >= resetsAt) return open.some((w) => Date.parse(w.resets_at) - resetsAt < ORPHAN_WINDOW_MS);
+  return true;
 }
 
 // What happens next for a session stopped by a limit. `attempt` is what was already tried for this reset.
@@ -212,7 +270,7 @@ function resumeStatus(session, attempt, { enabled, platform, now, snapshot }) {
   if (attempt?.sent) return "sent";
   if (attempt && attempt.count >= MAX_ATTEMPTS) return "failed";
   if (!Number.isFinite(session.resets_at) || now < session.resets_at + GRACE_MS) return "scheduled";
-  if (stillLimited(snapshot, session.tool, now)) return "pending";
+  if (stillLimited(snapshot, session.tool, now, session.resets_at, session.limit)) return "pending";
   if (attempt && now - attempt.last < RETRY_MS) return "retrying";
   return "due";
 }
@@ -334,12 +392,34 @@ function grokSessionDir(root, cwd, id) {
   return null;
 }
 
-// The latest reset of a window the meters read as used up.
+// The reset to wait for. A used-up 5-hour window wins over a weekly window that is also full,
+// because that is the limit a session hits and recovers from through the day.
+function spentWindow(snapshot, tool, now) {
+  const open = openWindows(snapshot, tool, now);
+  if (!open.length) return null;
+  const five = open.filter(isFiveHour);
+  const pool = five.length ? five : open;
+  const window = pool.reduce((a, b) => (Date.parse(a.resets_at) <= Date.parse(b.resets_at) ? a : b));
+  return { at: Date.parse(window.resets_at), limit: isFiveHour(window) ? "five_hour" : isWeekly(window) ? "weekly" : null };
+}
+
 function spentReset(snapshot, tool, now) {
-  const p = (snapshot?.providers || []).find((item) => item.id === tool && item.status?.state === "ok");
-  const at = (p?.windows || []).filter((w) => Number.isFinite(w.used_pct) && w.used_pct >= 100 && Date.parse(w.resets_at) > now)
-    .map((w) => Date.parse(w.resets_at));
-  return at.length ? Math.max(...at) : null;
+  const window = spentWindow(snapshot, tool, now);
+  return window ? window.at : null;
+}
+
+function weeklyReset(snapshot, tool, now) {
+  const open = openWindows(snapshot, tool, now).filter(isWeekly);
+  if (!open.length) return null;
+  return Math.min(...open.map((w) => Date.parse(w.resets_at)));
+}
+
+// "session limit" / "5-hour limit" is the short window. "weekly limit" is the long one.
+function messageLimitKind(text) {
+  const s = String(text || "");
+  if (/5-hour|five[- ]hour|\b5h\b|session limit/i.test(s)) return "five_hour";
+  if (/weekly|7-day|seven[- ]day/i.test(s)) return "weekly";
+  return null;
 }
 
 function processAlive(pid) {
@@ -596,7 +676,7 @@ function createWatcher({
           const state = cachedState(r.file, codexState) || { limited: false, busy: false };
           sessions.push({ ...base, key: `codex:${r.id}`, name: names.get(r.id) || path.basename(cwd) || "Codex",
             state: state.limited ? "limited" : state.busy ? "working" : "idle",
-            resets_at: state.limited ? state.resets_at : null, can_type: true });
+            resets_at: state.limited ? state.resets_at : null, limit: state.limited ? state.limit : null, can_type: true });
           continue;
         }
         // Not linked to one rollout (for example two terminals opened together in one folder).
@@ -604,8 +684,12 @@ function createWatcher({
         // newest lines means this terminal hit it.
         const spent = rollouts.filter((x) => !claimed.has(x.file) && sameFolder(x.cwd, p.cwd, platform) && x.mtime >= p.started)
           .map((x) => cachedState(x.file, codexState)).filter((st) => st && st.limited && Number.isFinite(st.resets_at));
-        const resets = spent.length ? Math.max(...spent.map((st) => st.resets_at))
-          : Number.isFinite(codexSpent) && now() < codexSpent + ORPHAN_WINDOW_MS ? codexSpent : null;
+        const five = spent.filter((st) => st.limit === "five_hour");
+        const pool = five.length ? five : spent;
+        const chosen = pool.length ? pool.reduce((a, b) => (a.resets_at <= b.resets_at ? a : b)) : null;
+        const resets = chosen ? chosen.resets_at
+          : codexSpent && now() < codexSpent.at + ORPHAN_WINDOW_MS ? codexSpent.at : null;
+        const orphanLimit = chosen ? chosen.limit : resets != null && codexSpent ? codexSpent.limit : null;
         let shown = false;
         if (resets != null && platform === "win32") {
           try {
@@ -615,7 +699,8 @@ function createWatcher({
           }
         }
         sessions.push({ ...base, key: `codex:${p.pid}:${p.start}`, name: path.basename(cwd) || "Codex",
-          state: shown ? "limited" : "idle", resets_at: shown ? resets : null, can_type: true, lines: ORPHAN_LINES });
+          state: shown ? "limited" : "idle", resets_at: shown ? resets : null, limit: shown ? orphanLimit : null,
+          can_type: true, lines: ORPHAN_LINES });
       }
     }
     if (platform === "win32") {
@@ -680,22 +765,36 @@ function createWatcher({
       const working = busy != null ? busy : !!(p.cli.working && p.cli.working.test(screen));
       const limited = !working && new RegExp(OTHER_LIMIT_ON_SCREEN, "i").test(screen);
       let resets = null;
+      let limit = null;
       if (limited) {
         live.add(key);
+        const named = messageLimitKind(screen);
         // The reset is worked out once, when the message first shows: "in 2h" means from then.
-        const seen = limitsSeen.get(key) || { resets: resetOnScreen(screen, now()) };
+        const seen = limitsSeen.get(key) || { resets: resetOnScreen(screen, now()), limit: named };
+        if (!seen.limit && named) seen.limit = named;
         if (!Number.isFinite(seen.resets)) {
-          const spent = spentSeen.get(p.cli.tool);
-          seen.resets = Number.isFinite(spent) && now() < spent + ORPHAN_WINDOW_MS ? spent : null;
+          // A weekly message waits on the weekly meter. Anything else, including a 5-hour
+          // message with no clock time, uses the 5-hour window when that one is used up.
+          if (seen.limit === "weekly") {
+            const at = weeklyReset(snapshot(), p.cli.tool, now());
+            if (Number.isFinite(at)) seen.resets = at;
+          } else {
+            const meter = spentSeen.get(p.cli.tool);
+            if (meter && Number.isFinite(meter.at) && now() < meter.at + ORPHAN_WINDOW_MS) {
+              seen.resets = meter.at;
+              if (!seen.limit) seen.limit = meter.limit;
+            }
+          }
         }
         limitsSeen.set(key, seen);
         resets = seen.resets;
+        limit = seen.limit || null;
       }
       const cwd = (p.cwd || "").replace(/[\\/]+$/, "");
       // Waiting for you: Grok's events say no turn runs, or the CLI's empty prompt is showing.
       const waiting = busy === false || !!(p.cli.idle && p.cli.idle.test(screen));
       out.push({ key, tool: p.cli.tool, label: p.cli.label, pid: p.pid, start: p.start, cwd, name: name || path.basename(cwd) || p.cli.label,
-        state: limited ? "limited" : working ? "working" : waiting ? "idle" : "running", resets_at: resets, limit: null, can_type: true,
+        state: limited ? "limited" : working ? "working" : waiting ? "idle" : "running", resets_at: resets, limit, can_type: true,
         started, lines: OTHER_LINES, expect: OTHER_LIMIT_ON_SCREEN });
     }
     for (const key of limitsSeen.keys()) if (!live.has(key)) limitsSeen.delete(key);
@@ -710,14 +809,13 @@ function createWatcher({
     busy = true;
     try {
       const cfg = getConfig() || {};
-      // The meters' latest used-up Codex window, for terminals not linked to a rollout.
-      const meters = (snapshot()?.providers || []).find((p) => p.id === "codex" && p.status?.state === "ok");
-      const spentAt = (meters?.windows || []).filter((w) => Number.isFinite(w.used_pct) && w.used_pct >= 100 && Date.parse(w.resets_at) > now())
-        .map((w) => Date.parse(w.resets_at));
-      if (spentAt.length) codexSpent = Math.max(...spentAt);
+      // The meters' used-up Codex window, for terminals not linked to a rollout.
+      // A 5-hour window is kept ahead of a weekly one that is full at the same time.
+      const picked = spentWindow(snapshot(), "codex", now());
+      if (picked) codexSpent = picked;
       for (const cli of OTHER_CLIS) {
-        const at = spentReset(snapshot(), cli.tool, now());
-        if (at != null) spentSeen.set(cli.tool, at);
+        const at = spentWindow(snapshot(), cli.tool, now());
+        if (at) spentSeen.set(cli.tool, at);
       }
       let sessions;
       try {
