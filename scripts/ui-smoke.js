@@ -174,7 +174,8 @@ async function check(file) {
       assert.equal(fill.chip, 21);
       assert.equal(fill.net, 44);
       assert.equal(fill.netDisplay, "grid");
-      assert.ok(fill.session <= 50, `compact sessions chip: ${fill.session}px`);
+      // About 48px with Segoe UI; the default fonts on macOS (50px) and Ubuntu (52.5px) are wider.
+      assert.ok(fill.session <= 54, `compact sessions chip: ${fill.session}px`);
       assert.ok(fill.width - fill.session < 420, `compact strip including system metrics: ${fill.width}px`);
       renderedFrame = null;
       const fillDeadline = Date.now() + 5000;
