@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { load } = require("./helpers");
 
 const noPaths = { cliOnPath: () => false, fileExists: () => false };
-const gemini = load("src/adapters/gemini.js", {}, ["mapSummary", "mapModels", "usedFromFraction", "expiryEpoch", "fetchFromHost"]);
+const gemini = load("src/adapters/gemini.js", {}, ["mapSummary", "mapModels", "mapQuotaBuckets", "usedFromFraction", "expiryEpoch", "fetchFromHost"]);
 
 test("Gemini converts remaining fractions precisely and rejects invalid readings", () => {
   assert.equal(gemini.usedFromFraction(0.25), 75);
@@ -29,6 +29,41 @@ test("Gemini collects all explicitly identified Gemini quota groups", () => {
     displayName, buckets: [{ remainingFraction: 0.5, window: "DAILY" }],
   })) });
   assert.equal(windows.length, 2);
+});
+
+test("Gemini reads its own buckets when the group is no longer named Gemini", () => {
+  const windows = gemini.mapSummary({ groups: [{
+    displayName: "Models",
+    buckets: [
+      { bucketId: "gemini-weekly", remaining_fraction: 0.4, reset_time: "2026-10-22T00:00:00Z", window: "weekly" },
+      { bucketId: "gemini-5h", remainingFraction: 0.25, resetTime: "2026-10-16T18:00:00Z", window: "5h" },
+      { bucketId: "3p-5h", remainingFraction: 0, window: "5h" },
+    ],
+  }] });
+  assert.deepEqual(windows.map((win) => win.kind), ["weekly", "five_hour"]);
+  assert.equal(windows[1].used_pct, 75);
+  assert.equal(windows[1].label, "5h");
+});
+
+test("Gemini collapses the shared model pool into one 5-hour window", () => {
+  const buckets = ["gemini-3-flash", "gemini-3.5-flash-lite", "claude-sonnet-4-6"].map((modelId) => ({
+    modelId,
+    tokenType: "WTUS",
+    remainingFraction: modelId.startsWith("gemini") ? 0.72 : 1,
+    resetTime: "2026-10-16T17:49:58Z",
+  }));
+  const windows = gemini.mapQuotaBuckets({ buckets });
+  assert.equal(windows.length, 1);
+  assert.equal(windows[0].kind, "five_hour");
+  assert.equal(windows[0].label, "5h");
+  assert.equal(windows[0].resets_at, "2026-10-16T17:49:58.000Z");
+  const models = gemini.mapModels({ models: {
+    "gemini-3-flash": { displayName: "Gemini 3 Flash", quotaInfo: { remainingFraction: 0.72, resetTime: "2026-10-16T17:49:58Z" } },
+    "gemini-2.5-pro": { displayName: "Gemini 2.5 Pro", quotaInfo: { remainingFraction: 0.72, resetTime: "2026-10-16T17:49:58Z" } },
+    "claude-sonnet-4-6": { quotaInfo: { remainingFraction: 0, resetTime: "2026-10-16T18:00:00Z" } },
+  } });
+  assert.equal(models.length, 1);
+  assert.equal(models[0].kind, "five_hour");
 });
 
 test("Gemini stops requests immediately when quota API rate limits", async () => {

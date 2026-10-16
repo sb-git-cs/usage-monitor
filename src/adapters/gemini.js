@@ -252,19 +252,47 @@ function usedFromFraction(remaining) {
   return Math.max(0, Math.min(100, (1 - frac) * 100));
 }
 
+function fractionOf(row) {
+  if (!row || typeof row !== "object") return null;
+  if (row.remainingFraction != null) return row.remainingFraction;
+  if (row.remaining_fraction != null) return row.remaining_fraction;
+  const quota = row.quotaInfo || row.quota_info;
+  if (quota && quota !== row) return fractionOf(quota);
+  return null;
+}
+
+function resetOf(row) {
+  if (!row || typeof row !== "object") return null;
+  if (row.resetTime || row.reset_time) return row.resetTime || row.reset_time;
+  const quota = row.quotaInfo || row.quota_info;
+  if (quota && quota !== row) return resetOf(quota);
+  return null;
+}
+
 function isGeminiGroup(group) {
   const name = String(group.displayName || group.name || group.groupId || "");
   return /gemini/i.test(name);
 }
 
+function isGeminiBucket(bucket) {
+  return /gemini/i.test(String(bucket.bucketId || bucket.id || ""));
+}
+
 function mapSummary(data) {
   const groups = Array.isArray(data.groups) ? data.groups : [];
-  const selected = groups.filter((g) => g && isGeminiGroup(g));
+  const selected = [];
+  for (const group of groups) {
+    if (!group) continue;
+    const named = isGeminiGroup(group);
+    const buckets = (Array.isArray(group.buckets) ? group.buckets : []).filter(
+      (bucket) => bucket && (named || isGeminiBucket(bucket))
+    );
+    if (buckets.length) selected.push({ group, buckets });
+  }
   const windows = [];
-  for (const group of selected) {
-    for (const bucket of Array.isArray(group.buckets) ? group.buckets : []) {
-      if (!bucket || bucket.remainingFraction == null) continue;
-      const used = usedFromFraction(bucket.remainingFraction);
+  for (const { group, buckets } of selected) {
+    for (const bucket of buckets) {
+      const used = usedFromFraction(fractionOf(bucket));
       if (used == null) continue;
       const cls = classifyBucket(bucket);
       windows.push(
@@ -272,7 +300,7 @@ function mapSummary(data) {
           kind: cls.kind,
           label: selected.length > 1 ? `${group.displayName || group.name || group.groupId} ${cls.label}` : cls.label,
           usedPct: used,
-          resetsAt: bucket.resetTime || null,
+          resetsAt: resetOf(bucket),
         })
       );
     }
@@ -289,61 +317,65 @@ function shortModel(id) {
   return s.replace(/^models\//, "").replace(/^gemini-/, "").slice(0, 14) || "Model";
 }
 
-function mapQuotaBuckets(data) {
-  const buckets = Array.isArray(data.buckets) ? data.buckets : [];
-  const scored = [];
-  for (const bucket of buckets) {
-    if (!bucket || bucket.remainingFraction == null) continue;
-    const used = usedFromFraction(bucket.remainingFraction);
+// The quota summary no longer includes the Gemini group. Every Gemini model then
+// carries the same remaining fraction, and that shared pool is the 5-hour allowance.
+function mapGeminiPools(rows) {
+  const pools = new Map();
+  for (const row of rows) {
+    if (!row || !/gemini/i.test(`${row.name || ""} ${row.id || ""}`)) continue;
+    const remaining = fractionOf(row);
+    const used = usedFromFraction(remaining);
     if (used == null) continue;
-    scored.push({
-      used,
-      modelId: bucket.modelId || bucket.id,
-      resetTime: bucket.resetTime || null,
-    });
+    const reset = resetOf(row);
+    const key = `${remaining}|${reset || ""}`;
+    const pool = pools.get(key);
+    if (pool) pool.count += 1;
+    else pools.set(key, { used, reset, count: 1, name: row.name || row.id, tokenType: row.tokenType || "" });
   }
-  scored.sort((a, b) => b.used - a.used);
-  return scored.slice(0, 2).map((b) =>
+  const list = [...pools.values()];
+  if (!list.length) return [];
+  if (list.length === 1 && list[0].count > 1 && list[0].reset) {
+    return [windowOf({ kind: "five_hour", label: "5h", usedPct: list[0].used, resetsAt: list[0].reset })];
+  }
+  list.sort((a, b) => b.used - a.used);
+  return list.slice(0, 2).map((pool) =>
     windowOf({
-      kind: "daily",
-      label: shortModel(b.modelId),
-      usedPct: b.used,
-      resetsAt: b.resetTime,
+      kind: /REQUESTS/i.test(pool.tokenType) ? "daily" : "quota",
+      label: shortModel(pool.name),
+      usedPct: pool.used,
+      resetsAt: pool.reset,
     })
   );
 }
 
+function mapQuotaBuckets(data) {
+  const buckets = Array.isArray(data.buckets) ? data.buckets : [];
+  return mapGeminiPools(buckets.map((bucket) => bucket && {
+    id: bucket.modelId || bucket.id || "",
+    name: bucket.displayName || bucket.modelId || bucket.id || "",
+    remainingFraction: bucket.remainingFraction,
+    remaining_fraction: bucket.remaining_fraction,
+    resetTime: bucket.resetTime || bucket.reset_time || null,
+    tokenType: bucket.tokenType,
+  }));
+}
+
 function mapModels(data) {
   const raw = data.models;
-  const list = [];
   const iterable = Array.isArray(raw)
     ? raw
     : raw && typeof raw === "object"
       ? Object.entries(raw).map(([id, model]) => ({ ...model, model: model?.model || id }))
       : [];
-  for (const model of iterable) {
-    if (!model || typeof model !== "object") continue;
-    const quota = model.quotaInfo || {};
-    if (quota.remainingFraction == null) continue;
-    const used = usedFromFraction(quota.remainingFraction);
-    if (used == null) continue;
-    list.push({
-      used,
-      name: model.displayName || model.label || model.model || model.name,
+  return mapGeminiPools(iterable.map((model) => {
+    if (!model || typeof model !== "object") return null;
+    return {
       id: model.model || model.name || "",
-      resetTime: quota.resetTime || null,
-    });
-  }
-  list.sort((a, b) => b.used - a.used);
-  const pick = list.filter((m) => /gemini/i.test(`${m.name} ${m.id}`)).slice(0, 2);
-  return pick.map((m) =>
-    windowOf({
-      kind: "quota",
-      label: shortModel(m.name),
-      usedPct: m.used,
-      resetsAt: m.resetTime,
-    })
-  );
+      name: model.displayName || model.label || model.model || model.name || "",
+      quotaInfo: model.quotaInfo || model.quota_info,
+      tokenType: model.tokenType,
+    };
+  }));
 }
 
 async function assistPost(host, token, method, body) {

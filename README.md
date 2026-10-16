@@ -41,6 +41,8 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 ## What you see
 
+**New in 1.7.3:** Gemini shows one 5-hour meter. The quota summary no longer includes the Gemini group, so the chip was two identical Flash rows; the allowance those models share is the 5-hour window. A weekly window appears when the summary still reports it.
+
 **New in 1.7.2:** the chips strip hides when the taskbar hides, so a screen share that leaves the taskbar out does not show the strip on its own.
 
 **New in 1.7.1:** **Open in terminal (godmode)** is on the main Windows 11 right-click menu after an update. The first launch asks once for administrator approval so Windows can trust the menu. A session stopped by a 5-hour limit resumes when that window resets, even if a weekly window is still full.
@@ -78,7 +80,7 @@ The chips now stack in **two compact rows**, with short provider percentages and
 | Gemini | Gemini (Antigravity CLI / Gemini CLI) | Gemini model 5-hour and weekly when the API reports them |
 | xAI | Grok Build | Weekly; monthly billing fallback when reported (no 5-hour bar) |
 
-Grok's subscription percentage is shown as **weekly**; if the API only reports monthly billing usage and a monthly limit, that fallback is labeled **Monthly**. Gemini shows only Gemini model pools from Antigravity (`agy`) or Gemini CLI, retaining model labels when the period is unspecified.
+Grok's subscription percentage is shown as **weekly**; if the API only reports monthly billing usage and a monthly limit, that fallback is labeled **Monthly**. Gemini shows only Gemini model pools from Antigravity (`agy`) or Gemini CLI. A Gemini group still shows its 5-hour and weekly windows. When that group is absent, the one allowance shared by the Gemini models is shown as the 5-hour window. Separate model pools keep their model labels.
 
 ## Network usage
 

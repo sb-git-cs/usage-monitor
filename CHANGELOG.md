@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.3 — 2026-10-16
+
+- **Gemini shows its 5-hour limit.** Google's quota summary no longer includes the Gemini group, so the chip was two identical Flash rows. The allowance shared by the Gemini models is now one 5-hour window. A weekly window is shown when the summary still reports it.
+
 ## 1.7.2 — 2026-10-16
 
 - **Chips follow the taskbar.** While the taskbar is hidden, the docked strip hides with it. A screen share that does not include the taskbar no longer shows the strip as a bar on its own.
