@@ -503,6 +503,12 @@ app.whenReady().then(async () => {
     app.exit(0);
   } catch (err) {
     console.error(err);
+    // On GitHub Actions the failure also becomes an annotation, readable without the job log.
+    if (process.env.GITHUB_ACTIONS) {
+      const where = String(err.stack || "").split("\n").find((line) => line.includes("ui-smoke.js")) || "";
+      const text = `${err.message} | actual: ${JSON.stringify(err.actual)?.slice(0, 300)} | ${where.trim()}`;
+      console.log(`::error title=UI smoke test::${text.replace(/%/g, "%25").replace(/\r?\n/g, " ")}`);
+    }
     app.exit(1);
   }
 });
