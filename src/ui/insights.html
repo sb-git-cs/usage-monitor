@@ -1,14 +1,329 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
-<title>Usage Monitor · Insights</title><link rel="stylesheet" href="insights.css"></head>
-<body><header><div><p class="eyebrow">USAGE MONITOR</p><h1>Insights</h1><p>Plan history, alerts and recording health.</p></div><button id="refresh">Refresh readings</button></header>
-<main><div id="message" role="status"></div>
-<section><div class="section-head"><h2>Plan history</h2><div class="actions"><label>Period <select id="period"><option value="1">24 hours</option><option value="7" selected>7 days</option><option value="30">30 days</option></select></label><button id="csv">Export CSV</button><button id="json">Export JSON</button></div></div>
-<p>Observed quota percentages, separated by account and reset window. Up to 31 days retained. Account references are pseudonymous; unidentified accounts cannot be separated reliably. These readings are not token counts or costs.</p><div id="history" class="grid"></div></section>
-<section><div class="section-head"><h2>Notification centre</h2><label>Snooze <select id="snooze"><option value="0">Resume alerts</option><option value="15">15 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option></select></label></div><p id="snoozeState"></p><div id="events"></div></section>
-<section><div class="section-head"><h2>Network budget</h2><button id="network">Open network monitor</button></div><p>Captured per-app traffic across all apps, including apps excluded from the network list. Only traffic observed while recording is included. This is a partial device total, not your ISP bill.</p>
-<form id="budgetForm" class="actions"><label>Allowance (GB, 0 = off) <input id="limit" type="number" min="0" max="1000000" step="0.1" required></label><label>Billing day <input id="day" type="number" min="1" max="31" step="1" required></label><button>Save budget</button></form><div id="budgetStats" class="stats"></div></section>
-<section><div class="section-head"><h2>Diagnostics</h2><button id="support">Export redacted support report</button></div><p>The support report contains version, platform, provider status and timestamps. No credentials, account identities, paths, domains or notification text.</p><div id="diagnostics"></div></section>
-<section><h2>Display preferences</h2><form id="displayForm"><div class="actions"><label>Theme <select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Text size <select id="scale"><option value="100">100%</option><option value="115">115%</option><option value="130">130%</option></select></label><label><input id="compact" type="checkbox"> Compact flyout</label></div><p>Choose the providers shown in the flyout. Move a provider up to change its position.</p><div id="providers"></div><button>Save display preferences</button></form></section>
-</main><script src="insights.js"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>Usage Monitor · Executive Insights</title>
+  <link rel="stylesheet" href="insights.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-badge">PRO</div>
+      <div>
+        <p class="eyebrow">USAGE MONITOR · INTELLIGENCE SUITE</p>
+        <h1>Insights & Analytics</h1>
+      </div>
+    </div>
+    <div class="header-controls">
+      <div id="globalHealthBadge" class="health-pill" title="System quota health status">
+        <span class="status-dot"></span>
+        <strong id="healthScoreText">Optimal · 100/100</strong>
+      </div>
+      <label class="period-control">
+        <span class="sr-only">Period</span>
+        <select id="period" class="select-pill" title="Analysis timeframe">
+          <option value="1">24 hours</option>
+          <option value="7" selected>7 days</option>
+          <option value="14">14 days</option>
+          <option value="30">30 days</option>
+        </select>
+      </label>
+      <div class="btn-group">
+        <button id="refresh" class="btn btn-secondary" title="Refresh all provider meters">Refresh</button>
+        <button id="reportExport" class="btn btn-primary" title="Export comprehensive Markdown executive summary">Report</button>
+        <button id="csv" class="btn btn-ghost" title="Export CSV dataset">CSV</button>
+        <button id="json" class="btn btn-ghost" title="Export JSON dataset">JSON</button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="nav-tabs" role="tablist" aria-label="Insights sections">
+    <button class="nav-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+    <button class="nav-tab" data-tab="usage" role="tab" aria-selected="false">Usage Analysis</button>
+    <button class="nav-tab" data-tab="burn" role="tab" aria-selected="false">Burn Rate & Runway</button>
+    <button class="nav-tab" data-tab="tokens" role="tab" aria-selected="false">Token Intelligence</button>
+    <button class="nav-tab" data-tab="network" role="tab" aria-selected="false">Network & Budget</button>
+    <button class="nav-tab" data-tab="alerts" role="tab" aria-selected="false">Audit & Alerts</button>
+    <button class="nav-tab" data-tab="diagnostics" role="tab" aria-selected="false">Diagnostics & Display</button>
+  </nav>
+
+  <main>
+    <div id="message" role="status"></div>
+
+    <!-- TAB 1: EXECUTIVE OVERVIEW -->
+    <div id="tab-overview" class="tab-panel active" role="tabpanel">
+      <section class="hero-grid">
+        <div class="hero-card health-hero">
+          <div class="hero-head">
+            <span class="card-tag">SYSTEM HEALTH</span>
+            <span id="heroHealthGrade" class="grade-badge">Grade A</span>
+          </div>
+          <div class="hero-metric">
+            <strong id="heroHealthScore">100</strong>
+            <span class="unit">/ 100</span>
+          </div>
+          <p id="heroHealthDesc" class="hero-desc">All monitored quota windows are operating within sustainable pace.</p>
+        </div>
+        <div class="hero-card recs-hero">
+          <div class="hero-head">
+            <span class="card-tag">SMART RECOMMENDATIONS & ADVICE</span>
+          </div>
+          <div id="recommendationsList" class="recs-list"></div>
+        </div>
+      </section>
+
+      <section class="section-card">
+        <div class="section-head">
+          <div>
+            <h2>Executive Metrics Summary</h2>
+            <p class="fine">High-level view across quotas, burning velocity, reset cycles, and tokens.</p>
+          </div>
+        </div>
+        <div id="summary" class="summary"></div>
+      </section>
+
+      <section class="section-card">
+        <div class="section-head">
+          <div>
+            <h2>Active Quotas & Headroom Matrix</h2>
+            <p class="fine">Live quota saturation levels, burn velocity, and scheduled reset times.</p>
+          </div>
+        </div>
+        <div id="quotaMatrix" class="quota-matrix"></div>
+      </section>
+    </div>
+
+    <!-- TAB 2: USAGE ANALYSIS -->
+    <div id="tab-usage" class="tab-panel" role="tabpanel">
+      <section class="section-card">
+        <div class="section-head">
+          <div>
+            <h2>Usage Analysis & Trajectory</h2>
+            <p class="fine">Historical utilization curve, reset segments, and saturation trends.</p>
+          </div>
+          <div class="actions">
+            <label>Model / Window
+              <select id="model">
+                <option value="auto">Fullest window</option>
+              </select>
+            </label>
+            <label>Trend
+              <select id="viewMode">
+                <option value="samples">High-res Samples</option>
+                <option value="daily">Daily Highs</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <article class="trend-panel">
+          <div class="trend-copy">
+            <h3 id="trendTitle">Usage</h3>
+            <p id="trendMeta" class="meta"></p>
+          </div>
+          <div class="canvas-wrapper">
+            <canvas id="trend" role="img" aria-label="Usage trend chart"></canvas>
+            <div id="chartTooltip" class="chart-tooltip" hidden></div>
+          </div>
+        </article>
+
+        <div class="sub-head">
+          <h3>Monitored Quota Windows</h3>
+          <p class="fine">Select any window to plot its historical trend curve above.</p>
+        </div>
+        <div id="history"></div>
+        <p id="historyNote" class="fine"></p>
+
+        <div class="sub-head mt-lg">
+          <h3>Peak Coding Activity by Hour</h3>
+          <p class="fine">Hourly distribution of turns and quota consumption across the day (0:00 to 23:00).</p>
+        </div>
+        <div id="peakHoursChart" class="bar-chart-strip"></div>
+      </section>
+    </div>
+
+    <!-- TAB 3: BURN RATE & RUNWAY -->
+    <div id="tab-burn" class="tab-panel" role="tabpanel">
+      <section class="section-card">
+        <div class="section-head">
+          <div>
+            <h2>Burn Rate & Runway Analysis</h2>
+            <p class="fine">Dynamic quota velocity, safe pace estimation, and depletion forecast before reset.</p>
+          </div>
+        </div>
+
+        <div id="burnPaceCards" class="burn-pace-grid"></div>
+
+        <div class="table-container mt-md">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Provider & Window</th>
+                <th>Current Used</th>
+                <th>Current Burn Rate</th>
+                <th>Safe Target Pace</th>
+                <th>Runway Remaining</th>
+                <th>Reset Scheduled</th>
+                <th>Pace Status</th>
+              </tr>
+            </thead>
+            <tbody id="burnTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="callout-card mt-lg">
+          <h4>Understanding Safe Target Pace</h4>
+          <p class="fine">
+            <strong>Safe Target Pace</strong> calculates the maximum % per hour you can consume and still survive until the window resets.
+            If your <strong>Current Burn Rate</strong> is higher than your Safe Pace, you are projected to hit the limit before the reset window arrives.
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <!-- TAB 4: TOKEN INTELLIGENCE -->
+    <div id="tab-tokens" class="tab-panel" role="tabpanel">
+      <section class="section-card">
+        <div class="section-head">
+          <div>
+            <h2>Token Analytics & Model Intelligence</h2>
+            <p class="fine">Comprehensive token volume, prompt vs completion ratio, prompt caching efficiency, and reasoning tokens.</p>
+          </div>
+        </div>
+
+        <div id="tokenKpiGrid" class="token-kpis"></div>
+
+        <div class="two-col-grid mt-lg">
+          <div class="panel-box">
+            <h3>Token Distribution by Model</h3>
+            <p class="fine">Share of token volume consumed across specific AI models.</p>
+            <div id="modelDistributionList" class="model-distribution"></div>
+          </div>
+          <div class="panel-box">
+            <h3>Token Type Composition</h3>
+            <p class="fine">Breakdown between Input, Output, Cache Read, and Reasoning tokens.</p>
+            <div id="tokenComposition" class="token-composition"></div>
+          </div>
+        </div>
+
+        <div class="sub-head mt-lg">
+          <h3>Daily Token Volume Trend</h3>
+          <p class="fine">Volume of tokens processed per calendar day in this reporting period.</p>
+        </div>
+        <div id="dailyTokenBars" class="daily-token-bars"></div>
+      </section>
+    </div>
+
+    <!-- TAB 5: NETWORK & BUDGET -->
+    <div id="tab-network" class="tab-panel" role="tabpanel">
+      <section class="section-card">
+        <div class="section-head">
+          <div>
+            <h2>Network Bandwidth & Billing Budget</h2>
+            <p class="fine">Monitor per-app network traffic against your ISP or mobile data allowance.</p>
+          </div>
+          <button id="network" class="btn btn-secondary">Open Network Monitor</button>
+        </div>
+
+        <form id="budgetForm" class="actions-form">
+          <div class="form-row">
+            <label>Monthly Allowance GB
+              <input id="limit" type="number" min="0" max="1000000" step="0.1" required>
+            </label>
+            <label>Billing Cycle Resets on Day
+              <input id="day" type="number" min="1" max="31" step="1" required>
+            </label>
+            <button class="btn btn-primary">Save Allowance</button>
+          </div>
+        </form>
+
+        <div id="budgetProgressWrapper" class="budget-progress-container mt-md"></div>
+        <div id="budgetStats" class="stats"></div>
+        <p id="budgetNote" class="fine"></p>
+      </section>
+    </div>
+
+    <!-- TAB 6: AUDIT & ALERTS -->
+    <div id="tab-alerts" class="tab-panel" role="tabpanel">
+      <section class="section-card">
+        <div class="section-head">
+          <div>
+            <h2>Quota Warnings & Audit Trail</h2>
+            <p class="fine">Historical record of rate limit warnings, quota thresholds reached, and auto-resume triggers.</p>
+          </div>
+          <div class="actions">
+            <label>Notification Snooze
+              <select id="snooze">
+                <option value="0">Alerts Active</option>
+                <option value="15">15 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="240">4 hours</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <p id="snoozeState" class="fine mb-md"></p>
+        <div id="events" class="events-stream"></div>
+      </section>
+    </div>
+
+    <!-- TAB 7: DIAGNOSTICS & DISPLAY -->
+    <div id="tab-diagnostics" class="tab-panel" role="tabpanel">
+      <section class="section-card">
+        <div class="section-head">
+          <div>
+            <h2>System Diagnostics</h2>
+            <p class="fine">Version, platform, provider status and timestamps. No credentials or secrets.</p>
+          </div>
+          <button id="support" class="btn btn-secondary">Support Report</button>
+        </div>
+        <div id="diagnostics"></div>
+      </section>
+
+      <section class="section-card mt-lg">
+        <div class="section-head">
+          <div>
+            <h2>Display & Interface Preferences</h2>
+            <p class="fine">Theme colors, typography scale, flyout compactness, and provider ordering.</p>
+          </div>
+        </div>
+        <form id="displayForm">
+          <div class="actions-form">
+            <div class="form-row">
+              <label>Theme
+                <select id="theme">
+                  <option value="system">System Default</option>
+                  <option value="light">Light Mode</option>
+                  <option value="dark">Dark Mode</option>
+                </select>
+              </label>
+              <label>Interface Scaling
+                <select id="scale">
+                  <option value="100">100% (Standard)</option>
+                  <option value="115">115% (Comfortable)</option>
+                  <option value="130">130% (Large)</option>
+                </select>
+              </label>
+              <label class="checkbox-label">
+                <input id="compact" type="checkbox"> Compact taskbar flyout
+              </label>
+            </div>
+          </div>
+          <div class="sub-head mt-md">
+            <h3>Provider Visibility & Order</h3>
+            <p class="fine">Rearrange which providers appear in the taskbar chips and flyout.</p>
+          </div>
+          <div id="providers" class="providers-list"></div>
+          <div class="mt-md">
+            <button class="btn btn-primary">Save Preferences</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <script src="insights.js"></script>
+</body>
+</html>

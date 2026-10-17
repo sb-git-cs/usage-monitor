@@ -66,6 +66,88 @@ test("Gemini collapses the shared model pool into one 5-hour window", () => {
   assert.equal(models[0].kind, "five_hour");
 });
 
+test("Gemini keeps the weekly window for the flyout when another host only has the shared 5-hour pool", async (t) => {
+  const prev = process.env.ANTIGRAVITY_ACCESS_TOKEN;
+  process.env.ANTIGRAVITY_ACCESS_TOKEN = "fake";
+  t.after(() => {
+    if (prev == null) delete process.env.ANTIGRAVITY_ACCESS_TOKEN;
+    else process.env.ANTIGRAVITY_ACCESS_TOKEN = prev;
+  });
+  const calls = [];
+  const adapter = load("src/adapters/gemini.js", {
+    "../wincred": { readGenericCredential: async () => null },
+    "../paths": {
+      ...noPaths,
+      cliOnPath: () => true,
+      geminiOAuth: () => "oauth",
+      antigravityToken: () => "token",
+      agyBinaryCandidates: () => [],
+      cliPath: () => null,
+    },
+    "../http": { postJson: async (url) => {
+      calls.push(url);
+      if (url.endsWith("loadCodeAssist")) return { status: 200, json: { paidTier: { name: "Google AI Pro" } } };
+      if (url.includes("daily-cloudcode") && url.endsWith("retrieveUserQuotaSummary")) return { status: 200, json: { groups: [{ displayName: "Claude and GPT models", buckets: [{ bucketId: "3p-5h", remainingFraction: 1, window: "5h" }] }] } };
+      if (url.includes("daily-cloudcode") && url.endsWith("retrieveUserQuota")) return { status: 200, json: { buckets: [
+        { modelId: "gemini-3-flash", remainingFraction: 0.12, resetTime: "2026-10-17T11:15:41Z" },
+        { modelId: "gemini-2.5-pro", remainingFraction: 0.12, resetTime: "2026-10-17T11:15:41Z" },
+      ] } };
+      if (url.includes("https://cloudcode-pa.googleapis.com") && url.endsWith("retrieveUserQuotaSummary")) return { status: 200, json: { groups: [
+        { displayName: "Gemini Models", buckets: [
+          { bucketId: "gemini-weekly", remainingFraction: 0.7, resetTime: "2026-10-19T10:44:08Z", window: "weekly", displayName: "Weekly Limit Remaining" },
+          { bucketId: "gemini-5h", remainingFraction: 1, resetTime: "2026-10-17T15:00:14Z", window: "5h", displayName: "Five Hour Limit Remaining" },
+        ] },
+        { displayName: "Claude and GPT models", buckets: [{ bucketId: "3p-weekly", remainingFraction: 0.2, window: "weekly" }] },
+      ] } };
+      return { status: 404, json: {} };
+    } },
+  });
+  const result = await adapter.fetchUsage({});
+  assert.deepEqual(result.windows.map((win) => win.kind), ["weekly", "five_hour"]);
+  assert.equal(result.windows[0].label, "Weekly");
+  assert.equal(Math.round(result.windows[0].used_pct), 30);
+  assert.equal(result.windows[1].label, "5h");
+  assert.equal(result.windows[1].used_pct, 88);
+  assert.ok(calls.some((url) => url.startsWith("https://cloudcode-pa.googleapis.com")));
+  assert.ok(calls.some((url) => url.includes("daily-cloudcode")));
+});
+
+test("Gemini does not stop on a 5-hour model pool when the other host reports weekly", async (t) => {
+  const prev = process.env.ANTIGRAVITY_ACCESS_TOKEN;
+  process.env.ANTIGRAVITY_ACCESS_TOKEN = "fake";
+  t.after(() => {
+    if (prev == null) delete process.env.ANTIGRAVITY_ACCESS_TOKEN;
+    else process.env.ANTIGRAVITY_ACCESS_TOKEN = prev;
+  });
+  const adapter = load("src/adapters/gemini.js", {
+    "../wincred": { readGenericCredential: async () => null },
+    "../paths": {
+      ...noPaths,
+      cliOnPath: () => true,
+      geminiOAuth: () => "oauth",
+      antigravityToken: () => "token",
+      agyBinaryCandidates: () => [],
+      cliPath: () => null,
+    },
+    "../http": { postJson: async (url) => {
+      if (url.endsWith("loadCodeAssist")) return { status: 200, json: {} };
+      if (url.includes("https://cloudcode-pa.googleapis.com") && url.endsWith("retrieveUserQuotaSummary")) return { status: 200, json: { groups: [] } };
+      if (url.includes("https://cloudcode-pa.googleapis.com") && url.endsWith("retrieveUserQuota")) return { status: 200, json: { buckets: [
+        { modelId: "gemini-3-flash", remainingFraction: 0.12, resetTime: "2026-10-17T11:15:41Z" },
+        { modelId: "gemini-2.5-pro", remainingFraction: 0.12, resetTime: "2026-10-17T11:15:41Z" },
+      ] } };
+      if (url.includes("daily-cloudcode") && url.endsWith("retrieveUserQuotaSummary")) return { status: 200, json: { groups: [{ displayName: "Gemini Models", buckets: [
+        { bucketId: "gemini-weekly", remainingFraction: 0.4, resetTime: "2026-10-19T10:44:08Z", window: "weekly" },
+        { bucketId: "gemini-5h", remainingFraction: 0.25, resetTime: "2026-10-17T15:00:14Z", window: "5h" },
+      ] }] } };
+      return { status: 404, json: {} };
+    } },
+  });
+  const result = await adapter.fetchUsage({});
+  assert.deepEqual(result.windows.map((win) => win.kind), ["weekly", "five_hour"]);
+  assert.equal(result.windows[1].used_pct, 75);
+});
+
 test("Gemini stops requests immediately when quota API rate limits", async () => {
   let requests = 0;
   const adapter = load("src/adapters/gemini.js", { "../http": { postJson: async () => {

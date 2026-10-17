@@ -131,14 +131,19 @@ class UsageApi(private val http: Http = UrlHttp) {
             .put("platform", "PLATFORM_UNSPECIFIED").put("pluginType", "GEMINI")
         val loadBody = JSONObject().put("metadata", metadata)
         var last: Host.Fail? = null
+        var best: Host.Ok? = null
         for (host in GEMINI_HOSTS) {
             val r = try { geminiHost(host, c.accessToken, loadBody) } catch (e: IOException) { last = Host.Fail(null); continue }
             when (r) {
                 Host.Auth -> return UsageResult.AuthFailed
-                is Host.Ok -> return UsageResult.Ok(Provider("gemini", "Gemini", r.plan, "ok", null, r.windows, source = "phone", fetchedAt = now))
+                is Host.Ok -> {
+                    if (best == null || quotaRank(r.windows) > quotaRank(best.windows)) best = r
+                    if (quotaRank(best.windows) >= 3) break
+                }
                 is Host.Fail -> { last = r; if (r.status == 429) break }
             }
         }
+        best?.let { return UsageResult.Ok(Provider("gemini", "Gemini", it.plan, "ok", null, it.windows, source = "phone", fetchedAt = now)) }
         val status = last?.status
         return when (status) {
             429 -> UsageResult.Failed("rate limited", true)
@@ -181,7 +186,18 @@ class UsageApi(private val http: Http = UrlHttp) {
         private const val GROK_GRPC_URL = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig"
         private const val CURSOR_PLAN_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo"
         private const val CURSOR_USAGE_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
-        private val GEMINI_HOSTS = listOf("https://daily-cloudcode-pa.googleapis.com", "https://cloudcode-pa.googleapis.com")
+        // The stable host still returns Gemini weekly and 5-hour. The daily host is the fallback.
+        private val GEMINI_HOSTS = listOf("https://cloudcode-pa.googleapis.com", "https://daily-cloudcode-pa.googleapis.com")
+
+        private fun quotaRank(windows: List<PlanWindow>): Int {
+            val kinds = windows.map { it.kind }.toSet()
+            return when {
+                "weekly" in kinds && "five_hour" in kinds -> 3
+                "weekly" in kinds -> 2
+                windows.isNotEmpty() -> 1
+                else -> 0
+            }
+        }
 
         private fun claudeHeaders(token: String) = mapOf(
             "Authorization" to "Bearer $token",

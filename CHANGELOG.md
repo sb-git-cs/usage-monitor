@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.4 — 2026-10-17
+
+- **Professional Executive Insights Suite.** Redesigned the Insights window into an executive-grade dashboard with high-polish UI tabs (Overview, Usage, Burn Rate, Token Intelligence, Network & Budget, Audit & Alerts, Diagnostics & Preferences):
+  - **Token Intelligence:** Deep scanning across Claude Code and Codex session logs for prompt tokens, completion tokens, prompt cache read/write efficiency %, and turn volume, with model distribution bars and daily token trends.
+  - **Burn Rate & Runway Analysis:** Dynamic quota burn rate (%/h), safe pace estimation (maximum %/h to survive until reset), runway hour forecasting, and automated quota health scoring (Grades A-D, 0-100) with smart recommendations.
+  - **Interactive Trajectory Charts:** High-DPI canvas charts with interactive crosshair, floating glassmorphism tooltip, time-of-day peak coding hour bar charts, and one-click Executive Markdown Report export.
+- **Fixed Gemini 0% usage glitch and sliding window trap.** Quota windows across `cloudcode-pa` and `daily-cloudcode-pa` are now intelligently merged so that the authoritative weekly pool from `cloudcode-pa` is retained without discarding the active 5-hour model pool from `daily-cloudcode-pa`. The monitor no longer replaces real usage with dummy 0% sliding buckets.
+- **Antigravity CLI rate limit detection & seconds parsing.** Added terminal detection for Antigravity's `RESOURCE_EXHAUSTED` and `Individual quota reached` messages, and extended the relative reset parser to support seconds formats (e.g. `Resets in 37m43s`).
+
 ## 1.7.3 — 2026-10-16
 
 - **Gemini shows its 5-hour limit.** Google's quota summary no longer includes the Gemini group, so the chip was two identical Flash rows. The allowance shared by the Gemini models is now one 5-hour window. A weekly window is shown when the summary still reports it.

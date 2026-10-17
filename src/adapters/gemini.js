@@ -14,9 +14,11 @@ const { readGenericCredential } = require("../wincred");
 const DISPLAY = "Gemini";
 const WINCRED_TARGET = "gemini:antigravity";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
+// cloudcode-pa still returns the Gemini group (weekly and 5-hour). The daily host's
+// summary dropped that group and only has a shared model fraction, so it is the fallback.
 const API_HOSTS = [
-  "https://daily-cloudcode-pa.googleapis.com",
   "https://cloudcode-pa.googleapis.com",
+  "https://daily-cloudcode-pa.googleapis.com",
 ];
 const USER_AGENT = "antigravity/windows/amd64";
 // Reading Credential Manager starts PowerShell and compiles a small C# reader, so a result is
@@ -278,6 +280,14 @@ function isGeminiBucket(bucket) {
   return /gemini/i.test(String(bucket.bucketId || bucket.id || ""));
 }
 
+// A summary with both Gemini windows outranks a model-pool reading that only looks like 5h.
+function quotaRank(windows) {
+  const kinds = new Set((windows || []).map((win) => win.kind));
+  if (kinds.has("weekly") && kinds.has("five_hour")) return 3;
+  if (kinds.has("weekly")) return 2;
+  return windows && windows.length ? 1 : 0;
+}
+
 function mapSummary(data) {
   const groups = Array.isArray(data.groups) ? data.groups : [];
   const selected = [];
@@ -382,16 +392,99 @@ async function assistPost(host, token, method, body) {
   return postJson(`${host}/v1internal:${method}`, authHeaders(token), body || {});
 }
 
+function parse429Reset(res) {
+  if (!res) return null;
+  const retryHeader = res.headers && (res.headers["retry-after"] || res.headers["Retry-After"]);
+  if (retryHeader) {
+    const sec = Number(retryHeader);
+    if (Number.isFinite(sec)) return new Date(Date.now() + sec * 1000).toISOString();
+    const parsed = Date.parse(retryHeader);
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  }
+  const details = res.json?.error?.details;
+  if (Array.isArray(details)) {
+    for (const d of details) {
+      if (d && (d["@type"]?.includes("RetryInfo") || d.retryDelay)) {
+        const delayStr = d.retryDelay;
+        if (typeof delayStr === "string") {
+          const m = /^(\d+(?:\.\d+)?)s?$/i.exec(delayStr.trim());
+          if (m) return new Date(Date.now() + Number(m[1]) * 1000).toISOString();
+        } else if (delayStr && typeof delayStr === "object" && Number.isFinite(delayStr.seconds)) {
+          return new Date(Date.now() + Number(delayStr.seconds) * 1000).toISOString();
+        }
+      }
+    }
+  }
+  const msg = res.json?.error?.message || res.text || "";
+  const rel = /(?:resets?|try again|available again) in ((?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?:\b|(?=\d))[\s,]*(?:and\s+)?)+)/i.exec(msg);
+  if (rel) {
+    let ms = 0;
+    for (const [, n, unit] of rel[1].matchAll(/(\d+)\s*([a-z]+)/gi)) {
+      const u = unit.toLowerCase();
+      ms += Number(n) * (u.startsWith("d") ? 86400_000 : u.startsWith("h") ? 3600_000 : u.startsWith("m") ? 60_000 : 1000);
+    }
+    if (ms > 0) return new Date(Date.now() + ms).toISOString();
+  }
+  return null;
+}
+
+function combineWindows(bestWindows, newWindows) {
+  if (!bestWindows || !bestWindows.length) return newWindows || [];
+  if (!newWindows || !newWindows.length) return bestWindows || [];
+
+  const hasBothAndActive = (wins) => {
+    const kinds = new Set(wins.map((w) => w.kind));
+    const five = wins.find((w) => w.kind === "five_hour");
+    return kinds.has("weekly") && kinds.has("five_hour") && five && five.used_pct > 0;
+  };
+
+  if (hasBothAndActive(newWindows) && !hasBothAndActive(bestWindows)) {
+    return newWindows;
+  }
+  if (hasBothAndActive(bestWindows) && !hasBothAndActive(newWindows)) {
+    return bestWindows;
+  }
+
+  const all = [...bestWindows, ...newWindows];
+  const weeklies = all.filter((w) => w.kind === "weekly");
+  const bestWeekly = weeklies.find((w) => w.used_pct > 0) || weeklies[0] || null;
+
+  const fiveHours = all.filter((w) => w.kind === "five_hour");
+  let bestFive = null;
+  if (fiveHours.length) {
+    bestFive = fiveHours.reduce((best, cur) => {
+      if (!best) return cur;
+      if (cur.used_pct > 0 && best.used_pct === 0) return cur;
+      if (best.used_pct > 0 && cur.used_pct === 0) return best;
+      return cur.used_pct > best.used_pct ? cur : best;
+    }, null);
+  }
+
+  const others = all.filter((w) => w.kind !== "weekly" && w.kind !== "five_hour");
+  const res = [];
+  if (bestWeekly) res.push(bestWeekly);
+  if (bestFive) res.push(bestFive);
+  if (!res.length) res.push(...others.slice(0, 2));
+  return res;
+}
+
 async function fetchFromHost(host, token, loadBody) {
   const load = await assistPost(host, token, "loadCodeAssist", loadBody);
   if (load.status === 401 || load.status === 403) return { authFailed: true, load };
+  if (load.status === 429) {
+    const resetIso = parse429Reset(load);
+    return { failed: true, status: 429, resetsAt: resetIso };
+  }
   if (load.status !== 200 || !load.json) return { failed: true, status: load.status };
   const project = extractProject(load.json);
   const plan = planLabel(load.json);
   const quotaBody = project ? { project } : {};
 
   const summary = await assistPost(host, token, "retrieveUserQuotaSummary", quotaBody);
-  if (summary.status === 429) return { failed: true, status: 429 };
+  if (summary.status === 429) {
+    const resetIso = parse429Reset(summary);
+    return { failed: true, status: 429, plan, resetsAt: resetIso };
+  }
   if (summary.status === 401 || summary.status === 403) return { authFailed: true };
   if (summary.status === 200 && summary.json) {
     const windows = mapSummary(summary.json);
@@ -399,7 +492,10 @@ async function fetchFromHost(host, token, loadBody) {
   }
 
   const quota = await assistPost(host, token, "retrieveUserQuota", quotaBody);
-  if (quota.status === 429) return { failed: true, status: 429 };
+  if (quota.status === 429) {
+    const resetIso = parse429Reset(quota);
+    return { failed: true, status: 429, plan, resetsAt: resetIso };
+  }
   if (quota.status === 401 || quota.status === 403) return { authFailed: true };
   if (quota.status === 200 && quota.json) {
     const windows = mapQuotaBuckets(quota.json);
@@ -407,7 +503,10 @@ async function fetchFromHost(host, token, loadBody) {
   }
 
   const models = await assistPost(host, token, "fetchAvailableModels", quotaBody);
-  if (models.status === 429) return { failed: true, status: 429 };
+  if (models.status === 429) {
+    const resetIso = parse429Reset(models);
+    return { failed: true, status: 429, plan, resetsAt: resetIso };
+  }
   if (models.status === 401 || models.status === 403) return { authFailed: true };
   if (models.status === 200 && models.json) {
     const windows = mapModels(models.json);
@@ -456,6 +555,7 @@ async function fetchUsage(cfg) {
   const refreshEnabled = cfg?.adapters?.gemini?.refresh_tokens !== false;
   let token = creds.access_token;
   let lastFail = null;
+  let best = null;
 
   for (const host of API_HOSTS) {
     let result;
@@ -476,18 +576,46 @@ async function fetchUsage(cfg) {
       });
     }
     if (result.ok) {
-      return {
-        id: "gemini",
-        display_name: DISPLAY,
-        status: { state: "ok" },
-        plan: result.plan,
-        windows: result.windows,
-        fetched_at: new Date().toISOString(),
-        source: "api",
-      };
+      if (!best) {
+        best = result;
+      } else {
+        best = {
+          ok: true,
+          plan: result.plan || best.plan,
+          windows: combineWindows(best.windows, result.windows),
+        };
+      }
+      // Stop once both weekly and an active (non-zero) 5-hour window are present
+      const kinds = new Set(best.windows.map((w) => w.kind));
+      const five = best.windows.find((w) => w.kind === "five_hour");
+      if (kinds.has("weekly") && kinds.has("five_hour") && five && five.used_pct > 0) {
+        break;
+      }
+      continue;
     }
     lastFail = result;
+    if (result.status === 429 && result.resetsAt) {
+      const limitedWindow = windowOf({ kind: "five_hour", label: "5h", usedPct: 100, resetsAt: result.resetsAt });
+      if (!best) {
+        best = { ok: true, plan: result.plan, windows: [limitedWindow] };
+      } else {
+        best = { ok: true, plan: result.plan || best.plan, windows: combineWindows(best.windows, [limitedWindow]) };
+      }
+      break;
+    }
     if (result.status === 429) break;
+  }
+
+  if (best) {
+    return {
+      id: "gemini",
+      display_name: DISPLAY,
+      status: { state: "ok" },
+      plan: best.plan,
+      windows: best.windows,
+      fetched_at: new Date().toISOString(),
+      source: "api",
+    };
   }
 
   if (lastFail && lastFail.status === 429) {

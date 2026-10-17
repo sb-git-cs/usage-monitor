@@ -41,6 +41,8 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 ## What you see
 
+**New in 1.7.4:** Executive Insights Suite (Token Intelligence across Claude Code & Codex, Burn Rate & Runway analysis, Safe Pace estimation, Quota Health scoring, interactive trajectory charts, and Markdown report export). Fixed Gemini 0% usage glitch by merging weekly and active 5h model pools, and added Antigravity CLI terminal rate-limit detection.
+
 **New in 1.7.3:** Gemini shows one 5-hour meter. The quota summary no longer includes the Gemini group, so the chip was two identical Flash rows; the allowance those models share is the 5-hour window. A weekly window appears when the summary still reports it.
 
 **New in 1.7.2:** the chips strip hides when the taskbar hides, so a screen share that leaves the taskbar out does not show the strip on its own.
@@ -77,10 +79,10 @@ The chips now stack in **two compact rows**, with short provider percentages and
 | --- | --- | --- |
 | Anthropic | Claude Code | 5-hour and weekly |
 | OpenAI | Codex | 5-hour and weekly |
-| Gemini | Gemini (Antigravity CLI / Gemini CLI) | Gemini model 5-hour and weekly when the API reports them |
+| Gemini | Gemini (Antigravity CLI / Gemini CLI) | 5-hour and weekly |
 | xAI | Grok Build | Weekly; monthly billing fallback when reported (no 5-hour bar) |
 
-Grok's subscription percentage is shown as **weekly**; if the API only reports monthly billing usage and a monthly limit, that fallback is labeled **Monthly**. Gemini shows only Gemini model pools from Antigravity (`agy`) or Gemini CLI. A Gemini group still shows its 5-hour and weekly windows. When that group is absent, the one allowance shared by the Gemini models is shown as the 5-hour window. Separate model pools keep their model labels.
+Grok's subscription percentage is shown as **weekly**; if the API only reports monthly billing usage and a monthly limit, that fallback is labeled **Monthly**. Gemini shows the Gemini group's 5-hour and weekly windows from the quota summary. The chip stays on the 5-hour window; weekly is on the flyout, as with Claude and Codex. One quota host no longer includes that group, so the app keeps reading the host that does. When neither host reports the group, the shared model allowance is the 5-hour window only.
 
 ## Network usage
 

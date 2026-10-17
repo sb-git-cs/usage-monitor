@@ -253,7 +253,7 @@ class UsageApiTest {
     @Test fun geminiFallsBackToTheSecondHostAndSendsIdeType() {
         val fake = Fake { call ->
             when {
-                call.url.startsWith("https://daily-") -> HttpReply(500, ByteArray(0))
+                call.url.startsWith("https://cloudcode-pa.") -> HttpReply(500, ByteArray(0))
                 call.url.endsWith("loadCodeAssist") -> ok("""{"cloudaicompanionProject":"p1","paidTier":{"name":"Pro"}}""")
                 call.url.endsWith("retrieveUserQuotaSummary") -> ok("""{"groups":[{"displayName":"Gemini","buckets":[{"remainingFraction":0.75,"window":"DAILY"}]}]}""")
                 else -> HttpReply(404, ByteArray(0))
@@ -263,12 +263,34 @@ class UsageApiTest {
         val p = (UsageApi(fake).fetch(cred, now) as UsageResult.Ok).provider
         assertEquals("Pro", p.plan)
         assertEquals(25.0, p.windows[0].usedPct!!, 0.0)
-        assertTrue(fake.calls[0].url.startsWith("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"))
-        val load = fake.calls.first { it.url.startsWith("https://cloudcode-pa.") && it.url.endsWith("loadCodeAssist") }
+        assertTrue(fake.calls[0].url.startsWith("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"))
+        val load = fake.calls.first { it.url.startsWith("https://daily-cloudcode-pa.") && it.url.endsWith("loadCodeAssist") }
         assertEquals("IDE_UNSPECIFIED", JSONObject(load.body!!).getJSONObject("metadata").getString("ideType"))
         val summary = fake.calls.first { it.url.endsWith("retrieveUserQuotaSummary") }
         assertEquals("p1", JSONObject(summary.body!!).getString("project"))
         assertNotNull(summary.headers["User-Agent"])
+    }
+
+    @Test fun geminiPrefersWeeklyAndFiveHourOverTheSharedModelPool() {
+        val fake = Fake { call ->
+            when {
+                call.url.endsWith("loadCodeAssist") -> ok("""{"paidTier":{"name":"Pro"}}""")
+                call.url.startsWith("https://cloudcode-pa.") && call.url.endsWith("retrieveUserQuotaSummary") -> ok("""{"groups":[]}""")
+                call.url.startsWith("https://cloudcode-pa.") && call.url.endsWith("retrieveUserQuota") -> ok("""{"buckets":[
+                  {"modelId":"gemini-3-flash","remainingFraction":0.1,"resetTime":"2030-01-01T00:00:00Z"},
+                  {"modelId":"gemini-2.5-pro","remainingFraction":0.1,"resetTime":"2030-01-01T00:00:00Z"}]}""")
+                call.url.startsWith("https://daily-") && call.url.endsWith("retrieveUserQuotaSummary") -> ok("""{"groups":[
+                  {"displayName":"Gemini Models","buckets":[
+                    {"bucketId":"gemini-weekly","displayName":"Weekly Limit Remaining","window":"weekly","remainingFraction":0.4,"resetTime":"2030-01-08T00:00:00Z"},
+                    {"bucketId":"gemini-5h","displayName":"Five Hour Limit Remaining","window":"5h","remainingFraction":0.25,"resetTime":"2030-01-01T05:00:00Z"}]},
+                  {"displayName":"Claude and GPT models","buckets":[{"bucketId":"3p-weekly","window":"weekly","remainingFraction":0}]}]}""")
+                else -> HttpReply(404, ByteArray(0))
+            }
+        }
+        val p = (UsageApi(fake).fetch(Credential("gemini", "phone", "tok"), now) as UsageResult.Ok).provider
+        assertEquals(listOf("weekly", "five_hour"), p.windows.map { it.kind })
+        assertEquals(75.0, p.windows[1].usedPct!!, 0.0)
+        assertTrue(fake.calls.none { it.url.contains("fetchAvailableModels") })
     }
 
     @Test fun geminiMapsAuthAndRateLimit() {

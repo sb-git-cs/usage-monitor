@@ -547,6 +547,9 @@ test("Copilot's rate-limit messages and their reset times are read", () => {
   assert.equal(resetOnScreen(model, seen), seen + 60_000);
   // Cursor names the day its monthly cycle ends, month first, sometimes wrapped onto the next line.
   assert.equal(resetOnScreen("Your usage limits will reset when your monthly cycle ends on\n8/14/2025.", seen), new Date(2025, 7, 14).getTime());
+  const agy = "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 37m43s.";
+  assert.ok(re.test(agy));
+  assert.equal(resetOnScreen(agy, seen), seen + (37 * 60 + 43) * 1000);
 });
 
 test("each CLI's busy hint is its own: a dialog's Esc to cancel is not a running turn", () => {

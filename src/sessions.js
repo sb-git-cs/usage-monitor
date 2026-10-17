@@ -45,6 +45,8 @@ const OTHER_LIMIT_ON_SCREEN = [
   "exceeded your (?:[\\w-]+ ){0,4}(?:quota|limit|allowance)",
   "usage limit reached",
   "quota exceeded for quota metric",
+  "resource_exhausted",
+  "(?:individual )?quota reached",
 ].join("|");
 // The message must be among the newest lines: below it are only the prompt box and footer.
 const OTHER_LINES = 12;
@@ -355,12 +357,12 @@ function resetOnScreen(text, seenAt) {
     return new Date(year, Number(date[1]) - 1, Number(date[2])).getTime();
   }
   if (/(?:resets?|try again) in under a minute/i.test(s)) return seenAt + 60_000;
-  const rel = /(?:resets?|try again|available again) in ((?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m)\b[\s,]*(?:and\s+)?)+)/i.exec(s);
+  const rel = /(?:resets?|try again|available again) in ((?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?:\b|(?=\d))[\s,]*(?:and\s+)?)+)/i.exec(s);
   if (!rel) return null;
   let ms = 0;
   for (const [, n, unit] of rel[1].matchAll(/(\d+)\s*([a-z]+)/gi)) {
     const u = unit.toLowerCase();
-    ms += Number(n) * (u.startsWith("d") ? 86400_000 : u.startsWith("h") ? 3600_000 : 60_000);
+    ms += Number(n) * (u.startsWith("d") ? 86400_000 : u.startsWith("h") ? 3600_000 : u.startsWith("m") ? 60_000 : 1000);
   }
   return ms ? seenAt + ms : null;
 }

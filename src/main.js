@@ -1583,6 +1583,7 @@ if (!gotLock) {
     config.save(cfg);
     insights = new Insights();
     insightsWindow.init({ cfg, insights, snapshot: () => latest, network: () => netUsage.summary(),
+      sessions: () => latestSessions,
       save: () => { const saved = config.save(cfg); broadcastPrefs(); if (latest) broadcast(latest); return saved; },
       refresh: () => poll && poll.refresh(), openNetwork: () => netUsage.openWindow(), openSettings,
       login: (id) => beginAccountSwitch(id) });
