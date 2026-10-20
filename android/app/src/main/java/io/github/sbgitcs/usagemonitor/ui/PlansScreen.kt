@@ -51,8 +51,12 @@ import java.util.Locale
  * seconds while on screen.
  */
 @Composable
-fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Unit, onAccounts: () -> Unit = {}) {
+fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Unit, onAccounts: () -> Unit = {}, onDevice: () -> Unit = {}) {
     val context = LocalContext.current
+    var batteryReading by remember { mutableStateOf<io.github.sbgitcs.usagemonitor.device.BatteryReading?>(null) }
+    WhileVisible(Unit, 60_000) {
+        batteryReading = withContext(Dispatchers.IO) { runCatching { io.github.sbgitcs.usagemonitor.device.BatteryMonitor.refresh(context) }.getOrNull() }
+    }
     val scope = rememberCoroutineScope()
     var view by remember { mutableStateOf(PlanReadings.read(settings)) }
     var readAt by remember { mutableLongStateOf(settings.snapshotAt) }
@@ -88,6 +92,7 @@ fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Uni
 
     if (computer == null && snapshot?.providers.orEmpty().none { it.state != "disabled" && it.state != "not_installed" }) {
         ScreenList {
+            item { BatterySummaryChip(batteryReading, onDevice) }
             item {
                 Section("See your AI plan usage") {
                     Note("Pair with Usage Monitor on your computer, or sign in to Claude Code, Codex, Grok or Cursor on this phone.")
@@ -114,7 +119,7 @@ fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Uni
     ).joinToString(" · ")
 
     PlansContent(status, busy, shown, warnAt, now, snapshot, view.computerCached, error, unpaired,
-        onRefresh = { scope.launch { refresh(true) } }, onPair = onPair, onSelect = { selected = it.id })
+        onRefresh = { scope.launch { refresh(true) } }, onPair = onPair, onSelect = { selected = it.id }, battery = batteryReading, onDevice = onDevice)
     shown.firstOrNull { it.id == selected }?.let { p ->
         CompactDialog(onDismissRequest = { selected = null },
             title = { Text(if (p.plan != null) "${p.name} · ${p.plan}" else p.name) },
@@ -128,8 +133,9 @@ fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Uni
 @Composable
 fun PlansContent(status: String, busy: Boolean, shown: List<Provider>, warnAt: Double, now: Long,
                  snapshot: DesktopSnapshot?, cached: Boolean, error: String?, unpaired: Boolean,
-                 onRefresh: () -> Unit, onPair: () -> Unit, onSelect: (Provider) -> Unit) {
+                 onRefresh: () -> Unit, onPair: () -> Unit, onSelect: (Provider) -> Unit, battery: io.github.sbgitcs.usagemonitor.device.BatteryReading? = null, onDevice: () -> Unit = {}) {
     ScreenList {
+        item { BatterySummaryChip(battery, onDevice) }
         item { DashboardHeader(status, busy, onRefresh = onRefresh) }
         if (shown.isEmpty() && snapshot?.providers.orEmpty().isNotEmpty()) item {
             Section("Provider visibility") { Note("All available providers are hidden. Open Insights to choose the providers shown on Home.") }

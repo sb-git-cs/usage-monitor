@@ -5,6 +5,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.core.view.WindowCompat
 import org.junit.Assert.assertEquals
@@ -130,10 +133,35 @@ open class ScreenshotsTest {
     @Test fun phone() = shoot("phone") {
         val readings = DeviceReadings(
             memUsed = 5300 * MB, memTotal = 8 * GB, storageUsed = 88 * GB, storageTotal = 128 * GB,
+            batteryEstimate = "~3h 10m left",
             batteryPct = 76, batteryTempC = 31.4, charging = false, currentMa = -412, thermal = "Normal",
             cpuClockPct = 38.0, coreMhz = listOf(1094, 1094, 1197, 1401, 1804, 2016, 2304, 787),
         )
         AppScaffold(Tab.Phone, onTab = {}) { DeviceContent(readings) }
+    }
+
+    @Test fun batteryHistory() = batteryScene(false)
+    @Test fun batteryLargeText() = batteryScene(true)
+    private fun batteryScene(large: Boolean) {
+        val history = io.github.sbgitcs.usagemonitor.device.BatteryHistory.get(compose.activity)
+        history.clear()
+        val stamp = System.currentTimeMillis() - 60 * MIN
+        for (i in 0..60) {
+            val charging = i >= 30
+            history.record(io.github.sbgitcs.usagemonitor.device.BatteryReading(stamp + i * MIN,
+                if (charging) 40 + (i - 30) else 60 - i / 2,
+                if (charging) "charging" else "discharging", gap = i == 0))
+        }
+        shoot(if (large) "battery-large-text" else "battery") {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, if (large) 1.5f else density.fontScale)) {
+                AppScaffold(Tab.Phone, onTab = {}) {
+                    io.github.sbgitcs.usagemonitor.ui.ScreenList {
+                        item { io.github.sbgitcs.usagemonitor.ui.BatteryHistorySection() }
+                    }
+                }
+            }
+        }
     }
 
     private fun shoot(name: String, content: @Composable () -> Unit) {

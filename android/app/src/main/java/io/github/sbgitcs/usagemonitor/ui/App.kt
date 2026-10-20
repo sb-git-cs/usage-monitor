@@ -64,7 +64,15 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
     var computer by remember { mutableStateOf(settings.computer) }
     // Bumped on every return to the app, so permission states are read again.
     var resumes by remember { mutableIntStateOf(0) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { resumes++ }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        io.github.sbgitcs.usagemonitor.device.BatteryHistory.get(context).breakSegment()
+        resumes++
+    }
+    WhileVisible(resumes, 60_000) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { io.github.sbgitcs.usagemonitor.device.BatteryMonitor.refresh(context) }
+        }
+    }
     LaunchedEffect(requestedTab) {
         requestedTab?.let {
             tab = it
@@ -96,7 +104,7 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
         if (insights) {
             InsightsScreen(settings, onDisplayChanged, onAccounts = { insights = false; tab = Tab.Accounts })
         } else when (tab) {
-            Tab.Plans -> PlansScreen(settings, computer, onPair = { pairing = true }, onAccounts = { tab = Tab.Accounts })
+            Tab.Plans -> PlansScreen(settings, computer, onPair = { pairing = true }, onAccounts = { tab = Tab.Accounts }, onDevice = { tab = Tab.Phone })
             Tab.Data -> DataScreen(settings, resumes)
             Tab.Phone -> DeviceScreen()
             Tab.Accounts -> AccountsScreen(settings, computer, onPair = { pairing = true })

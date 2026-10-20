@@ -10,6 +10,7 @@ const CHIP_LABELS = [
   ["copilot", "Copilot"],
   ["sessions", "Coding sessions"],
   ["network", "Network speed"],
+  ["battery", "Battery"],
   ["cpu", "CPU"],
   ["mem", "Memory"],
   ["gpu", "GPU"],

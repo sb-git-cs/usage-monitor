@@ -34,6 +34,12 @@ const sessionsView = { auto_resume: true, can_resume: true, sessions: [
   { key: "claude:a", tool: "claude", name: '<img src="x" onerror="window.injected=true">', cwd: "D:\\work", state: "limited", resets_at: future, resume_at: future, resume: "scheduled" },
   { key: "codex:b", tool: "codex", name: "api", cwd: "D:\\api", state: "working", resets_at: null, resume_at: null, resume: null },
 ] };
+const batteryPoints = [
+  { t: Date.now() - 1200000, present: true, percent: 60, state: "discharging", seconds: null, source: null, g: true },
+  { t: Date.now() - 600000, present: true, percent: 58, state: "discharging", seconds: 17400, source: "observed", g: false },
+  { t: Date.now(), present: true, percent: 62, state: "charging", seconds: 3000, source: "system", g: false },
+];
+const batteryView = { latest: batteryPoints.at(-1), points: batteryPoints, sessions: require("../src/battery-model").sessions(batteryPoints) };
 const systemSummary = { cpu: 42, mem: 67, gpuPresent: true, gpu: 18, disk: 9, space: 84,
   disks: [{ name: "0 C:", busy: 9 }], volumes: [{ name: '<img src="x" onerror="window.injected=true">', used: 84 * 1024 ** 3, size: 100 * 1024 ** 3 }] };
 
@@ -61,6 +67,7 @@ async function check(file) {
         return el.hidden ? null : el.textContent.replace(/\\s+/g, ' ').trim();
       })(),
       text: document.body.textContent,
+      battery: document.getElementById("batteryStatus")?.textContent || document.getElementById("batteryEta")?.textContent,
       injected: !!window.injected || !!document.querySelector('img'),
       widths: [...document.querySelectorAll('.fill')].map(el => el.style.width),
       reds: document.querySelectorAll('.red').length,
@@ -76,6 +83,7 @@ async function check(file) {
         return hit === el || el.contains(hit);
       })(),
     })`);
+    assert.match(result.battery, /~50m to full/);
     assert.equal(result.injected, false);
     assert.equal(result.node, "undefined");
     assert.equal(result.clickable, true, `${file} controls must receive pointer events`);
@@ -150,6 +158,23 @@ async function check(file) {
       assert.equal(result.reds, 1);
       assert.match(result.text, /CPU42%MEM67%GPU18%DISK9%SPACE84%/);
     }
+    for (const [reading, expected] of [
+      [{ ...batteryView.latest, percent: 9, state: "discharging", seconds: null }, "Estimating"],
+      [{ ...batteryView.latest, percent: 100, state: "full", seconds: null }, "Full"],
+      [{ ...batteryView.latest, percent: 80, state: "plugged", seconds: null }, "Plugged in"],
+      [{ ...batteryView.latest, present: null, percent: null, state: "unknown", seconds: null }, "Unavailable"],
+    ]) {
+      win.webContents.send("usage://battery", { latest: reading, points: batteryPoints });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const battery = await win.webContents.executeJavaScript(`({text: (document.getElementById('batteryEta') || document.getElementById('batteryStatus')).textContent, hidden: (document.getElementById('batteryChip') || document.getElementById('batteryCard')).hidden})`);
+      assert.ok(battery.text.includes(expected), `${file}: battery ${expected}`);
+      assert.equal(battery.hidden, false, "transient failure must not hide battery");
+    }
+    win.webContents.send("usage://battery", { latest: { present: false, percent: null, state: "unknown", seconds: null }, points: [] });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(await win.webContents.executeJavaScript(`(document.getElementById('batteryChip') || document.getElementById('batteryCard')).hidden`), true);
+    win.webContents.send("usage://battery", batteryView);
+    await new Promise((resolve) => setTimeout(resolve, 60));
     const deadline = Date.now() + 5000;
     while (!renderedFrame && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.ok(renderedFrame && !renderedFrame.isEmpty(), `${file} must produce a rendered frame`);
@@ -168,6 +193,7 @@ async function check(file) {
         rows: new Set([...document.querySelectorAll('#root .pct-icon')].map(el => el.getBoundingClientRect().top)).size,
         width: document.getElementById('bar').getBoundingClientRect().width,
         session: document.getElementById('sessionChip').getBoundingClientRect().width,
+        battery: document.getElementById('batteryChip').getBoundingClientRect().width,
       })`);
       assert.equal(fill.bar, 48);
       assert.equal(fill.rows, 2);
@@ -176,7 +202,8 @@ async function check(file) {
       assert.equal(fill.netDisplay, "grid");
       // About 48px with Segoe UI; the default fonts on macOS (50px) and Ubuntu (52.5px) are wider.
       assert.ok(fill.session <= 54, `compact sessions chip: ${fill.session}px`);
-      assert.ok(fill.width - fill.session < 420, `compact strip including system metrics: ${fill.width}px`);
+      assert.ok(fill.battery <= 130, `compact battery chip: ${fill.battery}px`);
+      assert.ok(fill.width - fill.session - fill.battery < 420, `compact strip including system metrics: ${fill.width}px`);
       renderedFrame = null;
       const fillDeadline = Date.now() + 5000;
       while (!renderedFrame && Date.now() < fillDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -437,7 +464,7 @@ async function checkInsights() {
   data.event(hostile, "Quota warning", "suppressed");
   data.setBudget({ limit: 10e9, day: 1 }); data.traffic({ apps: [{ rx: 2e9, tx: 1e9 }] });
   const view = () => ({ series: data.report(7), events: data.data.events, snooze_until: data.data.snoozeUntil, budget: data.budgetView(),
-    display: cfg.display, dark: true, diagnostics: { storage: "ok", providers: [{ id: "codex", state: "stale", last_success: future }], network: { state: "setup_required", coverage: "Partial observed traffic" } } });
+    battery: batteryView, display: cfg.display, dark: true, diagnostics: { storage: "ok", providers: [{ id: "codex", state: "stale", last_success: future }], network: { state: "setup_required", coverage: "Partial observed traffic" } } });
   const errors = [];
   win.webContents.on("console-message", (details) => { if (details.level === "error") errors.push(details.message); });
   ipcMain.handle("insights:get", () => view());
@@ -450,6 +477,7 @@ async function checkInsights() {
   ipcMain.handle("insights:export", () => ({ canceled: true }));
   try {
     await win.loadFile(path.join(source, "ui/insights.html"));
+    await win.webContents.insertCSS("*, *::before, *::after { animation: none !important; transition: none !important; }");
     await new Promise((resolve) => setTimeout(resolve, 250));
     assert.equal(await win.webContents.executeJavaScript(`document.querySelectorAll('canvas').length`), 1);
     assert.equal(await win.webContents.executeJavaScript(`!!document.querySelector('img') || !!window.injected`), false);
@@ -472,7 +500,16 @@ async function checkInsights() {
     assert.equal(await win.webContents.executeJavaScript(`document.body.classList.contains('light')`), false);
     fs.writeFileSync(path.join(output, "insights-dark.png"), (await win.webContents.capturePage()).toPNG());
     assert.deepEqual(errors, []);
-    console.log("insights: charts, escaping, snooze, display saving and narrow/large-text layout passed");
+    await win.webContents.executeJavaScript(`document.querySelector('[data-tab="battery"]').click()`);
+    assert.match(await win.webContents.executeJavaScript(`document.getElementById('batterySummary').textContent`), /62%.*~50m to full/);
+    assert.equal(await win.webContents.executeJavaScript(`!!document.querySelector('#batteryChart svg')`), true);
+    await win.webContents.executeJavaScript(`document.querySelector('#batteryChart svg').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))`);
+    assert.match(await win.webContents.executeJavaScript(`document.getElementById('batteryPoint').textContent`), /60%.*discharging/);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('tab-battery').classList.contains('active')`), true);
+    assert.equal(await win.webContents.executeJavaScript(`document.querySelectorAll('#batteryChart polyline').length`), 2);
+    fs.writeFileSync(path.join(output, "battery-insights.png"), (await win.webContents.capturePage()).toPNG());
+    console.log("insights: battery history, keyboard inspection, charts, escaping, snooze, display saving and narrow/large-text layout passed");
   } finally {
     win.destroy();
     for (const channel of ["insights:get", "insights:action", "insights:export"]) ipcMain.removeHandler(channel);
@@ -489,6 +526,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("usage://get-prefs", () => ({ alert_threshold: 80, chips_show: {} }));
   ipcMain.handle("usage://get-pairing", () => null);
   ipcMain.handle("usage://get-sessions", () => null);
+  ipcMain.handle("usage://get-battery", () => batteryView);
   ipcMain.handle("usage://pair-phone", () => null);
   ipcMain.handle("usage://pair-cancel", () => null);
   ipcMain.handle("net:state", () => netState);

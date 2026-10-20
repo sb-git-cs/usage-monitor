@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.0 — 2026-10-20
+
+- Add a desktop battery chip with percentage and approximate time to empty or full, plus a flyout card and Battery tab in Insights.
+- Add phone battery estimates to Android Home, the Phone screen and larger device widgets. Record locally during active use and existing background refreshes.
+- Keep 30 days of separate battery observations with charging shading, visible gaps, observed sessions and history clearing. Desktop exports include battery JSON/report data and a separate battery CSV.
+- Improve chip grouping, light-theme contrast, keyboard focus and battery layouts at larger text sizes. Label quota health explicitly.
+
 ## 1.7.4 — 2026-10-17
 
 - **Professional Executive Insights Suite.** Redesigned the Insights window into an executive-grade dashboard with high-polish UI tabs (Overview, Usage, Burn Rate, Token Intelligence, Network & Budget, Audit & Alerts, Diagnostics & Preferences):

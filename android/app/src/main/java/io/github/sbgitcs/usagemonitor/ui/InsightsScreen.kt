@@ -73,6 +73,7 @@ fun InsightsScreen(settings: Settings, onDisplayChanged: () -> Unit, onAccounts:
     }.toList()
     val events = data.optJSONArray("events") ?: JSONArray()
     ScreenList {
+        item { BatteryHistorySection() }
         item {
             Section("Plan history") {
                 Note("Observed quota percentages, separated by account and reset. Retained for 31 days; these are not token counts or costs. Unidentified accounts cannot be separated reliably.")

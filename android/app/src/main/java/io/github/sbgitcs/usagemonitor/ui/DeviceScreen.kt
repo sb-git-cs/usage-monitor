@@ -47,6 +47,10 @@ fun DeviceContent(readings: DeviceReadings) {
                     Figure("Level", readings.batteryPct?.let { "$it%" } ?: "—", Modifier.weight(1f))
                     Figure("Temperature", readings.batteryTempC?.let { String.format(Locale.US, "%.1f °C", it) } ?: "—", Modifier.weight(1f))
                 }
+                Text(readings.batteryEstimate, color = if (readings.batteryState == "discharging" && (readings.batteryPct ?: 100) <= 20) {
+                    if ((readings.batteryPct ?: 100) <= 10) MaterialTheme.colorScheme.error else StatusColors.warn
+                } else MaterialTheme.colorScheme.onSurface)
+                Note("This phone · estimates depend on current conditions")
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Figure(if (readings.charging) "Charging at" else "Drawing", readings.currentMa?.let { "${kotlin.math.abs(it)} mA" } ?: "—", Modifier.weight(1f))
@@ -54,6 +58,7 @@ fun DeviceContent(readings: DeviceReadings) {
                 }
             }
         }
+        item { BatteryHistorySection() }
         item {
             Section("Resources") {
                 Meter("Memory", "${Format.bytes(readings.memUsed)} of ${Format.bytes(readings.memTotal)}", readings.memPct, meterColor(readings.memPct, 85.0))

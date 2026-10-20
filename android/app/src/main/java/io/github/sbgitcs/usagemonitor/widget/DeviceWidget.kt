@@ -35,7 +35,7 @@ class DeviceWidget : GlanceAppWidget() {
             Large(r)
             return
         }
-        val battery = WidgetStat(if (r?.charging == true) "Charging" else "Battery", r?.batteryPct?.let { "$it%" } ?: "—")
+        val battery = WidgetStat(if (tier == WidgetTier.WIDE) r?.batteryEstimate ?: "Battery" else if (r?.charging == true) "Charging" else "Battery", r?.batteryPct?.let { "$it%" } ?: "—")
         val ram = WidgetStat("RAM", r?.let { Format.percent(it.memPct) } ?: "—")
         when (tier) {
             WidgetTier.ONE -> OneCell(battery.value, battery.label, Tab.Phone)
@@ -62,6 +62,7 @@ class DeviceWidget : GlanceAppWidget() {
             }
             val battery = listOfNotNull(
                 r.batteryPct?.let { "Battery $it%" },
+                r.batteryEstimate,
                 if (r.charging) "charging" else null,
                 r.batteryTempC?.let { "%.1f °C".format(it) },
             )

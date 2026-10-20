@@ -842,6 +842,7 @@ function renderProviders(hidden = []) {
 }
 
 function render(s) {
+  renderBattery(s.battery);
   state = s;
   const light = s.display.theme === "light" || (s.display.theme === "system" && !s.dark);
   document.body.classList.toggle("light", light);
@@ -990,3 +991,21 @@ load();
 setInterval(() => {
   if (!document.querySelector("form:focus-within")) load();
 }, 10000);
+
+function renderBattery(view) {
+  const r = view?.latest;
+  $("batterySummary").textContent = `${r?.percent != null ? Math.round(r.percent) + "% · " : ""}${BatteryModel.label(r)}${r ? " · Updated " + new Date(r.t).toLocaleString() : ""}${view?.error ? " · History could not be saved" : ""}`;
+  drawBatteryChart($("batteryChart"), view?.points, $("batteryPoint"));
+  const list = $("batterySessions");
+  list.replaceChildren();
+  if (!view?.sessions?.length) list.append(node("p", "No charge or discharge sessions observed yet.", "fine"));
+  for (const s of view?.sessions || []) list.append(node("p", `${s.state === "charging" ? "Charging" : "Discharging"} · ${new Date(s.start).toLocaleString()} · ${new Date(s.end).toLocaleString()} · ${Math.round(s.from)}% · ${Math.round(s.to)}% · ${s.delta > 0 ? "+" : ""}${Math.round(s.delta)} pp · ${Math.round(s.duration / 60000)}m observed${s.partial ? " · Partial" : ""}`, "battery-session"));
+}
+$("batteryCsv").onclick = async () => message(await api.export("battery-csv", Number($("period").value)));
+$("batteryClear").onclick = async () => {
+  if (!window.confirm("Clear battery history on this computer?")) return;
+  message(await api.action("clear-battery")); await load();
+};
+const selectBattery = (tab) => { if (tab === "battery") document.querySelector('[data-tab="battery"]')?.click(); };
+api.onTab(selectBattery);
+selectBattery(new URLSearchParams(location.search).get("tab"));

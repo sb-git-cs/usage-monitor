@@ -15,10 +15,15 @@ import kotlinx.coroutines.withContext
 class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val settings = Settings(applicationContext)
-        val snapshot = PlanReadings.refresh(applicationContext, settings).snapshot
-        val data = runCatching { DataUsage.status(applicationContext, settings.billingDay) }.getOrNull()
-        Alerts.check(applicationContext, settings, snapshot, data)
-        runCatching { Widgets.updateAll(applicationContext) }
+        runCatching { io.github.sbgitcs.usagemonitor.device.BatteryMonitor.refresh(applicationContext) }
+        try {
+            val snapshot = PlanReadings.refresh(applicationContext, settings).snapshot
+            val data = runCatching { DataUsage.status(applicationContext, settings.billingDay) }.getOrNull()
+            Alerts.check(applicationContext, settings, snapshot, data)
+        } finally {
+            // Local device widgets still refresh when a provider or paired computer is unavailable.
+            runCatching { Widgets.updateAll(applicationContext) }
+        }
         Result.success()
     }
 }

@@ -5,7 +5,7 @@ const { displayPrefs } = require("./insights");
 
 const ALLOWED_INTERVALS = [5, 15, 30, 60];
 const ALERT_THRESHOLDS = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
-const CHIP_KEYS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "sessions", "cpu", "mem", "gpu", "disk", "space"];
+const CHIP_KEYS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "sessions", "battery", "cpu", "mem", "gpu", "disk", "space"];
 const UPDATE_CHANNELS = ["stable", "beta"];
 const PHONE_PORT = 47329;
 

@@ -24,6 +24,8 @@ data class DeviceReadings(
     /** Current clock of all cores as a share of their maximum; the closest a normal app can get to CPU load. */
     val cpuClockPct: Double?,
     val coreMhz: List<Int?>,
+    val batteryEstimate: String = "Estimating…",
+    val batteryState: String = if (charging) "charging" else "discharging",
 ) {
     val memPct: Double get() = if (memTotal > 0) memUsed * 100.0 / memTotal else 0.0
     val storagePct: Double get() = if (storageTotal > 0) storageUsed * 100.0 / storageTotal else 0.0
@@ -43,6 +45,7 @@ object DeviceStats {
         val storageUsed = storageTotal - stat.availableBytes
 
         val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val observed = BatteryMonitor.refresh(context, battery)
         val level = battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = battery?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
         val temp = battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE
@@ -74,6 +77,8 @@ object DeviceStats {
         val clockPct = if (pairs.isEmpty()) null else pairs.sumOf { it.first!!.toDouble() } * 100 / pairs.sumOf { it.second!!.toDouble() }
 
         return DeviceReadings(
+            batteryEstimate = observed.description,
+            batteryState = observed.state,
             memUsed = mem.totalMem - mem.availMem,
             memTotal = mem.totalMem,
             storageUsed = storageUsed,

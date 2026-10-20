@@ -81,6 +81,8 @@ function shownProviders(snapshot) {
 function applyPrefs(next) {
   if (!next) return;
   prefs = { alert_threshold: next.alert_threshold, chips_show: next.chips_show || {} };
+  bar.classList.toggle("light", next.display?.theme === "light" || (next.display?.theme === "system" && !next.dark));
+  renderBattery(lastBattery);
   setAlertThreshold(prefs.alert_threshold);
   lastKey = "";
   if (window.__last) render(window.__last);
@@ -310,3 +312,22 @@ window.usage.onChipsDocked(setDocked);
 window.usage.onChipsPopped(setPopped);
 window.usage.onChipsFill(setFill);
 window.usage.getChipsDocked().then(setDocked);
+
+// Battery is independent of the faster hardware sampler and remains available when chips hide.
+let lastBattery = {};
+function renderBattery(view = {}) {
+  lastBattery = view;
+  const r = view.latest;
+  const el = document.getElementById("batteryChip");
+  el.hidden = prefs.chips_show.battery === false || r?.present === false;
+  document.getElementById("batteryPct").textContent = `${r?.state === "charging" ? "⚡" : "BAT"} ${r?.percent != null ? Math.round(r.percent) + "%" : "—"}`;
+  document.getElementById("batteryEta").textContent = BatteryModel.label(r);
+  el.title = `Battery · ${BatteryModel.label(r)}${r ? " · Updated " + new Date(r.t).toLocaleTimeString() : ""}`;
+  el.setAttribute("aria-label", `${el.title}${r?.state === "discharging" && r.percent <= 20 ? " · Low battery" : ""}. Open battery details`);
+  el.classList.toggle("low", r?.state === "discharging" && r.percent <= 20);
+  el.classList.toggle("critical", r?.state === "discharging" && r.percent <= 10);
+  requestAnimationFrame(fitBar);
+}
+document.getElementById("batteryChip").onclick = () => window.usage.openBattery();
+window.usage.onBattery(renderBattery);
+window.usage.getBattery().then(renderBattery, () => renderBattery());

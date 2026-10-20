@@ -4,6 +4,51 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { displayPrefs } = require("../src/insights");
+const os = require("node:os");
+const { load } = require("./helpers");
+
+test("battery exports and clearing use separate history and reject unrelated renderers", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "um-battery-export-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const handles = {};
+  let win;
+  let output = path.join(dir, "export.json");
+  class Window {
+    constructor() { win = this; this.webContents = { setWindowOpenHandler() {}, on() {}, send() {} }; }
+    isDestroyed() { return false; }
+    setMenuBarVisibility() {} loadFile() {} on() {}
+  }
+  const { Insights } = require("../src/insights");
+  const { BatteryHistory } = require("../src/battery");
+  const battery = new BatteryHistory({ file: path.join(dir, "battery.json") });
+  battery.record({ hasBattery: true, percent: 60, isCharging: false, acConnected: false });
+  const quota = new Insights({ file: path.join(dir, "quota.json") });
+  quota.record({ providers: [{ id: "codex", status: { state: "ok" }, windows: [{ kind: "five_hour", used_pct: 30 }] }] });
+  quota.save(true);
+  const before = fs.readFileSync(quota.file, "utf8");
+  const module = load("src/insights-window.js", {
+    electron: { app: { getVersion: () => "test", getPath: () => dir }, BrowserWindow: Window,
+      ipcMain: { handle: (name, fn) => { handles[name] = fn; } }, nativeTheme: { shouldUseDarkColors: true },
+      dialog: { showSaveDialog: async () => ({ filePath: output }) } },
+    "./tokens": { scanTokens: () => null }, "./burn": { analyzeBurn: () => [], computeHealth: () => ({}) },
+  });
+  module.init({ cfg: { display: displayPrefs() }, insights: quota, battery }); module.open("battery");
+  const own = { sender: win.webContents }, other = { sender: {} };
+  assert.equal(await handles["insights:action"](other, "clear-battery"), null);
+  assert.equal(battery.points.length, 1);
+  await handles["insights:export"](own, "json", 7);
+  const exported = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(exported.unit, "quota_percent_used"); assert.equal(exported.battery.points.length, 1);
+  output = path.join(dir, "battery.csv");
+  await handles["insights:export"](own, "battery-csv", 7);
+  assert.match(fs.readFileSync(output, "utf8"), /timestamp,percent,state/);
+  output = path.join(dir, "report.md");
+  await handles["insights:export"](own, "report", 7);
+  assert.match(fs.readFileSync(output, "utf8"), /## Battery/);
+  assert.deepEqual(await handles["insights:action"](own, "clear-battery"), { ok: true });
+  assert.equal(battery.points.length, 0);
+  assert.equal(fs.readFileSync(quota.file, "utf8"), before);
+});
 test("Insights IPC only accepts its own renderer and support reports omit sensitive fields", async () => {
   const handles = {};
   let win;

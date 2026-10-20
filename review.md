@@ -1,3 +1,11 @@
+## Battery monitoring and UI verification (2026-10-20)
+
+No unresolved blocker or should-fix findings in the new battery feature. Regression coverage checks state distinctions, native/observed estimates, insufficient data, power transitions, suspend and sampling timeouts, recording gaps, retention, persistence/restart recovery, corrupt storage, exports, and isolation from quota history. Desktop history uses atomic replacement; Android writes a synced temporary file and atomically replaces the history file.
+
+Validation: 220 desktop tests passed with one platform skip; Electron smoke checks passed, including two-row taskbar fit and keyboard chart inspection. Android: 96 unit tests passed; debug lint had zero errors (14 existing warnings and three informational notices); debug APK built. Six Android phone/battery screenshots passed and were inspected in light, dark and 150% text layouts. Live Windows sampling detected the computer battery and AC/full state correctly. Synthetic tests cover charge/discharge estimates; no complete physical charge/discharge session or macOS/Linux battery hardware was exercised. 1.8.0 was subsequently installed on Windows and the connected phone: installed desktop archive matches the tested package; native phone checks verified its battery screen/Home chip and preserved pairing/widget IDs. The phone APK uses the original installed debug signing certificate. Source/packaged UI checks, optimized Android build/lint and APK signature checks passed. Public release is prepared through the standard tag workflow; no Android production signing key is configured.
+
+Evidence: `.qa/battery-desktop-tests.log`, `.qa/battery-ui-checks.log`, `.qa/battery-android-final.log`, `.qa/battery-android-screenshots.log`, `.qa/battery-insights.png`, `.qa/battery-android-screenshots/`.
+
 # Usage Monitor 1.6.0 review — 2026-10-14
 
 ## Blocker

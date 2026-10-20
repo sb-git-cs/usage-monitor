@@ -24,6 +24,7 @@
 - **Stays current on its own.** Checks for a new version at launch, when your laptop wakes and every six hours, installs it and restarts. No manual updating.
 - **See it coming.** A burn-rate forecast tells you when a window will hit 100% at your current pace, before it happens.
 - **On your phone too.** The Android app shows your computer's plan meters, your phone's mobile and Wi-Fi data against your data plan, and its CPU, memory and battery, with home screen widgets.
+- **Battery and remaining time.** The desktop battery chip and Android Phone screen show percentage and approximate time to empty or full. Battery history retains 30 days of local readings and observed charge/discharge sessions. Estimates show “Estimating…” until enough data is available; plugged-in batteries that are not charging are labelled accordingly. Desktop sampling continues while chips are hidden and pauses during sleep. Android records during active use and scheduled refreshes, with visible gaps when observations are missing. Computer and phone histories stay separate. Open Insights → Battery on desktop or Phone → Battery history on Android to inspect or clear them.
 - **Cross-platform.** Windows 10/11, macOS 12+, 64-bit Linux, and Android 10+.
 
 ## Quick start

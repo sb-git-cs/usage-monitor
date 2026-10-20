@@ -5,6 +5,8 @@
   <title>Usage Monitor</title>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src data:" />
   <link rel="stylesheet" href="shared.css" />
+  <script src="../battery-model.js"></script>
+  <script src="battery-chart.js"></script>
 </head>
 <body>
   <div class="hud flyout" id="root">
@@ -48,6 +50,11 @@
         <label class="session-auto" id="autoResumeRow"><input type="checkbox" id="autoResume" /> Resume after limit</label>
       </div>
       <div id="sessionRows"></div>
+    </section>
+    <section class="battery-card" id="batteryCard" hidden tabindex="-1" aria-label="Battery">
+      <div class="p-head"><strong id="batteryLevel">Battery</strong><button class="link-btn" id="batteryHistory" type="button">View history ›</button></div>
+      <p id="batteryStatus" role="status"></p><p class="hint" id="batteryUpdated"></p>
+      <div id="batterySpark" class="battery-chart"></div>
     </section>
     <section class="net-card" id="net" hidden title="Open Network usage" role="button" tabindex="0" aria-label="Open network usage monitor">
       <div class="p-head">

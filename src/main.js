@@ -12,6 +12,10 @@ const updater = require("./updater");
 const log = require("./log");
 const netUsage = require("./net");
 const systemUsage = require("./system");
+const batteryUsage = require("./battery");
+let batteryHistory;
+let batteryPoll;
+function batteryView() { return batteryHistory ? batteryHistory.view(1 / 24) : { latest: null, points: [] }; }
 const sessions = require("./sessions");
 const { History } = require("./history");
 const { Insights } = require("./insights");
@@ -1474,7 +1478,12 @@ function wireIpc() {
   ipcMain.handle("usage://get-update", () => updater.getState());
   ipcMain.handle("usage://get-prefs", () => prefs());
   ipcMain.on("usage://open-settings", () => openSettings());
-  ipcMain.on("usage://open-insights", () => insightsWindow.open());
+  ipcMain.on("usage://open-insights", (_e, tab) => insightsWindow.open(tab === "battery" ? tab : undefined));
+  ipcMain.handle("usage://get-battery", () => batteryView());
+  ipcMain.on("usage://open-battery", () => {
+    showFlyout();
+    if (flyout && !flyout.isDestroyed()) flyout.webContents.send("usage://focus-battery");
+  });
   ipcMain.handle("usage://pair-phone", () => beginPairing());
   ipcMain.handle("usage://pair-cancel", () => {
     if (phone) phone.cancelPairing();
@@ -1582,7 +1591,8 @@ if (!gotLock) {
     cfg.autostart = autostart.apply(cfg.autostart !== false);
     config.save(cfg);
     insights = new Insights();
-    insightsWindow.init({ cfg, insights, snapshot: () => latest, network: () => netUsage.summary(),
+    batteryHistory = new batteryUsage.BatteryHistory();
+    insightsWindow.init({ cfg, insights, battery: batteryHistory, snapshot: () => latest, network: () => netUsage.summary(),
       sessions: () => latestSessions,
       save: () => { const saved = config.save(cfg); broadcastPrefs(); if (latest) broadcast(latest); return saved; },
       refresh: () => poll && poll.refresh(), openNetwork: () => netUsage.openWindow(), openSettings,
@@ -1635,6 +1645,12 @@ if (!gotLock) {
     createTray();
     wireIpc();
     startUpdater();
+    batteryPoll = batteryUsage.start(batteryHistory, () => {
+      for (const win of [chips, flyout]) if (win && !win.isDestroyed()) win.webContents.send("usage://battery", batteryView());
+    });
+    powerMonitor.on("suspend", () => batteryPoll.setPaused(true));
+    powerMonitor.on("resume", () => batteryPoll.setPaused(false));
+    for (const event of ["on-ac", "on-battery"]) powerMonitor.on(event, () => batteryPoll.refresh());
     systemPoll = systemUsage.start((snapshot) => {
       latestSystem = snapshot;
       if (chips && !chips.isDestroyed()) chips.webContents.send("usage://system", snapshot);
@@ -1754,6 +1770,7 @@ app.on("before-quit", () => {
   if (insights) insights.save(true);
   if (phone) phone.stop();
   updater.stop();
+  if (batteryPoll) batteryPoll.stop();
   if (systemPoll) systemPoll.stop();
   netUsage.shutdown();
   if (taskbarLayout.stopTaskbarWatch) taskbarLayout.stopTaskbarWatch();

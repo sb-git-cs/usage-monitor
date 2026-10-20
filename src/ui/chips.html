@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
   <link rel="stylesheet" href="shared.css" />
+  <script src="../battery-model.js"></script>
+  <script src="battery-chart.js"></script>
 </head>
 <body>
   <div class="chips" id="bar">
@@ -11,6 +13,7 @@
     <div id="root"><div class="pct-icon gray loading-chip" title="Loading">loading…</div></div>
     <div class="session-chip" id="sessionChip" hidden></div>
     <div class="net-chip" id="net" hidden></div>
+    <button class="battery-chip" id="batteryChip" hidden type="button" aria-label="Battery details"><span id="batteryPct">BAT —</span><span id="batteryEta">Unavailable</span></button>
     <div class="system-chips" id="system" aria-label="System usage"></div>
   </div>
   <script src="../models.js"></script>

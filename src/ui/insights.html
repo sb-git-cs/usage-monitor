@@ -6,6 +6,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
   <title>Usage Monitor · Executive Insights</title>
   <link rel="stylesheet" href="insights.css">
+  <script src="../battery-model.js"></script>
+  <script src="battery-chart.js"></script>
 </head>
 <body>
   <header class="app-header">
@@ -17,7 +19,7 @@
       </div>
     </div>
     <div class="header-controls">
-      <div id="globalHealthBadge" class="health-pill" title="System quota health status">
+      <div id="globalHealthBadge" class="health-pill" title="Quota health status">
         <span class="status-dot"></span>
         <strong id="healthScoreText">Optimal · 100/100</strong>
       </div>
@@ -44,6 +46,7 @@
     <button class="nav-tab" data-tab="usage" role="tab" aria-selected="false">Usage Analysis</button>
     <button class="nav-tab" data-tab="burn" role="tab" aria-selected="false">Burn Rate & Runway</button>
     <button class="nav-tab" data-tab="tokens" role="tab" aria-selected="false">Token Intelligence</button>
+    <button class="nav-tab" data-tab="battery" role="tab" aria-selected="false">Battery</button>
     <button class="nav-tab" data-tab="network" role="tab" aria-selected="false">Network & Budget</button>
     <button class="nav-tab" data-tab="alerts" role="tab" aria-selected="false">Audit & Alerts</button>
     <button class="nav-tab" data-tab="diagnostics" role="tab" aria-selected="false">Diagnostics & Display</button>
@@ -57,7 +60,7 @@
       <section class="hero-grid">
         <div class="hero-card health-hero">
           <div class="hero-head">
-            <span class="card-tag">SYSTEM HEALTH</span>
+            <span class="card-tag">QUOTA HEALTH</span>
             <span id="heroHealthGrade" class="grade-badge">Grade A</span>
           </div>
           <div class="hero-metric">
@@ -95,6 +98,15 @@
       </section>
     </div>
 
+    <div id="tab-battery" class="tab-panel" role="tabpanel">
+      <section class="section-card">
+        <div class="section-head"><div><h2>Computer battery</h2><p id="batterySummary" class="fine"></p></div>
+        <div class="actions"><button id="batteryCsv" class="btn btn-secondary">Battery CSV</button><button id="batteryClear" class="btn btn-ghost">Clear battery history</button></div></div>
+        <p class="fine">Battery level (%) · shaded periods are charging. Gaps indicate missing observations. Estimates depend on current conditions.</p>
+        <div id="batteryChart" class="battery-chart"></div><p id="batteryPoint" class="fine" aria-live="polite"></p>
+      </section>
+      <section class="section-card"><h2>Observed charge / discharge sessions</h2><p class="fine">Percentage-point changes and durations cover observed readings only. Interrupted sessions are partial.</p><div id="batterySessions"></div></section>
+    </div>
     <!-- TAB 2: USAGE ANALYSIS -->
     <div id="tab-usage" class="tab-panel" role="tabpanel">
       <section class="section-card">

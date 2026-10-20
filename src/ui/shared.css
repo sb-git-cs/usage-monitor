@@ -461,3 +461,40 @@ html.fit .chips, html.fit .flyout { pointer-events: auto; }
 .chips.short .pct-icon { font-size: 9px; line-height: 1; }
 .chips.short .net-chip { font-size: 9px; line-height: 1; }
 .chips.short .pct-icon .who, .chips.short .pct-icon .brand-mark { width: 9px; height: 9px; flex-basis: 9px; }
+
+/* Consistent groups and readable device metrics at taskbar height. */
+.chips #root, .session-chip, .net-chip { font-variant-numeric: tabular-nums; }
+.battery-chip {
+  display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
+  align-self: stretch; width: 19ch; padding: 0 7px; border: 0; border-left: 1px solid var(--hud-border);
+  border-radius: 3px; background: transparent; color: var(--text); font: inherit;
+  font-size: 10px; line-height: 1.3; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.battery-chip[hidden], .battery-card[hidden] { display: none; }
+.battery-chip span:last-child { color: var(--muted); font-size: 9px; }
+.battery-chip:hover { background: var(--bar-track); }
+.battery-chip.low span, .battery-card.low #batteryStatus { color: var(--amber); }
+.battery-chip.critical span, .battery-card.critical #batteryStatus { color: var(--red); }
+.battery-card { margin-top: 8px; padding: 10px; border: 1px solid var(--hud-border); border-radius: 8px; }
+.battery-card #batteryStatus { margin: 5px 0; font-variant-numeric: tabular-nums; }
+.battery-chart { color: var(--codex); min-width: 0; }
+.battery-chart svg { display: block; width: 100%; max-height: 140px; }
+.system-label { color: var(--muted); }
+.system-value { color: var(--text); }
+button:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--codex); outline-offset: 2px; }
+.chips.short .battery-chip { line-height: 1.05; }
+.light .battery-chip.low span, .light .battery-card.low #batteryStatus { color: #92400e; }
+.light .battery-chip.critical span, .light .battery-card.critical #batteryStatus { color: #b91c1c; }
+
+.chips.light { --text: #17243a; --muted: #506078; --hud-border: #b8c5d6; --bar-track: #dbe3ef; background: #f5f7fc; }
+.battery-chip span { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.battery-card .hint { color: var(--muted); }
+.chips.light .pct-icon { background: #fff; }
+.chips.light .pct-icon.green { color: #166534; }
+.chips.light .pct-icon.red { color: #b91c1c; }
+.chips.light .pct-icon.gray { color: #506078; }
+.chips.light .net-chip, .chips.light .session-chip { background: #fff; color: #17243a; }
+.chips.light .session-chip.limited { color: #92400e; }
+.chips.light .system-chip.busy .system-value { color: #92400e; }
+.chips.light { --grok: #57534e; --cursor: #785c0e; --copilot: #6d28d9; }
+.flyout.light .battery-card { background: #fff; border-color: #d5deeb; }

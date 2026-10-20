@@ -93,6 +93,11 @@ function generateReport(v) {
     `- **Cycle Start**: ${v.budget?.start ? new Date(v.budget.start).toLocaleDateString() : "—"}`,
     `- **Cycle End**: ${v.budget?.end ? new Date(v.budget.end).toLocaleDateString() : "—"}`
   );
+  if (v.battery) {
+    const r = v.battery.latest;
+    lines.push("", "## Battery", `- Current: ${r?.percent ?? "Unknown"}% · ${require("./battery-model").label(r)}`,
+      `- Observed sessions: ${v.battery.sessions.length} (interrupted sessions are partial)`);
+  }
   return lines.join("\n");
 }
 
@@ -127,6 +132,7 @@ function view(days) {
 
   return {
     series,
+    battery: ctx.battery?.view(days) || null,
     events,
     snooze_until: ctx.insights.data.snoozeUntil,
     budget: ctx.insights.budgetView(),
@@ -146,7 +152,9 @@ function init(context) {
   ipcMain.handle("insights:get", (e, days) => own(e) ? view(days) : null);
   ipcMain.handle("insights:action", async (e, action, value) => {
     if (!own(e)) return null;
-    if (action === "snooze") {
+    if (action === "clear-battery") {
+      return ctx.battery?.clear() ? { ok: true } : { error: "Could not clear battery history." };
+    } else if (action === "snooze") {
       if (!ctx.insights.snooze(Number(value))) return { error: "Choose a valid snooze duration." };
     } else if (action === "budget") {
       if (!ctx.insights.setBudget(value)) return { error: "Enter a valid budget and billing day." };
@@ -167,8 +175,8 @@ function init(context) {
   });
 
   ipcMain.handle("insights:export", async (e, format, days) => {
-    if (!own(e) || !["csv", "json", "diagnostics", "report"].includes(format)) return null;
-    const ext = format === "csv" ? "csv" : format === "report" ? "md" : "json";
+    if (!own(e) || !["csv", "json", "diagnostics", "report", "battery-csv"].includes(format)) return null;
+    const ext = ["csv", "battery-csv"].includes(format) ? "csv" : format === "report" ? "md" : "json";
     const result = await dialog.showSaveDialog(win, {
       defaultPath: path.join(app.getPath("downloads"), `usage-${format}.${ext}`),
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
@@ -178,6 +186,8 @@ function init(context) {
       let content;
       if (format === "diagnostics") content = JSON.stringify(diagnostic(), null, 2);
       else if (format === "report") content = generateReport(view(days));
+      else if (format === "battery-csv") content = ctx.battery.csv(days);
+      else if (format === "json") content = JSON.stringify({ ...JSON.parse(ctx.insights.export(days, format)), battery: ctx.battery?.view(days) }, null, 2);
       else content = ctx.insights.export(days, format);
       fs.writeFileSync(result.filePath, content, "utf8");
       return { ok: true };
@@ -187,8 +197,9 @@ function init(context) {
   });
 }
 
-function open() {
+function open(tab) {
   if (win && !win.isDestroyed()) {
+    if (tab === "battery") win.webContents.send("insights:tab", tab);
     win.show();
     win.focus();
     return;
@@ -210,7 +221,7 @@ function open() {
   win.setMenuBarVisibility(false);
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (e) => e.preventDefault());
-  win.loadFile(path.join(__dirname, "ui/insights.html"));
+  win.loadFile(path.join(__dirname, "ui/insights.html"), { query: tab === "battery" ? { tab } : {} });
   win.on("closed", () => {
     win = null;
   });

@@ -381,3 +381,20 @@ setInterval(() => {
     el.textContent = formatEta(el.dataset.reset) || (el.id === "overviewReset" ? "Not reported" : "");
   });
 }, 1000);
+
+function renderBattery(view = {}) {
+  const r = view.latest;
+  const card = document.getElementById("batteryCard");
+  card.hidden = r?.present === false;
+  document.getElementById("batteryLevel").textContent = `Battery · ${r?.percent != null ? Math.round(r.percent) + "%" : "—"}`;
+  document.getElementById("batteryStatus").textContent = BatteryModel.label(r);
+  document.getElementById("batteryUpdated").textContent = r ? `Updated ${new Date(r.t).toLocaleTimeString()} · this computer` : "Waiting for this computer's battery";
+  card.classList.toggle("low", r?.state === "discharging" && r.percent <= 20);
+  card.classList.toggle("critical", r?.state === "discharging" && r.percent <= 10);
+  drawBatteryChart(document.getElementById("batterySpark"), view.points, null, true);
+  requestAnimationFrame(fitFlyout);
+}
+window.usage.onBattery(renderBattery);
+window.usage.getBattery().then(renderBattery, () => renderBattery());
+window.usage.onFocusBattery(() => document.getElementById("batteryCard").focus());
+document.getElementById("batteryHistory").onclick = () => window.usage.openInsights("battery");
