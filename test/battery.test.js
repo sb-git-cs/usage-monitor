@@ -129,7 +129,8 @@ test("power draw produces an immediate estimate without a percentage warm-up", (
 
 test("Windows native battery helper returns read-only power data", { skip: process.platform !== "win32" }, async () => {
   const { createWorker, spawnWorker } = require("../src/system");
-  const worker = createWorker({ start: () => spawnWorker("battery-windows.ps1") });
+  // A cold hosted runner can spend longer compiling Add-Type while tests run in parallel.
+  const worker = createWorker({ start: () => spawnWorker("battery-windows.ps1"), timeoutMs: 30000 });
   try {
     const first = await worker.sample(), second = await worker.sample();
     assert.equal(typeof first.hasBattery, "boolean");
