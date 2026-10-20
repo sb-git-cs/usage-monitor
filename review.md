@@ -14,6 +14,8 @@ No unresolved blocker found in the reviewed request, provider, battery and repor
 
 ## Verification and limits
 
+Publication: desktop v1.9.0 is stable/latest; release workflow `39488928436` passed all builds and Android verification. Public asset checks verified 18 assets, 17 checksum entries and updater metadata; local Windows/phone installation evidence is in `docs/handoff.md`.
+
 Local acceptance: 229 desktop tests passed with two Windows platform skips; 97 Android tests passed, optimized lint/build passed. Source and packaged Electron checks passed; all 80 source files match the installed Windows archive. Native installed panel bounds match the display work area at full height/right edge. Phone update preserved pairing and widget IDs and matches the signed APK hash.
 
 Runtime dependency audit: zero known advisories. Full dependency audit: eight moderate build-tool advisories, zero high/critical; no speculative dependency downgrade applied. Sandboxed/context-isolated renderers, CSP, escaped model rendering, phone authentication/revocation, battery transitions and full-height multi-monitor positioning have regression coverage. No complete physical charge/discharge cycle or macOS/Linux battery hardware was exercised. Current-based estimates vary with workload and charge taper. This is a scoped code review, not a guarantee against every compromise.
