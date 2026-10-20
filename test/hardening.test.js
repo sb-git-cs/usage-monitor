@@ -31,7 +31,7 @@ test("A-07: 'check for updates at startup' becomes 'install updates automaticall
     let written = null;
     const raw = { config_version: 5, poll_interval_secs: 5, ...(before === undefined ? {} : { check_updates_on_startup: before }) };
     const config = load("src/config.js", {
-      fs: { readFileSync: () => JSON.stringify(raw), mkdirSync() {}, writeFileSync: (_f, text) => { written = JSON.parse(text); }, renameSync() {} },
+      fs: { readFileSync: () => JSON.stringify(raw), mkdirSync() {}, chmodSync() {}, writeFileSync: (_f, text) => { written = JSON.parse(text); }, renameSync() {} },
     });
     const cfg = config.ensure();
     assert.equal(cfg.auto_update, expected);
@@ -39,7 +39,7 @@ test("A-07: 'check for updates at startup' becomes 'install updates automaticall
     assert.equal("check_updates_on_startup" in written, false, "the old key is dropped");
     assert.equal(written.auto_update, expected);
   }
-  const fresh = load("src/config.js", { fs: { readFileSync: () => { throw new Error("ENOENT"); }, mkdirSync() {}, writeFileSync() {}, renameSync() {} } });
+  const fresh = load("src/config.js", { fs: { readFileSync: () => { throw new Error("ENOENT"); }, mkdirSync() {}, chmodSync() {}, writeFileSync() {}, renameSync() {} } });
   assert.equal(fresh.ensure().auto_update, true, "on by default for new installs");
 });
 
@@ -120,7 +120,7 @@ test("A-11: the log file captures errors and rotates at 1 MB", (t) => {
 test("A-12: unchanged caches are not rewritten on every poll", () => {
   const writes = [];
   const cache = load("src/cache.js", {
-    fs: { readFileSync: () => "{}", mkdirSync() {}, writeFileSync: (file) => writes.push(file), renameSync() {} },
+    fs: { readFileSync: () => "{}", mkdirSync() {}, chmodSync() {}, writeFileSync: (file) => writes.push(file), renameSync() {} },
   });
   const snap = (used, at) => ({ generated_at: at, providers: [{ id: "claude", status: { state: "ok" }, windows: [{ kind: "five_hour", used_pct: used }], fetched_at: at }] });
   assert.equal(cache.saveSnapshot(snap(10, "2026-09-28T10:00:00Z")), true);

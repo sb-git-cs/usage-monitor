@@ -149,7 +149,7 @@ test("switching during refresh discards the old selection and immediately refres
 
 test("settings persist the opt-in and old settings default to legacy", () => {
   let text;
-  const config = load("src/config.js", { fs: { readFileSync: () => text, mkdirSync() {}, writeFileSync: (_file, value) => { text = value; }, renameSync() {} } });
+  const config = load("src/config.js", { fs: { readFileSync: () => text, mkdirSync() {}, chmodSync() {}, writeFileSync: (_file, value) => { text = value; }, renameSync() {} } });
   assert.equal(config.load().subscription_regime, "legacy");
   const cfg = config.normalize({ subscription_regime: "combined", accounts: { grok: "saved" }, phone: { enabled: true } });
   assert.equal(config.save(cfg), true);
