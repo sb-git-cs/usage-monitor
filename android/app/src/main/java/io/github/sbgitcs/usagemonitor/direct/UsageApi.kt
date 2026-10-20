@@ -137,8 +137,7 @@ class UsageApi(private val http: Http = UrlHttp) {
             when (r) {
                 Host.Auth -> return UsageResult.AuthFailed
                 is Host.Ok -> {
-                    if (best == null || quotaRank(r.windows) > quotaRank(best.windows)) best = r
-                    if (quotaRank(best.windows) >= 3) break
+                    best = Host.Ok(r.plan ?: best?.plan, mergeGeminiWindows(best?.windows.orEmpty(), r.windows))
                 }
                 is Host.Fail -> { last = r; if (r.status == 429) break }
             }
@@ -167,16 +166,18 @@ class UsageApi(private val http: Http = UrlHttp) {
             "fetchAvailableModels" to { mapGeminiModels(it) },
         )
         val statuses = mutableListOf<Int>()
+        var windows = emptyList<PlanWindow>()
         for ((method, map) in steps) {
             val r = call(method, quotaBody)
             if (r.status == 429) return Host.Fail(429)
             if (r.status == 401) return Host.Auth
-            val windows = (if (r.status == 200) json(r) else null)?.let(map).orEmpty()
-            if (windows.isNotEmpty()) return Host.Ok(plan, windows)
+            val mapped = (if (r.status == 200) json(r) else null)?.let(map).orEmpty()
+            windows = mergeGeminiWindows(windows, mapped)
+            if (method != "retrieveUserQuotaSummary" && mapped.isNotEmpty()) return Host.Ok(plan, windows)
+            if (method == "retrieveUserQuota" && windows.isNotEmpty()) return Host.Ok(plan, windows)
             statuses.add(r.status)
         }
-        // The first non-200 in the order models, quota, summary, like the desktop.
-        return Host.Fail(statuses.reversed().firstOrNull { it != 200 })
+        return if (windows.isNotEmpty()) Host.Ok(plan, windows) else Host.Fail(statuses.reversed().firstOrNull { it != 200 })
     }
 
     companion object {
@@ -511,10 +512,32 @@ class UsageApi(private val http: Http = UrlHttp) {
             else -> id.removePrefix("models/").removePrefix("gemini-").take(14).ifEmpty { "Model" }
         }
 
-        fun mapGeminiQuota(data: JSONObject): List<PlanWindow> =
+        private data class GeminiPool(val used: Double, val id: String, val reset: Long?, val tokenType: String = "")
+        private val geminiPoolKinds = linkedMapOf<Long, String>()
+        @Synchronized private fun geminiPools(rows: List<GeminiPool>): List<PlanWindow> {
+            val groups = rows.filter { like("gemini", it.id) }.groupBy { it.used to it.reset }.values.toList()
+            if (groups.size == 1 && groups[0].size > 1 && groups[0][0].reset != null) {
+                val p = groups[0][0]
+                val kind = if (like("REQUESTS", p.tokenType)) "daily" else geminiPoolKinds[p.reset]
+                    ?: if (p.reset!! - System.currentTimeMillis() > 6 * 3_600_000L) "weekly" else "five_hour"
+                geminiPoolKinds[p.reset!!] = kind
+                if (geminiPoolKinds.size > 128) geminiPoolKinds.remove(geminiPoolKinds.keys.first())
+                return listOf(window(kind, if (kind == "weekly") "Weekly" else if (kind == "daily") "Daily" else "5h", p.used, p.reset))
+            }
+            return groups.map { it.first() }.sortedByDescending { it.used }.take(8).map { p ->
+                window(if (like("REQUESTS", p.tokenType)) "daily" else "quota", shortModel(p.id), p.used, p.reset)
+            }
+        }
+        fun mergeGeminiWindows(previous: List<PlanWindow>, current: List<PlanWindow>): List<PlanWindow> {
+            val prior = if (current.any { it.kind == "weekly" && (it.usedPct ?: 0.0) > 0 } && previous.all { it.usedPct == 0.0 })
+                previous.filter { it.kind != "five_hour" } else previous
+            return (prior + current).associateBy { if (it.kind in listOf("weekly", "five_hour")) it.kind else "${it.kind}|${it.label}" }
+                .values.sortedBy { if (it.kind == "weekly") 0 else if (it.kind == "five_hour") 1 else 2 }
+        }
+        fun mapGeminiQuota(data: JSONObject): List<PlanWindow> = geminiPools(
             data.list("buckets").filterIsInstance<JSONObject>().mapNotNull { b ->
-                usedFromFraction(b.v("remainingFraction"))?.let { Triple(it, b.first("modelId", "id"), isoMs(b.v("resetTime"))) }
-            }.sortedByDescending { it.first }.take(2).map { (used, id, reset) -> window("daily", shortModel(id), used, reset) }
+                usedFromFraction(b.v("remainingFraction"))?.let { GeminiPool(it, b.first("modelId", "id"), isoMs(b.v("resetTime")), b.first("tokenType")) }
+            })
 
         fun mapGeminiModels(data: JSONObject): List<PlanWindow> {
             val raw = data.v("models")
@@ -525,13 +548,12 @@ class UsageApi(private val http: Http = UrlHttp) {
                 }.toList()
                 else -> emptyList()
             }
-            class Entry(val used: Double, val name: String, val id: String, val reset: Long?)
-            return models.mapNotNull { m ->
-                val quota = m.obj("quotaInfo") ?: return@mapNotNull null
+            return geminiPools(models.mapNotNull { m ->
+                val quota = m.obj("quotaInfo") ?: m.obj("quota_info") ?: return@mapNotNull null
                 val used = usedFromFraction(quota.v("remainingFraction")) ?: return@mapNotNull null
-                Entry(used, m.first("displayName", "label", "model", "name"), m.first("model", "name"), isoMs(quota.v("resetTime")))
-            }.sortedByDescending { it.used }.filter { like("gemini", "${it.name} ${it.id}") }.take(2)
-                .map { window("quota", shortModel(it.name), it.used, it.reset) }
+                val id = listOf(m.first("displayName", "label"), m.first("model", "name")).joinToString(" ")
+                GeminiPool(used, id, isoMs(quota.v("resetTime")))
+            })
         }
     }
 }

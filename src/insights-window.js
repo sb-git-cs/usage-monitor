@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, nativeTheme } = require("electron")
 const fs = require("node:fs");
 const path = require("node:path");
 const { displayPrefs } = require("./insights");
+const { modelExport } = require("./tokens");
 let scanTokens = () => null;
 let analyzeBurn = () => [];
 let computeHealth = () => ({ score: 100, label: "Optimal", grade: "A", recommendations: [] });
@@ -52,6 +53,8 @@ function diagnostic() {
 }
 
 function generateReport(v) {
+  const md = (value) => String(value ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))
+    .replace(/[\\`*_{}\[\]()|]/g, "\\$&").replace(/[\r\n]/g, " ");
   const lines = [
     "# Usage Monitor · Executive Insights & Intelligence Report",
     `Generated: ${new Date().toLocaleString()}`,
@@ -66,11 +69,11 @@ function generateReport(v) {
     "## 2. Key Insights & Actionable Recommendations",
   ];
   for (const rec of v.health?.recommendations || []) {
-    lines.push(`- **[${rec.type.toUpperCase()}] ${rec.title}**: ${rec.body}`);
+    lines.push(`- **[${md(rec.type.toUpperCase())}] ${md(rec.title)}**: ${md(rec.body)}`);
   }
   lines.push("", "## 3. Quota & Burn Rate Analysis", "| Provider / Window | Current Used | Burn Rate | Safe Pace | Hours to Reset | Status |", "|---|---|---|---|---|---|");
   for (const w of v.burn || []) {
-    lines.push(`| ${w.provider} (${w.label}) | ${Math.round(w.used)}% | ${w.burn_rate}%/h | ${w.safe_rate != null ? `${w.safe_rate}%/h` : "—"} | ${w.hours_to_reset != null ? `${w.hours_to_reset}h` : "—"} | ${w.status} |`);
+    lines.push(`| ${md(w.provider)} (${md(w.label)}) | ${Math.round(w.used)}% | ${w.burn_rate}%/h | ${w.safe_rate != null ? `${w.safe_rate}%/h` : "—"} | ${w.hours_to_reset != null ? `${w.hours_to_reset}h` : "—"} | ${md(w.status)} |`);
   }
   if (v.tokens?.summary?.total) {
     lines.push(
@@ -93,6 +96,12 @@ function generateReport(v) {
     `- **Cycle Start**: ${v.budget?.start ? new Date(v.budget.start).toLocaleDateString() : "—"}`,
     `- **Cycle End**: ${v.budget?.end ? new Date(v.budget.end).toLocaleDateString() : "—"}`
   );
+  lines.push("", "## Model usage", "Observed Claude Code and Codex transcript tokens. Reasoning is included in output; totals count cached input once.",
+    "| Provider / model | Total | Uncached input | Cache read | Cache write | Output | Reasoning subset |", "|---|---:|---:|---:|---:|---:|---:|");
+  for (const m of v.tokens?.by_model || []) {
+    lines.push(`| ${md(m.provider)} / ${md(m.model)} | ${m.total} | ${m.input} | ${m.cache_read} | ${m.cache_write} | ${m.output} | ${m.reasoning} |`);
+  }
+  for (const m of v.tokens?.by_model || []) lines.push("", `Daily trend for ${md(m.model)}:`, ...(m.daily || []).map((d) => `- ${md(d.date)}: ${d.total} recorded tokens`), "");
   if (v.battery) {
     const r = v.battery.latest;
     lines.push("", "## Battery", `- Current: ${r?.percent ?? "Unknown"}% · ${require("./battery-model").label(r)}`,
@@ -174,9 +183,10 @@ function init(context) {
     return ctx.insights.error ? { error: "Could not persist insights. Check available space and folder permissions." } : { ok: true };
   });
 
-  ipcMain.handle("insights:export", async (e, format, days) => {
-    if (!own(e) || !["csv", "json", "diagnostics", "report", "battery-csv"].includes(format)) return null;
-    const ext = ["csv", "battery-csv"].includes(format) ? "csv" : format === "report" ? "md" : "json";
+  ipcMain.handle("insights:export", async (e, format, days, model) => {
+    if (!own(e) || !["csv", "json", "diagnostics", "report", "battery-csv", "models-csv", "models-daily-csv", "models-json"].includes(format)) return null;
+    if (model != null && model !== "all" && !/^[a-f0-9]{16}$/.test(model)) return { error: "Select a valid model." };
+    const ext = ["csv", "battery-csv", "models-csv", "models-daily-csv"].includes(format) ? "csv" : format === "report" ? "md" : "json";
     const result = await dialog.showSaveDialog(win, {
       defaultPath: path.join(app.getPath("downloads"), `usage-${format}.${ext}`),
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
@@ -185,6 +195,7 @@ function init(context) {
     try {
       let content;
       if (format === "diagnostics") content = JSON.stringify(diagnostic(), null, 2);
+      else if (format.startsWith("models-")) content = modelExport(view(days).tokens, format, model);
       else if (format === "report") content = generateReport(view(days));
       else if (format === "battery-csv") content = ctx.battery.csv(days);
       else if (format === "json") content = JSON.stringify({ ...JSON.parse(ctx.insights.export(days, format)), battery: ctx.battery?.view(days) }, null, 2);

@@ -35,23 +35,22 @@ function applyFlyoutState(state) {
   root.classList.toggle("docked", !!state.docked);
 }
 
-bindDrag(root, "button, select, a, .icon-btn, .interval, .pct-icon, .tb-item, .provider, .net-card, .pair-card, .session-auto");
+
 window.usage.onFlyoutState(applyFlyoutState);
 window.usage.getFlyoutState().then(applyFlyoutState);
 
 function fitFlyout() {
-  root.style.width = "max-content";
   const scale = (display.scale || 100) / 100;
-  const available = Math.min(860, window.screen.availWidth) / scale;
-  root.style.minWidth = `${Math.min(580, available)}px`;
+  const available = window.innerWidth / scale;
+  root.style.width = `${available}px`;
+  root.style.minWidth = "0";
   root.style.maxWidth = `${available}px`;
-  root.style.maxHeight = `${Math.min(860, window.screen.availHeight) / scale}px`;
+  root.style.height = `${window.innerHeight / scale}px`;
+  root.style.maxHeight = "none";
   root.classList.toggle("narrow", available < 580);
-  const w = Math.ceil(root.getBoundingClientRect().width);
-  const h = Math.ceil(root.getBoundingClientRect().height);
-  // Exact height: no transparent strip under the panel, so it can sit flush on the taskbar.
-  window.usage.resizeFlyout(h, w);
+  window.usage.resizeFlyout(window.innerHeight, Math.ceil(620 * scale));
 }
+window.addEventListener("resize", fitFlyout);
 
 function render(snapshot) {
   const focused = document.activeElement?.dataset.id;

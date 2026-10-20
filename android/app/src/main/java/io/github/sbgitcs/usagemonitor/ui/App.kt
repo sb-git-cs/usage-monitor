@@ -68,7 +68,7 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
         io.github.sbgitcs.usagemonitor.device.BatteryHistory.get(context).breakSegment()
         resumes++
     }
-    WhileVisible(resumes, 60_000) {
+    WhileVisible(resumes, 10_000) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching { io.github.sbgitcs.usagemonitor.device.BatteryMonitor.refresh(context) }
         }

@@ -54,7 +54,7 @@ import java.util.Locale
 fun PlansScreen(settings: Settings, computer: PairedComputer?, onPair: () -> Unit, onAccounts: () -> Unit = {}, onDevice: () -> Unit = {}) {
     val context = LocalContext.current
     var batteryReading by remember { mutableStateOf<io.github.sbgitcs.usagemonitor.device.BatteryReading?>(null) }
-    WhileVisible(Unit, 60_000) {
+    WhileVisible(Unit, 10_000) {
         batteryReading = withContext(Dispatchers.IO) { runCatching { io.github.sbgitcs.usagemonitor.device.BatteryMonitor.refresh(context) }.getOrNull() }
     }
     val scope = rememberCoroutineScope()

@@ -156,9 +156,11 @@ function inQuietHours(cfg, date = new Date()) {
 
 function save(cfg) {
   try {
-    fs.mkdirSync(configDir(), { recursive: true });
+    fs.mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") fs.chmodSync(configDir(), 0o700);
     const tmp = configPath() + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { encoding: "utf8" });
+    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
+    if (process.platform !== "win32") fs.chmodSync(tmp, 0o600);
     fs.renameSync(tmp, configPath());
     return true;
   } catch (err) {

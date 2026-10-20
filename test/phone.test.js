@@ -79,6 +79,31 @@ async function startLink(t, overrides = {}) {
   return { link, cfg, port: link.server.address().port, clock: { set: (v) => (now = v), get: () => now }, saves: () => saves };
 }
 
+test("malformed targets and names cannot escape the phone request handler", async (t) => {
+  const { link, port, clock } = await startLink(t);
+  let status;
+  link.handle({ url: "http://[", method: "GET", headers: {}, socket: { remoteAddress: "127.0.0.1" } },
+    { writeHead: (code) => { status = code; }, end() {} });
+  assert.equal(status, 400);
+  const code = link.startPairing().pairing.code;
+  const bad = await request(port, { headers: signed(code, clock.get(), "/v1/snapshot", { "X-UM-Name": "%GG" }) });
+  assert.equal(bad.status, 401);
+  assert.equal(link.cfg.devices.length, 0);
+  assert.equal((await request(port, { headers: signed(code, clock.get()) })).status, 200);
+  assert.equal((await request(port, { headers: { ...signed(code, clock.get()), Origin: "https://untrusted.example" } })).status, 403);
+  assert.equal(link.server.headersTimeout, 5000);
+  assert.equal(link.server.maxConnections, 32);
+});
+
+test("a failed snapshot reader returns a bounded error instead of an uncaught request exception", async (t) => {
+  const { link, port, clock } = await startLink(t, { payload: () => { throw new Error("private details"); } });
+  const code = link.startPairing().pairing.code;
+  const result = await request(port, { headers: signed(code, clock.get()) });
+  assert.equal(result.status, 500);
+  assert.equal(result.body.error, "reading unavailable");
+  assert.doesNotMatch(JSON.stringify(result.body), /private details/);
+});
+
 test("a phone pairs with the code, then reads encrypted meters", async (t) => {
   const { link, cfg, port, clock, saves } = await startLink(t);
   const { pairing } = link.startPairing();

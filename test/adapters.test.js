@@ -5,6 +5,19 @@ const { load } = require("./helpers");
 const noPaths = { cliOnPath: () => false, fileExists: () => false };
 const gemini = load("src/adapters/gemini.js", {}, ["mapSummary", "mapModels", "mapQuotaBuckets", "usedFromFraction", "expiryEpoch", "fetchFromHost"]);
 
+test("Gemini's multi-day shared model pool is weekly and replaces a placeholder summary", () => {
+  const adapter = load("src/adapters/gemini.js", {}, ["mapQuotaBuckets", "combineWindows", "poolKinds"]);
+  const reset = new Date(Date.now() + 3 * 86400000).toISOString();
+  const rows = { buckets: ["gemini-pro", "gemini-flash"].map((modelId) => ({ modelId, tokenType: "WTUS", remainingFraction: 0.07, resetTime: reset })) };
+  const windows = adapter.mapQuotaBuckets(rows);
+  assert.equal(windows.length, 1); assert.equal(windows[0].kind, "weekly"); assert.equal(Math.round(windows[0].used_pct), 93);
+  const merged = adapter.combineWindows([{ kind: "weekly", used_pct: 0 }, { kind: "five_hour", used_pct: 0 }], windows);
+  assert.equal(merged.length, 1); assert.equal(merged[0].used_pct, windows[0].used_pct);
+  assert.equal(adapter.combineWindows(windows, [{ ...windows[0], used_pct: 20 }])[0].used_pct, 20, "fresh decreases must not be pinned to an older high reading");
+  const near = new Date(Date.now() + 3600000).toISOString(); adapter.poolKinds.set(near, "weekly");
+  assert.equal(adapter.mapQuotaBuckets({ buckets: rows.buckets.map((r) => ({ ...r, resetTime: near })) })[0].kind, "weekly");
+});
+
 test("Gemini converts remaining fractions precisely and rejects invalid readings", () => {
   assert.equal(gemini.usedFromFraction(0.25), 75);
   assert.equal(gemini.usedFromFraction(1), 0);

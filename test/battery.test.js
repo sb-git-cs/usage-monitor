@@ -33,8 +33,8 @@ test("battery distinguishes absent, unavailable, idle power, full and charging",
 test("estimates require a useful observed change and preserve valid system estimates", () => {
   assert.equal(M.estimate(point(10, 58), [point(0, 60)]).seconds, 17400);
   assert.equal(M.estimate(point(10, 62, "charging"), [point(0, 60, "charging")]).seconds, 11400);
-  assert.equal(M.estimate(point(4, 58), [point(0, 60)]).seconds, null);
-  assert.equal(M.estimate(point(10, 59), [point(0, 60)]).seconds, null);
+  assert.equal(M.estimate(point(0.25, 58), [point(0, 60)]).seconds, null);
+  assert.equal(M.estimate(point(10, 60), [point(0, 60)]).seconds, null);
   assert.equal(M.estimate({ ...point(10, 58), seconds: 120, source: "system" }, [point(0, 60)]).seconds, 120);
   assert.equal(M.estimate(point(10, 62), [point(0, 60)]).seconds, null, "opposite-direction movement is not a usable rate");
 });
@@ -114,4 +114,26 @@ test("stalled sampling becomes unavailable without launching overlapping probes"
   await sampler.refresh(); assert.equal(reads, 1);
   finish(raw()); await new Promise(setImmediate);
   assert.equal(values.length, 1, "late samples after timeout are ignored");
+});
+
+test("power draw produces an immediate estimate without a percentage warm-up", () => {
+  const discharging = M.normalize({ ...raw(60), currentCapacity: 30000, powerRate: -15000 });
+  assert.equal(discharging.seconds, 7200); assert.equal(discharging.source, "power");
+  const charging = M.normalize({ ...raw(60, true), currentCapacity: 30000, powerRate: 15000 });
+  assert.equal(charging.seconds, 4800);
+  assert.equal(M.normalize({ ...raw(60), currentCapacity: 30000, powerRate: 15000 }).seconds, null);
+  assert.equal(M.normalize({ ...raw(60), estimatedSeconds: 3600, currentCapacity: 30000, powerRate: -15000 }).seconds, 3600);
+  assert.equal(M.normalize({ ...raw(60), currentCapacity: 30000, powerRate: -2147483648 }).seconds, null);
+  assert.equal(M.estimate(point(0.5, 59), [point(0, 60)]).source, "observed");
+});
+
+test("Windows native battery helper returns read-only power data", { skip: process.platform !== "win32" }, async () => {
+  const { createWorker, spawnWorker } = require("../src/system");
+  const worker = createWorker({ start: () => spawnWorker("battery-windows.ps1") });
+  try {
+    const first = await worker.sample(), second = await worker.sample();
+    assert.equal(typeof first.hasBattery, "boolean");
+    assert.equal(typeof second.powerRate, "number");
+    assert.ok(second.percent === null || second.percent >= 0 && second.percent <= 100);
+  } finally { worker.stop(); }
 });

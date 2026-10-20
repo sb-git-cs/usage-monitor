@@ -463,8 +463,13 @@ async function checkInsights() {
   }
   data.event(hostile, "Quota warning", "suppressed");
   data.setBudget({ limit: 10e9, day: 1 }); data.traffic({ apps: [{ rx: 2e9, tx: 1e9 }] });
+  const tokenCounts = { total: 150, input: 100, output: 50, cache_read: 0, cache_write: 0, reasoning: 20, turns: 1, cache_efficiency_pct: 0, avg_turn_tokens: 150 };
+  const model = { ...tokenCounts, id: "0123456789abcdef", provider: "codex", model: hostile, pct: 100,
+    daily: [{ ...tokenCounts, date: "2026-10-21" }] };
+  const tokens = { days: 7, summary: tokenCounts, by_provider: { codex: tokenCounts }, by_model: [model],
+    daily: model.daily, hourly: [], by_session: [{ ...tokenCounts, id: "abcdef0123456789", provider: "codex", first: time, last: time, models: [hostile] }] };
   const view = () => ({ series: data.report(7), events: data.data.events, snooze_until: data.data.snoozeUntil, budget: data.budgetView(),
-    battery: batteryView, display: cfg.display, dark: true, diagnostics: { storage: "ok", providers: [{ id: "codex", state: "stale", last_success: future }], network: { state: "setup_required", coverage: "Partial observed traffic" } } });
+    tokens, battery: batteryView, display: cfg.display, dark: true, diagnostics: { storage: "ok", providers: [{ id: "codex", state: "stale", last_success: future }], network: { state: "setup_required", coverage: "Partial observed traffic" } } });
   const errors = [];
   win.webContents.on("console-message", (details) => { if (details.level === "error") errors.push(details.message); });
   ipcMain.handle("insights:get", () => view());
@@ -480,6 +485,11 @@ async function checkInsights() {
     await win.webContents.insertCSS("*, *::before, *::after { animation: none !important; transition: none !important; }");
     await new Promise((resolve) => setTimeout(resolve, 250));
     assert.equal(await win.webContents.executeJavaScript(`document.querySelectorAll('canvas').length`), 1);
+    assert.equal(await win.webContents.executeJavaScript(`!!document.querySelector('img') || !!window.injected`), false);
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('tab-tokens').classList.contains('active')`), true);
+    await win.webContents.executeJavaScript(`document.getElementById('tokenModel').value = '0123456789abcdef'; document.getElementById('tokenModel').dispatchEvent(new Event('change'));`);
+    assert.match(await win.webContents.executeJavaScript(`document.getElementById('dailyTokenBars').textContent`), /10-21/);
+    assert.ok(await win.webContents.executeJavaScript(`document.querySelector('#dailyTokenBars .daily-bar').getBoundingClientRect().height > 20`));
     assert.equal(await win.webContents.executeJavaScript(`!!document.querySelector('img') || !!window.injected`), false);
     assert.ok(await win.webContents.executeJavaScript(`document.getElementById('events').textContent.includes(${JSON.stringify(hostile)})`));
     await win.webContents.executeJavaScript(`document.getElementById('snooze').value = '60'; document.getElementById('snooze').dispatchEvent(new Event('change'));`);

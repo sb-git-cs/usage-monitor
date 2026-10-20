@@ -158,13 +158,13 @@ class UsageApiTest {
         assertEquals(1893456000000L, w[0].resetsAt)
     }
 
-    @Test fun geminiQuotaKeepsTheTwoFullestBuckets() {
+    @Test fun geminiQuotaPreservesDistinctModelPoolsWithoutCallingThemDaily() {
         val w = UsageApi.mapGeminiQuota(JSONObject("""{"buckets":[
           {"modelId":"gemini-2.5-flash","remainingFraction":0.9},
           {"modelId":"gemini-3-pro","remainingFraction":0.1},
           {"modelId":"gemini-2.5-pro","remainingFraction":0.5}]}"""))
-        assertEquals(listOf("3 Pro", "Pro"), w.map { it.label })
-        assertEquals("daily", w[0].kind)
+        assertEquals(listOf("3 Pro", "Pro", "Flash"), w.map { it.label })
+        assertEquals("quota", w[0].kind)
     }
 
     @Test fun geminiPlanPrefersPaidTierAndNamesFree() {

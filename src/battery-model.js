@@ -11,8 +11,17 @@
       : raw.acConnected === true ? percent === 100 ? "full" : "plugged"
       : raw.acConnected === false ? "discharging" : "unknown";
     const minutes = raw?.timeRemaining;
-    const seconds = state === "discharging" && Number.isFinite(minutes) && minutes > 0 && minutes < 65535 ? minutes * 60 : null;
-    return { t, present, percent, state, seconds, source: seconds === null ? null : "system" };
+    let seconds = state === "discharging" && Number.isFinite(raw?.estimatedSeconds) && raw.estimatedSeconds > 0 && raw.estimatedSeconds <= 604800 ? raw.estimatedSeconds
+      : state === "discharging" && Number.isFinite(minutes) && minutes > 0 && minutes < 10080 ? minutes * 60 : null;
+    let source = seconds === null ? null : "system";
+    const capacity = raw?.currentCapacity, rate = raw?.powerRate;
+    if (seconds === null && percent !== null && percent > 0 && Number.isFinite(capacity) && capacity > 0 && capacity < 0xffffffff && Number.isFinite(rate)
+      && Math.abs(rate) > 0 && Math.abs(rate) < 1000000 && (state === "charging" ? rate > 0 : state === "discharging" && rate < 0)) {
+      const energy = state === "charging" ? capacity * (100 - percent) / percent : capacity;
+      const quick = energy / Math.abs(rate) * 3600;
+      if (quick > 0 && quick <= 604800) { seconds = Math.round(quick); source = "power"; }
+    }
+    return { t, present, percent, state, seconds, source };
   }
   function estimate(reading, points) {
     const out = { ...reading };
@@ -27,9 +36,9 @@
       if (p.g) break;
     }
     const first = recent.at(-1);
-    if (!first || out.t - first.t < 5 * 60000) return out;
+    if (!first || out.t - first.t < 30000) return out;
     const delta = out.percent - first.percent;
-    if (Math.abs(delta) < 2 || (out.state === "charging" ? delta <= 0 : delta >= 0)) return out;
+    if (Math.abs(delta) < 1 || (out.state === "charging" ? delta <= 0 : delta >= 0)) return out;
     const target = out.state === "charging" ? 100 - out.percent : out.percent;
     out.seconds = Math.round(target / Math.abs(delta) * (out.t - first.t) / 1000);
     out.source = "observed";
@@ -65,7 +74,7 @@
   }
   function valid(p) {
     return p && Number.isFinite(p.t) && p.t > 0 && Number.isFinite(p.percent) && p.percent >= 0 && p.percent <= 100 && states.includes(p.state)
-      && (p.seconds == null || Number.isFinite(p.seconds) && p.seconds >= 0) && (p.source == null || ["system", "observed"].includes(p.source));
+      && (p.seconds == null || Number.isFinite(p.seconds) && p.seconds >= 0) && (p.source == null || ["system", "power", "observed"].includes(p.source));
   }
   return { GAP, normalize, estimate, duration, label, sessions, valid };
 });

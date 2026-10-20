@@ -1,3 +1,23 @@
+# Follow-up review (2026-10-21)
+
+## Blocker
+
+No unresolved blocker found in the reviewed request, provider, battery and report paths.
+
+## Should-fix (resolved)
+
+- Malformed phone pairing names could throw from URI decoding, and synchronous payload failures could escape the request callback. `src/phone.js:254` rejects invalid encoding; `src/phone.js:324` returns a generic error without leaking internals. `src/phone.js:125` bounds request time, headers and concurrent connections; `src/phone.js:273` rejects browser Origin requests. Existing authenticated AES-GCM/HMAC, revocation and replay protections remain covered by tests.
+- Pairing keys in POSIX configuration could inherit readable file permissions. `src/config.js:157` creates/restricts the directory to 0700 and atomically replaces configuration with a 0600 file. Windows continues to use the user's profile ACL; this change does not claim to configure NTFS permissions.
+- Untrusted model/provider text could become Markdown markup or spreadsheet formulas in exported reports. `src/insights-window.js:56` escapes Markdown fields; `src/tokens.js:133` quotes CSV and neutralizes formula prefixes. Reports contain counts/model names and hashed session identifiers, with no transcript content or raw paths. `src/tokens.js:6` bounds file count, file/line size and cached results; coverage identifies exclusions.
+- Gemini's stable host could report placeholder weekly 0% while the newer host returned a nonzero shared pool. `src/adapters/gemini.js:437` merges fresh endpoint readings, accepts decreases, and classifies multiday shared resets as weekly; Android mirrors this. The live corrected reader returned weekly 100% with reset 2026-10-23T22:06:38Z. Synthetic regressions cover placeholder replacement and falling usage. Without an explicit window label, a shared pool with less than six hours remaining is ambiguous after a cold restart; its reset classification is remembered for the running process.
+- Codex cached input is included in input totals; streaming and repeated cumulative records could inflate model usage. `src/tokens.js:34` derives cumulative deltas and splits cached/uncached input once. Claude streamed chunks are deduplicated by message ID. Tests cover model changes, duplicate messages, future records and export filtering.
+
+## Verification and limits
+
+Runtime dependency audit: zero known advisories. Full dependency audit: eight moderate build-tool advisories, zero high/critical; no speculative dependency downgrade applied. Sandboxed/context-isolated renderers, CSP, escaped model rendering, phone authentication/revocation, battery transitions and full-height multi-monitor positioning have regression coverage. No complete physical charge/discharge cycle or macOS/Linux battery hardware was exercised. Current-based estimates vary with workload and charge taper. This is a scoped code review, not a guarantee against every compromise.
+
+Evidence: `.qa/followup-desktop-tests.log`, `.qa/followup-ui.log`, `.qa/followup-android-tests.log`, `.qa/followup-gemini-live.json`, `.qa/followup-audit-runtime.json`, `.qa/followup-audit-all.json`.
+
 ## Battery monitoring and UI verification (2026-10-20)
 
 No unresolved blocker or should-fix findings in the new battery feature. Regression coverage checks state distinctions, native/observed estimates, insufficient data, power transitions, suspend and sampling timeouts, recording gaps, retention, persistence/restart recovery, corrupt storage, exports, and isolation from quota history. Desktop history uses atomic replacement; Android writes a synced temporary file and atomically replaces the history file.

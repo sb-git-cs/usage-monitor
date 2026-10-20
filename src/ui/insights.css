@@ -1162,3 +1162,11 @@ body.light .heat.hot { background: #fee2e2; color: #7f1d1d; }
 .battery-chart svg { display: block; width: 100%; max-height: 300px; }
 .battery-session { padding: 12px 0; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
 button:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.model-report-controls { margin: 14px 0; flex-wrap: wrap; }
+.model-report-controls select { max-width: min(100%, 360px); }
+#modelUsageRows td:first-child, #sessionUsageRows td { white-space: normal; overflow-wrap: anywhere; }
+.daily-token-bars { height: 140px; overflow-x: auto; padding-bottom: 10px; }
+.daily-col { min-width: 42px; }
+.daily-bar-wrap { display: flex; align-items: flex-end; flex: 1; min-height: 0; width: 100%; }
+.daily-label { font-size: 9px; color: var(--muted); margin-top: 5px; white-space: nowrap; }

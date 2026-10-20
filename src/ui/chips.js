@@ -321,7 +321,7 @@ function renderBattery(view = {}) {
   const el = document.getElementById("batteryChip");
   el.hidden = prefs.chips_show.battery === false || r?.present === false;
   document.getElementById("batteryPct").textContent = `${r?.state === "charging" ? "⚡" : "BAT"} ${r?.percent != null ? Math.round(r.percent) + "%" : "—"}`;
-  document.getElementById("batteryEta").textContent = BatteryModel.label(r);
+  document.getElementById("batteryEta").textContent = r?.state === "plugged" ? "Plugged in" : BatteryModel.label(r);
   el.title = `Battery · ${BatteryModel.label(r)}${r ? " · Updated " + new Date(r.t).toLocaleTimeString() : ""}`;
   el.setAttribute("aria-label", `${el.title}${r?.state === "discharging" && r.percent <= 20 ? " · Low battery" : ""}. Open battery details`);
   el.classList.toggle("low", r?.state === "discharging" && r.percent <= 20);

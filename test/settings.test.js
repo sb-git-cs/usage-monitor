@@ -3,6 +3,18 @@ const assert = require("node:assert/strict");
 const { load } = require("./helpers");
 const config = require("../src/config");
 
+test("configuration containing pairing keys is stored with private POSIX permissions", { skip: process.platform === "win32" }, (t) => {
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "um-private-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const directory = path.join(root, "config"), file = path.join(directory, "config.json");
+  fs.mkdirSync(directory, { mode: 0o755 }); fs.writeFileSync(file, "{}", { mode: 0o644 });
+  const isolated = load("src/config.js", { "./paths": { configDir: () => directory, configPath: () => file } });
+  assert.equal(isolated.save({ phone: { key: "synthetic" } }), true);
+  assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});
+
 test("new settings are validated and never share nested defaults", () => {
   const cfg = config.normalize({
     alert_threshold: 73,

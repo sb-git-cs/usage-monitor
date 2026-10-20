@@ -62,7 +62,7 @@ test("Insights IPC only accepts its own renderer and support reports omit sensit
   const electron = { BrowserWindow: Window, app: { getVersion: () => "1.5.0", getPath: () => "." }, ipcMain: { handle: (name, fn) => { handles[name] = fn; } }, nativeTheme: { shouldUseDarkColors: true }, dialog: { showSaveDialog: async () => ({ canceled: true }) } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../src/insights-window.js"), "utf8"), {
     module, __dirname: path.join(__dirname, "../src"), process,
-    require: (id) => id === "electron" ? electron : id === "./insights" ? { displayPrefs } : require(id),
+    require: (id) => id === "electron" ? electron : id === "./insights" ? { displayPrefs } : id === "./tokens" ? require("../src/tokens") : require(id),
   });
   module.exports.init({ cfg: { display: displayPrefs() }, insights: { data: { events: [], snoozeUntil: 0, lastSuccess: {} }, report: () => [], budgetView: () => ({}), error: false },
     snapshot: () => ({ providers: [{ id: "claude", account: "private@example.com", access_token: "secret", status: { state: "fetch_failed", message: "sensitive error" } }] }),

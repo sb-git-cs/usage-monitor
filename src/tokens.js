@@ -1,274 +1,144 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { claudeConfigDir, codexHome } = require("./paths");
-
 const fileCache = new Map();
-
-function safeParse(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
+const MAX_FILES = 1000, MAX_BYTES = 32 * 1024 * 1024;
+const count = (n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : 0;
+const modelName = (value, fallback) => typeof value === "string" && value.trim() ? value.replace(/[\u0000-\u001f]/g, "").trim().slice(0, 160) : fallback;
+const digest = (s) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);
+const empty = () => ({ total: 0, input: 0, output: 0, cache_read: 0, cache_write: 0, reasoning: 0, turns: 0 });
+function parse(text) { try { return JSON.parse(text); } catch { return null; } }
+function usage(u, codex = false) {
+  const input = count(u.input_tokens), output = count(u.output_tokens);
+  const cached = codex ? Math.min(input, count(u.cached_input_tokens)) : count(u.cache_read_input_tokens);
+  return { input: codex ? input - cached : input, output, cache_read: cached,
+    cache_write: codex ? 0 : count(u.cache_creation_input_tokens),
+    reasoning: Math.min(output, count(codex ? u.reasoning_output_tokens : u.output_tokens_details?.thinking_tokens)) };
 }
-
-function scanClaude(claudeDir, sinceMs) {
-  const root = path.join(typeof claudeDir === "function" ? claudeDir() : claudeDir, "projects");
-  const items = [];
-  let projDirs;
-  try {
-    projDirs = fs.readdirSync(root);
-  } catch {
-    return items;
+function claudeRows(lines) {
+  const messages = new Map();
+  for (let index = 0; index < lines.length; index++) {
+    const j = parse(lines[index]);
+    if (!j || (j.type && j.type !== "assistant")) continue;
+    const u = j.message?.usage || j.usage;
+    if (!u) continue;
+    const value = usage(u), key = j.message?.id || j.uuid || `row:${index}`;
+    const prior = messages.get(key);
+    if (prior) for (const field of Object.keys(value)) value[field] = Math.max(value[field], prior[field]);
+    messages.set(key, { t: prior?.t || Date.parse(j.timestamp || j.created_at), ...value,
+      model: modelName(j.message?.model || j.model, "claude-unknown").replace(/^claude-/, "") });
   }
-
-  for (const proj of projDirs) {
-    const pDir = path.join(root, proj);
-    let st;
-    try {
-      st = fs.statSync(pDir);
-    } catch {
-      continue;
+  return [...messages.values()];
+}
+function codexRows(lines) {
+  const items = [];
+  let model = "Unknown Codex model", previous = null;
+  const seen = new Set();
+  for (const line of lines) {
+    const j = parse(line); if (!j) continue;
+    if (["turn_context", "session_meta"].includes(j.type) && j.payload?.model) model = modelName(j.payload.model, model);
+    if (j.payload?.type !== "token_count" || !j.payload.info) continue;
+    const info = j.payload.info, cumulative = info.total_token_usage;
+    let u = info.last_token_usage;
+    if (cumulative) {
+      const current = Object.fromEntries(["input_tokens", "output_tokens", "cached_input_tokens", "reasoning_output_tokens"].map((k) => [k, count(cumulative[k])]));
+      if (previous && Object.keys(current).every((k) => current[k] === previous[k])) continue;
+      if (previous && current.input_tokens >= previous.input_tokens && current.output_tokens >= previous.output_tokens)
+        u = Object.fromEntries(Object.keys(current).map((k) => [k, Math.max(0, current[k] - previous[k])]));
+      // An initial cumulative snapshot may include an earlier, resumed conversation.
+      previous = current;
+    } else {
+      const key = `${j.timestamp}|${JSON.stringify(u)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
     }
-    if (!st.isDirectory()) continue;
-
-    let files;
-    try {
-      files = fs.readdirSync(pDir);
-    } catch {
-      continue;
-    }
-
-    for (const file of files) {
-      if (!file.endsWith(".jsonl")) continue;
-      const full = path.join(pDir, file);
-      let fst;
-      try {
-        fst = fs.statSync(full);
-      } catch {
-        continue;
-      }
-      if (fst.mtimeMs < sinceMs) continue;
-
-      let cached = fileCache.get(full);
-      if (!cached || cached.mtime !== fst.mtimeMs || cached.size !== fst.size) {
-        cached = { mtime: fst.mtimeMs, size: fst.size, items: [] };
-        try {
-          const content = fs.readFileSync(full, "utf8");
-          for (const line of content.split("\n")) {
-            if (!line) continue;
-            const j = safeParse(line);
-            if (!j) continue;
-            const u = j.usage || j.message?.usage;
-            if (u) {
-              const parsedTime = j.timestamp ? Date.parse(j.timestamp) : (j.created_at ? Date.parse(j.created_at) : fst.mtimeMs);
-              const t = Number.isFinite(parsedTime) ? parsedTime : fst.mtimeMs;
-              const model = j.message?.model || j.model || "claude-unknown";
-              cached.items.push({
-                t,
-                provider: "claude",
-                model: String(model).replace(/^claude-/, ""),
-                input: Number(u.input_tokens) || 0,
-                output: Number(u.output_tokens) || 0,
-                cache_read: Number(u.cache_read_input_tokens) || 0,
-                cache_write: Number(u.cache_creation_input_tokens) || 0,
-                reasoning: Number(u.output_tokens_details?.thinking_tokens) || 0,
-              });
-            }
-          }
-        } catch {
-          /* ignore unreadable file */
-        }
-        fileCache.set(full, cached);
-      }
-
-      for (const item of cached.items) {
-        if (item.t >= sinceMs) items.push(item);
-      }
-    }
+    if (!u) continue;
+    const value = usage(u, true);
+    if (!value.input && !value.output && !value.cache_read) continue;
+    items.push({ t: Date.parse(j.timestamp), model, ...value });
   }
   return items;
 }
-
-function scanCodex(codexDir, sinceMs, nowMs) {
-  const root = path.join(typeof codexDir === "function" ? codexDir() : codexDir, "sessions");
-  const items = [];
-  const startDay = new Date(sinceMs);
-  startDay.setHours(0, 0, 0, 0);
-
-  for (const cursor = new Date(startDay); cursor.getTime() <= nowMs; cursor.setDate(cursor.getDate() + 1)) {
-    const dir = path.join(
-      root,
-      String(cursor.getFullYear()),
-      String(cursor.getMonth() + 1).padStart(2, "0"),
-      String(cursor.getDate()).padStart(2, "0")
-    );
-    let files;
-    try {
-      files = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-
-    for (const file of files) {
-      if (!file.endsWith(".jsonl")) continue;
-      const full = path.join(dir, file);
-      let fst;
-      try {
-        fst = fs.statSync(full);
-      } catch {
-        continue;
-      }
-      if (fst.mtimeMs < sinceMs) continue;
-
-      let cached = fileCache.get(full);
-      if (!cached || cached.mtime !== fst.mtimeMs || cached.size !== fst.size) {
-        cached = { mtime: fst.mtimeMs, size: fst.size, items: [] };
-        try {
-          const content = fs.readFileSync(full, "utf8");
-          for (const line of content.split("\n")) {
-            if (!line) continue;
-            const j = safeParse(line);
-            if (!j) continue;
-            if (j.payload?.type === "token_count" && j.payload?.info?.last_token_usage) {
-              const u = j.payload.info.last_token_usage;
-              const parsedTime = j.timestamp ? Date.parse(j.timestamp) : fst.mtimeMs;
-              const t = Number.isFinite(parsedTime) ? parsedTime : fst.mtimeMs;
-              cached.items.push({
-                t,
-                provider: "codex",
-                model: "codex",
-                input: Number(u.input_tokens) || 0,
-                output: Number(u.output_tokens) || 0,
-                cache_read: Number(u.cached_input_tokens) || 0,
-                cache_write: 0,
-                reasoning: Number(u.reasoning_output_tokens) || 0,
-              });
-            }
-          }
-        } catch {
-          /* ignore unreadable file */
-        }
-        fileCache.set(full, cached);
-      }
-
-      for (const item of cached.items) {
-        if (item.t >= sinceMs) items.push(item);
-      }
+function filesIn(root, since, coverage, depth = 0, files = []) {
+  let entries; try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return files; }
+  for (const entry of entries) {
+    if (files.length >= MAX_FILES * 5) { coverage.truncated = true; break; }
+    const file = path.join(root, entry.name);
+    if (entry.isDirectory() && depth < 3) filesIn(file, since, coverage, depth + 1, files);
+    else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      try { const stat = fs.statSync(file); if (stat.mtimeMs >= since) files.push({ file, stat }); } catch { coverage.skipped_files++; }
     }
   }
-  return items;
+  return files;
 }
-
+function scan(provider, root, since, now, coverage) {
+  const files = filesIn(root, since, coverage).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+  if (files.length > MAX_FILES) coverage.truncated = true;
+  const result = [];
+  for (const { file, stat } of files.slice(0, MAX_FILES)) {
+    if (stat.size > MAX_BYTES) { coverage.skipped_files++; continue; }
+    let cached = fileCache.get(file);
+    if (!cached || cached.mtime !== stat.mtimeMs || cached.size !== stat.size) {
+      try {
+        const rawLines = fs.readFileSync(file, "utf8").split("\n");
+        const truncated = rawLines.some((line) => line.length > 8 * 1024 * 1024);
+        const lines = rawLines.filter((line) => line.length && line.length <= 8 * 1024 * 1024);
+        const session = digest(`${provider}|${file}`);
+        cached = { mtime: stat.mtimeMs, size: stat.size, truncated,
+          items: (provider === "claude" ? claudeRows(lines) : codexRows(lines)).map((item) => ({ ...item, provider, session })) };
+        fileCache.set(file, cached);
+        if (fileCache.size > MAX_FILES * 2) fileCache.delete(fileCache.keys().next().value);
+      } catch { coverage.skipped_files++; continue; }
+    }
+    if (cached.truncated) coverage.truncated = true;
+    result.push(...cached.items.filter((item) => Number.isFinite(item.t) && item.t >= since && item.t <= now));
+  }
+  return result;
+}
+function add(target, item) {
+  for (const field of ["input", "output", "cache_read", "cache_write", "reasoning"]) target[field] += item[field];
+  target.total += item.input + item.output + item.cache_read + item.cache_write; target.turns++;
+}
+function dayKey(t) { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function scanTokens({ days = 7, claudeDir = claudeConfigDir, codexDir = codexHome, now = Date.now } = {}) {
   const nowMs = typeof now === "function" ? now() : now;
-  const numDays = [1, 7, 14, 30].includes(Number(days)) ? Number(days) : 7;
-  const sinceMs = nowMs - numDays * 86400000;
-
-  const claudeItems = scanClaude(claudeDir, sinceMs);
-  const codexItems = scanCodex(codexDir, sinceMs, nowMs);
-  const allItems = [...claudeItems, ...codexItems];
-
-  const summary = {
-    total: 0,
-    input: 0,
-    output: 0,
-    cache_read: 0,
-    cache_write: 0,
-    reasoning: 0,
-    turns: 0,
-    cache_efficiency_pct: 0,
-    avg_turn_tokens: 0,
-  };
-
-  const byProvider = {
-    claude: { total: 0, input: 0, output: 0, cache_read: 0, cache_write: 0, reasoning: 0, turns: 0 },
-    codex: { total: 0, input: 0, output: 0, cache_read: 0, cache_write: 0, reasoning: 0, turns: 0 },
-  };
-
-  const modelMap = new Map();
-  const dailyMap = new Map();
-  const hourly = Array.from({ length: 24 }, (_, i) => ({
-    hour: i,
-    label: `${i}:00`,
-    tokens: 0,
-    turns: 0,
-  }));
-
-  for (const item of allItems) {
-    const itemTotal = item.input + item.output + item.cache_read + item.cache_write;
-    summary.total += itemTotal;
-    summary.input += item.input;
-    summary.output += item.output;
-    summary.cache_read += item.cache_read;
-    summary.cache_write += item.cache_write;
-    summary.reasoning += item.reasoning;
-    summary.turns += 1;
-
-    const p = byProvider[item.provider] ||= { total: 0, input: 0, output: 0, cache_read: 0, cache_write: 0, reasoning: 0, turns: 0 };
-    p.total += itemTotal;
-    p.input += item.input;
-    p.output += item.output;
-    p.cache_read += item.cache_read;
-    p.cache_write += item.cache_write;
-    p.reasoning += item.reasoning;
-    p.turns += 1;
-
-    const m = modelMap.get(item.model) || { model: item.model, total: 0, input: 0, output: 0, cached: 0, reasoning: 0, turns: 0 };
-    m.total += itemTotal;
-    m.input += item.input;
-    m.output += item.output;
-    m.cached += item.cache_read;
-    m.reasoning += item.reasoning;
-    m.turns += 1;
-    modelMap.set(item.model, m);
-
-    const d = new Date(item.t);
-    const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const dayRecord = dailyMap.get(dateKey) || {
-      date: dateKey,
-      label: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-      total: 0,
-      input: 0,
-      output: 0,
-      cached: 0,
-      turns: 0,
-    };
-    dayRecord.total += itemTotal;
-    dayRecord.input += item.input;
-    dayRecord.output += item.output;
-    dayRecord.cached += item.cache_read;
-    dayRecord.turns += 1;
-    dailyMap.set(dateKey, dayRecord);
-
-    const hour = d.getHours();
-    if (hourly[hour]) {
-      hourly[hour].tokens += itemTotal;
-      hourly[hour].turns += 1;
-    }
+  const numDays = [1, 7, 14, 30].includes(Number(days)) ? Number(days) : 7, since = nowMs - numDays * 86400000;
+  const coverage = { providers: ["claude", "codex"], skipped_files: 0, truncated: false };
+  const root = (value) => typeof value === "function" ? value() : value;
+  const items = [...scan("claude", path.join(root(claudeDir), "projects"), since, nowMs, coverage),
+    ...scan("codex", path.join(root(codexDir), "sessions"), since, nowMs, coverage)];
+  const summary = empty(), byProvider = { claude: empty(), codex: empty() }, models = new Map(), sessions = new Map(), daily = new Map();
+  const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, label: `${hour}:00`, tokens: 0, turns: 0 }));
+  for (const item of items) {
+    add(summary, item); add(byProvider[item.provider], item);
+    const key = `${item.provider}:${item.model}`, date = dayKey(item.t);
+    const m = models.get(key) || { ...empty(), id: digest(key), provider: item.provider, model: item.model, days: new Map() };
+    add(m, item); const md = m.days.get(date) || { ...empty(), date }; add(md, item); m.days.set(date, md); models.set(key, m);
+    const d = daily.get(date) || { ...empty(), date, label: new Date(item.t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) };
+    add(d, item); daily.set(date, d);
+    const session = sessions.get(item.session) || { ...empty(), id: item.session, provider: item.provider, first: item.t, last: item.t, models: new Set() };
+    add(session, item); session.first = Math.min(session.first, item.t); session.last = Math.max(session.last, item.t); session.models.add(item.model); sessions.set(item.session, session);
+    hourly[new Date(item.t).getHours()].tokens += item.input + item.output + item.cache_read + item.cache_write;
+    hourly[new Date(item.t).getHours()].turns++;
   }
-
-  const inputPlusCache = summary.input + summary.cache_read;
-  summary.cache_efficiency_pct = inputPlusCache > 0 ? Math.round((summary.cache_read / inputPlusCache) * 1000) / 10 : 0;
-  summary.avg_turn_tokens = summary.turns > 0 ? Math.round(summary.total / summary.turns) : 0;
-
-  const byModel = [...modelMap.values()]
-    .map((m) => ({
-      ...m,
-      pct: summary.total > 0 ? Math.round((m.total / summary.total) * 100) : 0,
-    }))
-    .sort((a, b) => b.total - a.total);
-
-  const daily = [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date));
-
-  return {
-    days: numDays,
-    summary,
-    by_provider: byProvider,
-    by_model: byModel,
-    daily,
-    hourly,
-  };
+  summary.cache_efficiency_pct = summary.input + summary.cache_read > 0 ? Math.round(summary.cache_read / (summary.input + summary.cache_read) * 1000) / 10 : 0;
+  summary.avg_turn_tokens = summary.turns ? Math.round(summary.total / summary.turns) : 0;
+  return { days: numDays, summary, coverage, by_provider: byProvider,
+    by_model: [...models.values()].map(({ days, ...m }) => ({ ...m, cached: m.cache_read, pct: summary.total ? Math.round(m.total / summary.total * 100) : 0,
+      daily: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)) })).sort((a, b) => b.total - a.total),
+    by_session: [...sessions.values()].map((s) => ({ ...s, models: [...s.models] })).sort((a, b) => b.last - a.last),
+    daily: [...daily.values()].map((d) => ({ ...d, cached: d.cache_read })).sort((a, b) => a.date.localeCompare(b.date)), hourly };
 }
-
-module.exports = { scanTokens };
+function modelExport(tokens, format, selected = "all") {
+  const models = (tokens?.by_model || []).filter((m) => !selected || selected === "all" || m.id === selected);
+  if (format === "models-json") return JSON.stringify({ unit: "observed_tokens", days: tokens?.days, coverage: tokens?.coverage, by_model: models }, null, 2);
+  const cell = (v) => `"${String(v ?? "").replace(/"/g, '""').replace(/^[=+@-]/, "'$&")}"`;
+  const fields = (m) => [m.turns, m.total, m.input, m.cache_read, m.cache_write, m.output, m.reasoning];
+  const daily = format === "models-daily-csv";
+  const rows = daily ? models.flatMap((m) => m.daily.map((d) => [m.provider, m.model, d.date, ...fields(d)]))
+    : models.map((m) => [m.provider, m.model, ...fields(m)]);
+  return [["provider", "model", ...(daily ? ["date"] : []), "observations", "total_tokens", "input_uncached", "cache_read", "cache_write", "output", "reasoning_subset"].join(","),
+    ...rows.map((row) => row.map(cell).join(","))].join("\n");
+}
+module.exports = { scanTokens, modelExport };

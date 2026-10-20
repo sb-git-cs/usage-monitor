@@ -498,3 +498,15 @@ button:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 
 .chips.light .system-chip.busy .system-value { color: #92400e; }
 .chips.light { --grok: #57534e; --cursor: #785c0e; --copilot: #6d28d9; }
 .flyout.light .battery-card { background: #fff; border-color: #d5deeb; }
+
+/* The flyout occupies the full usable height at the display's right edge. */
+html.side-panel, html.side-panel body { width: 100%; height: 100%; overflow: hidden; }
+.side-panel .flyout { border-radius: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-gutter: stable; }
+.side-panel .head { position: sticky; top: -10px; z-index: 2; background: var(--hud-bg); padding-top: 4px; padding-bottom: 10px; }
+.chips { gap: 3px; padding-left: 2px; padding-right: 3px; }
+.chips.docked.fill { gap: 2px; padding-left: 2px; padding-right: 3px; }
+.chips.docked #root, .chips.docked.fill #root { column-gap: 2px; }
+.system-chips { gap: 2px 3px; padding-left: 3px; }
+.battery-chip { width: 15ch; padding-left: 4px; padding-right: 3px; }
+.chips .net-chip { padding-left: 3px; padding-right: 3px; }
+.chips .net-chip .net-val { min-width: 6ch; }

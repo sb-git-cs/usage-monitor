@@ -33,6 +33,13 @@ data class BatterySession(val first: BatteryReading, val last: BatteryReading, v
 object BatteryLogic {
     const val GAP = 20 * 60_000L
     const val DAY = 86_400_000L
+    fun powerEstimate(percent: Int?, state: String, chargeMicroAh: Long?, currentMicroA: Long?): Long? {
+        if (percent == null || percent !in 1..100 || chargeMicroAh == null || chargeMicroAh <= 0 || currentMicroA == null
+            || currentMicroA == 0L || abs(currentMicroA) > 100_000_000 || state !in listOf("charging", "discharging")) return null
+        val charge = if (state == "charging") chargeMicroAh * (100.0 - percent) / percent else chargeMicroAh.toDouble()
+        val seconds = charge / abs(currentMicroA) * 3600
+        return seconds.takeIf { it.isFinite() && it > 0 && it <= 604800 }?.roundToLong()
+    }
     fun estimate(r: BatteryReading, points: List<BatteryReading>): BatteryReading {
         if (r.seconds != null || r.percent == null || r.state !in listOf("charging", "discharging")) return r
         val recent = mutableListOf<BatteryReading>()
@@ -45,7 +52,7 @@ object BatteryLogic {
         }
         val first = recent.lastOrNull() ?: return r
         val delta = r.percent - (first.percent ?: return r)
-        if (r.t - first.t < 5 * 60_000L || abs(delta) < 2 || (if (r.state == "charging") delta <= 0 else delta >= 0)) return r
+        if (r.t - first.t < 30_000L || abs(delta) < 1 || (if (r.state == "charging") delta <= 0 else delta >= 0)) return r
         val target = if (r.state == "charging") 100 - r.percent else r.percent
         return r.copy(seconds = (target.toDouble() / abs(delta) * (r.t - first.t) / 1000).roundToLong(), source = "observed")
     }
@@ -86,7 +93,7 @@ class BatteryHistory internal constructor(context: Context) {
                 val state = p.optString("state")
                 if (pct in 0..100 && t > 0 && state in listOf("charging", "discharging", "full", "plugged", "unknown"))
                     points += BatteryReading(t, pct, state, p.optLong("seconds", -1).takeIf { it >= 0 },
-                        p.optString("source").takeIf { it in listOf("system", "observed") }, p.optBoolean("g"))
+                        p.optString("source").takeIf { it in listOf("system", "power", "observed") }, p.optBoolean("g"))
             }
             points.sortBy { it.t }
         }.onFailure { error = it !is java.io.FileNotFoundException }
@@ -149,9 +156,14 @@ object BatteryMonitor {
             status == BatteryManager.BATTERY_STATUS_DISCHARGING -> "discharging"
             else -> "unknown"
         }
-        val estimate = if (state == "charging") runCatching {
-            context.getSystemService(BatteryManager::class.java)?.computeChargeTimeRemaining()?.takeIf { it > 0 }?.div(1000)
+        val manager = context.getSystemService(BatteryManager::class.java)
+        val native = if (state == "charging") runCatching {
+            manager?.computeChargeTimeRemaining()?.takeIf { it > 0 }?.div(1000)
         }.getOrNull() else null
-        return BatteryHistory.get(context).record(BatteryReading(System.currentTimeMillis(), pct, state, estimate, if (estimate != null) "system" else null))
+        fun property(id: Int) = runCatching { manager?.getIntProperty(id)?.takeIf { it != Int.MIN_VALUE && it != 0 }?.toLong() }.getOrNull()
+        val quick = BatteryLogic.powerEstimate(pct, state, property(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER),
+            property(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE) ?: property(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW))
+        return BatteryHistory.get(context).record(BatteryReading(System.currentTimeMillis(), pct, state, native ?: quick,
+            if (native != null) "system" else if (quick != null) "power" else null))
     }
 }

@@ -2,18 +2,19 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { load } = require("./helpers");
 
-function mainHarness(taskbar = {}) {
+function mainHarness(taskbar = {}, area = { x: 0, y: 0, width: 1920, height: 1032 }) {
   const events = {};
   const ipc = {};
   const electron = {
     app: { setName() {}, on: (event, cb) => { events[event] = cb; }, commandLine: { appendSwitch() {} }, setAppUserModelId() {}, disableHardwareAcceleration() {}, requestSingleInstanceLock: () => false, quit() {} },
     ipcMain: { on: (event, cb) => { ipc[event] = cb; }, handle() {} },
     BrowserWindow: { fromWebContents: () => null },
+    screen: { getDisplayMatching: () => ({ workArea: area }) },
   };
   const signals = new Map(["SIGHUP", "SIGINT"].map(name => [name, new Set(process.listeners(name))]));
   const api = load("src/main.js", {
     electron, "./config": { save() {} }, "./poller": {}, "./alerts": {}, "./taskbarLayout": taskbar, "./autostart": {}, "./updater": {},
-  }, ["wireIpc", "keepWidgetOnTop", "placeChipsDocked", "noteTaskbarShown", "recoverChipsIfNeeded", "setState: (state) => { cfg = state.cfg; chips = state.chips; flyout = state.flyout; }"]);
+  }, ["wireIpc", "keepWidgetOnTop", "placeFlyoutRight", "placeChipsDocked", "noteTaskbarShown", "recoverChipsIfNeeded", "setState: (state) => { cfg = state.cfg; chips = state.chips; flyout = state.flyout; }"]);
   for (const [name, existing] of signals) {
     for (const listener of process.listeners(name)) if (!existing.has(listener)) process.removeListener(name, listener);
   }
@@ -29,6 +30,21 @@ test("a taskbar slid off the monitor counts as hidden, and a full strip counts a
   assert.equal(layout.taskbarShown({ x: 1920, y: 400, w: 48, h: 400 }, monitor), false);
   assert.equal(layout.taskbarShown({ x: 0, y: 1032, w: 1920, h: 48 }, monitor, false), false);
   assert.equal(layout.taskbarShown(null, null), true);
+});
+
+test("flyout fills the display work area vertically and stays flush against its right edge", () => {
+  for (const area of [{ x: 1920, y: -100, width: 2560, height: 1400 }, { x: -800, y: 40, width: 280, height: 700 }]) {
+    const { api, ipc } = mainHarness({}, area);
+    let bounds = { x: 0, y: 0, width: 580, height: 280 }, moves = 0;
+    const flyout = { getBounds: () => bounds, setBounds: (next) => { bounds = next; moves++; } };
+    api.setState({ cfg: { display: { scale: 130 } }, flyout });
+    api.placeFlyoutRight();
+    assert.deepEqual(bounds, { x: area.x + area.width - Math.min(806, area.width), y: area.y, width: Math.min(806, area.width), height: area.height });
+    api.placeFlyoutRight(); assert.equal(moves, 1, "identical bounds must not cause resize feedback");
+    ipc["usage://flyout-resize"]({}, 220, 620);
+    assert.equal(bounds.height, area.height, "renderer content height cannot shrink the panel");
+    assert.equal(bounds.x + bounds.width, area.x + area.width);
+  }
 });
 
 test("docked chips hide with the taskbar and are not brought back while it is away", () => {

@@ -15,7 +15,8 @@ let state = null;
 let order = [];
 let picked = "auto";
 let showEvents = false;
-let activeTab = "overview";
+let activeTab = "tokens";
+let tokenModel = "all";
 let hoverPoint = null;
 
 function node(tag, text, className) {
@@ -153,9 +154,9 @@ function untilFull(points) {
 }
 
 function fact(label, text, subtext = "") {
-  const card = node("div", null, "kpi-card");
-  card.append(node("span", label, "kpi-label"), node("strong", text, "kpi-value"));
-  if (subtext) card.append(node("p", subtext, "kpi-sub"));
+  const card = node("div", null, "token-kpi-card");
+  card.append(node("span", label, "kpi-label"), node("div", text, "kpi-val"));
+  if (subtext) card.append(node("p", subtext, "kpi-hint"));
   return card;
 }
 
@@ -612,7 +613,31 @@ function renderBurnAnalysis(s) {
   }
 }
 
-function renderTokenIntelligence(tokens) {
+function renderTokenIntelligence(allTokens) {
+  const select = $("tokenModel");
+  const models = allTokens?.by_model || [];
+  if (select && document.activeElement !== select) {
+    select.replaceChildren(new Option("All models", "all"), ...models.map((m) => new Option(`${names[m.provider] || m.provider || ""} · ${m.model}`, m.id)));
+    if (!models.some((m) => m.id === tokenModel)) tokenModel = "all";
+    select.value = tokenModel;
+  }
+  const selected = models.find((m) => m.id === tokenModel);
+  const tokens = selected ? { ...allTokens, by_model: [{ ...selected, pct: 100 }], daily: selected.daily,
+    summary: { ...selected, cache_efficiency_pct: selected.input + selected.cache_read > 0 ? Math.round(selected.cache_read / (selected.input + selected.cache_read) * 1000) / 10 : 0,
+      avg_turn_tokens: selected.turns ? Math.round(selected.total / selected.turns) : 0 } } : allTokens;
+  if ($("modelCoverage")) $("modelCoverage").textContent = "Observed Claude Code and Codex transcript usage. Other tools' token logs are unavailable; quota percentages are shown separately under Usage Analysis."
+    + (allTokens?.coverage?.skipped_files || allTokens?.coverage?.truncated ? " Coverage is partial: oversized, unreadable or excess logs were excluded." : "");
+  const rows = $("modelUsageRows");
+  if (rows) {
+    rows.replaceChildren();
+    for (const m of tokens?.by_model || []) {
+      const row = node("tr");
+      for (const text of [`${names[m.provider] || m.provider || ""} · ${m.model}`, m.total, m.input, m.cache_read, m.cache_write, m.output, m.reasoning, m.turns])
+        row.append(node("td", typeof text === "number" ? text.toLocaleString() : text));
+      rows.append(row);
+    }
+    if (!rows.children.length) { const row = node("tr"), cell = node("td", "No model usage observed in this period.", "empty-cell"); cell.colSpan = 8; row.append(cell); rows.append(row); }
+  }
   const kpiGrid = $("tokenKpiGrid");
   if (kpiGrid) {
     kpiGrid.replaceChildren();
@@ -621,7 +646,7 @@ function renderTokenIntelligence(tokens) {
       fact("Total Tokens", formatTokens(sm.total), `${sm.turns.toLocaleString()} interactive turns`),
       fact("Cache Hit Efficiency", `${sm.cache_efficiency_pct}%`, `${formatTokens(sm.cache_read)} tokens served from cache`),
       fact("Prompt vs Completion", `${formatTokens(sm.input)} / ${formatTokens(sm.output)}`, `Input / Output ratio: ${(sm.output ? (sm.input / sm.output).toFixed(1) : 0)}:1`),
-      fact("Reasoning Tokens", formatTokens(sm.reasoning), "Deep thinking / chain-of-thought"),
+      fact("Reasoning Tokens", formatTokens(sm.reasoning), "Reported subset of output"),
       fact("Avg Tokens / Turn", sm.avg_turn_tokens.toLocaleString(), "Average payload density"),
       fact("Cache Write Tokens", formatTokens(sm.cache_write), "Context checkpoint writes")
     );
@@ -635,7 +660,7 @@ function renderTokenIntelligence(tokens) {
     if (!models.length) {
       modelList.append(node("p", "No token data recorded for models in this period.", "empty-state"));
     } else {
-      for (const m of models.slice(0, 6)) {
+      for (const m of models) {
         const row = node("div", null, "model-row");
         const head = node("div", null, "model-row-head");
         head.append(node("strong", m.model), node("span", `${formatTokens(m.total)} (${m.pct}%)`));
@@ -660,7 +685,8 @@ function renderTokenIntelligence(tokens) {
       const items = [
         { label: "Cache Read", count: sm.cache_read, color: "var(--accent)" },
         { label: "Prompt Input", count: sm.input, color: "#10b981" },
-        { label: "Output Completion", count: sm.output, color: "#f59e0b" },
+        { label: "Cache Write", count: sm.cache_write, color: "#34d399" },
+        { label: "Output (non-reasoning)", count: Math.max(0, sm.output - sm.reasoning), color: "#f59e0b" },
         { label: "Reasoning", count: sm.reasoning, color: "#8b5cf6" },
       ];
       for (const it of items) {
@@ -685,14 +711,14 @@ function renderTokenIntelligence(tokens) {
       dailyBars.append(node("p", "No daily token records available.", "empty-state"));
     } else {
       const maxTokens = Math.max(1, ...days.map((d) => d.total));
-      for (const d of days.slice(-14)) {
+      for (const d of days) {
         const pct = Math.round((d.total / maxTokens) * 100);
         const col = node("div", null, "daily-col");
         const barWrap = node("div", null, "daily-bar-wrap");
         const bar = node("div", null, "daily-bar");
         bar.style.height = `${Math.max(4, pct)}%`;
         barWrap.append(bar);
-        const label = node("span", d.label, "daily-label");
+        const label = node("span", d.label || d.date.slice(5), "daily-label");
         col.title = `${d.date}: ${formatTokens(d.total)} tokens (${d.turns} turns)`;
         col.append(barWrap, label);
         dailyBars.append(col);
@@ -854,6 +880,7 @@ function render(s) {
   renderHistory(s);
   renderBurnAnalysis(s);
   renderTokenIntelligence(s.tokens);
+  renderSessionUsage(s);
   renderNetworkBudget(s);
   renderEvents(s.events);
   renderDiagnostics(s);
@@ -1009,3 +1036,21 @@ $("batteryClear").onclick = async () => {
 const selectBattery = (tab) => { if (tab === "battery") document.querySelector('[data-tab="battery"]')?.click(); };
 api.onTab(selectBattery);
 selectBattery(new URLSearchParams(location.search).get("tab"));
+
+function renderSessionUsage(s) {
+  const active = $("activeSessions"), rows = $("sessionUsageRows");
+  active.replaceChildren(); rows.replaceChildren();
+  for (const session of s.active_sessions || []) active.append(node("p", `${names[session.tool] || session.tool} · ${session.name || session.label || "Session"} · ${session.state || "Unknown"}`, "battery-session"));
+  if (!active.children.length) active.append(node("p", "No running coding sessions.", "fine"));
+  for (const session of s.tokens?.by_session || []) {
+    const row = node("tr");
+    for (const text of [`${names[session.provider] || session.provider} · ${session.id.slice(0, 8)}`, session.models.join(", "),
+      `${new Date(session.first).toLocaleString()} · ${new Date(session.last).toLocaleString()}`, session.total.toLocaleString()]) row.append(node("td", text));
+    rows.append(row);
+  }
+  if (!rows.children.length) { const row = node("tr"), cell = node("td", "No session usage recorded in this period.", "empty-cell"); cell.colSpan = 4; row.append(cell); rows.append(row); }
+}
+$("tokenModel").onchange = () => { tokenModel = $("tokenModel").value; if (state) renderTokenIntelligence(state.tokens); };
+for (const [id, format] of [["modelsCsv", "models-csv"], ["modelsDailyCsv", "models-daily-csv"], ["modelsJson", "models-json"]]) {
+  $(id).onclick = async () => message(await api.export(format, Number($("period").value), tokenModel));
+}

@@ -122,6 +122,10 @@ class PhoneLink {
     if (this.server && this.server.port === port) return;
     this.stop();
     const server = this.createServer((req, res) => this.handle(req, res));
+    server.requestTimeout = 10000;
+    server.headersTimeout = 5000;
+    server.maxHeadersCount = 40;
+    server.maxConnections = 32;
     server.port = port;
     this.server = server;
     server.on("error", (err) => {
@@ -246,7 +250,9 @@ class PhoneLink {
     if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
     if (!device) {
       // First signed request from the phone completes the pairing.
-      const name = decodeURIComponent(String(req.headers["x-um-name"] || "")).replace(/[\u0000-\u001f]/g, "").trim().slice(0, 60) || "Phone";
+      let decoded;
+      try { decoded = decodeURIComponent(String(req.headers["x-um-name"] || "")); } catch { return null; }
+      const name = decoded.replace(/[\u0000-\u001f]/g, "").trim().slice(0, 60) || "Phone";
       device = { id, key: key.toString("base64url"), name, created_at: this.now(), last_seen: null };
       this.cfg.devices = [...this.cfg.devices.filter((d) => d.id !== id), device];
       this.pending = null;
@@ -256,11 +262,15 @@ class PhoneLink {
 
   handle(req, res) {
     const ip = req.socket.remoteAddress || "?";
-    const url = new URL(req.url, "http://phone.invalid");
     const reply = (status, body) => {
+      if (res.destroyed || res.writableEnded) return;
       res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify(body));
     };
+    let url;
+    try { url = new URL(req.url, "http://phone.invalid"); } catch { return reply(400, { error: "invalid request" }); }
+    // Native paired clients do not send browser Origin headers. Do not expose a LAN API to web pages.
+    if (req.headers.origin) return reply(403, { error: "browser requests are not supported" });
     const accountRoute = /^\/v1\/account\/(claude|codex|gemini|grok|cursor|copilot)(?:\/([A-Za-z0-9_.:@-]{1,200}))?$/.exec(url.pathname);
     const reading = req.method === "GET" && ["/v1/ping", "/v1/snapshot", "/v1/tokens"].includes(url.pathname);
     const switching = req.method === "POST" && accountRoute;
@@ -311,8 +321,10 @@ class PhoneLink {
         .catch(() => reply(500, { error: "tokens unavailable" }));
       return;
     }
-    const body = url.pathname === "/v1/ping" ? { ok: true, name: this.hostname } : this.payload();
-    reply(200, encrypt(auth.key, auth.time, body));
+    try {
+      const body = url.pathname === "/v1/ping" ? { ok: true, name: this.hostname } : this.payload();
+      reply(200, encrypt(auth.key, auth.time, body));
+    } catch { reply(500, { error: "reading unavailable" }); }
   }
 }
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.0 — 2026-10-21
+
+- Open the flyout as a full-height panel snapped to the right edge of its display; keep the header visible and compact the taskbar chips.
+- Estimate battery runtime immediately from native power/current readings when available, with a quicker observed fallback and 10-second active sampling on desktop and phone.
+- Correct Gemini weekly limits using current model-pool readings from both Google API hosts, including real decreases after resets. Rate-limit errors no longer fabricate 100% usage.
+- Make model usage and trends the default Insights report, with per-model filters, daily CSV/JSON exports, corrected cached-token accounting and deduplicated streamed/cumulative records. Move session reports to a separate tab.
+- Harden phone request parsing, connection limits and browser-origin handling; restrict POSIX configuration permissions and escape untrusted report/export fields.
+
 ## 1.8.0 — 2026-10-20
 
 - Add a desktop battery chip with percentage and approximate time to empty or full, plus a flyout card and Battery tab in Insights.

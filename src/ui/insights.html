@@ -42,10 +42,11 @@
   </header>
 
   <nav class="nav-tabs" role="tablist" aria-label="Insights sections">
-    <button class="nav-tab active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+    <button class="nav-tab active" data-tab="tokens" role="tab" aria-selected="true">Models &amp; reports</button>
+    <button class="nav-tab" data-tab="overview" role="tab" aria-selected="false">Overview</button>
     <button class="nav-tab" data-tab="usage" role="tab" aria-selected="false">Usage Analysis</button>
     <button class="nav-tab" data-tab="burn" role="tab" aria-selected="false">Burn Rate & Runway</button>
-    <button class="nav-tab" data-tab="tokens" role="tab" aria-selected="false">Token Intelligence</button>
+    <button class="nav-tab" data-tab="sessions" role="tab" aria-selected="false">Sessions</button>
     <button class="nav-tab" data-tab="battery" role="tab" aria-selected="false">Battery</button>
     <button class="nav-tab" data-tab="network" role="tab" aria-selected="false">Network & Budget</button>
     <button class="nav-tab" data-tab="alerts" role="tab" aria-selected="false">Audit & Alerts</button>
@@ -56,7 +57,7 @@
     <div id="message" role="status"></div>
 
     <!-- TAB 1: EXECUTIVE OVERVIEW -->
-    <div id="tab-overview" class="tab-panel active" role="tabpanel">
+    <div id="tab-overview" class="tab-panel" role="tabpanel">
       <section class="hero-grid">
         <div class="hero-card health-hero">
           <div class="hero-head">
@@ -196,15 +197,23 @@
     </div>
 
     <!-- TAB 4: TOKEN INTELLIGENCE -->
-    <div id="tab-tokens" class="tab-panel" role="tabpanel">
+    <div id="tab-tokens" class="tab-panel active" role="tabpanel">
       <section class="section-card">
         <div class="section-head">
           <div>
-            <h2>Token Analytics & Model Intelligence</h2>
+            <h2>Model usage &amp; trends</h2>
             <p class="fine">Comprehensive token volume, prompt vs completion ratio, prompt caching efficiency, and reasoning tokens.</p>
           </div>
         </div>
 
+        <p id="modelCoverage" class="fine"></p>
+        <div class="actions model-report-controls">
+          <label>Model <select id="tokenModel"><option value="all">All models</option></select></label>
+          <button class="btn btn-secondary" id="modelsCsv">Model CSV</button><button class="btn btn-secondary" id="modelsDailyCsv">Daily CSV</button>
+          <button class="btn btn-ghost" id="modelsJson">Model JSON</button>
+        </div>
+        <div class="table-container mt-md"><table class="data-table"><thead><tr><th>Provider / Model</th><th>Total</th><th>Input (uncached)</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning*</th><th>Observations</th></tr></thead><tbody id="modelUsageRows"></tbody></table></div>
+        <p class="fine">*Reasoning is part of output and is counted once. Values are observed tokens, not billed costs.</p>
         <div id="tokenKpiGrid" class="token-kpis"></div>
 
         <div class="two-col-grid mt-lg">
@@ -228,6 +237,12 @@
       </section>
     </div>
 
+    <div id="tab-sessions" class="tab-panel" role="tabpanel">
+      <section class="section-card"><h2>Running coding sessions</h2><div id="activeSessions"></div></section>
+      <section class="section-card"><h2>Recorded usage by session</h2><p class="fine">Local transcript identifiers are anonymized. Model reports combine usage across these sessions.</p>
+        <div class="table-container"><table class="data-table"><thead><tr><th>Session</th><th>Models</th><th>First / last observation</th><th>Total tokens</th></tr></thead><tbody id="sessionUsageRows"></tbody></table></div>
+      </section>
+    </div>
     <!-- TAB 5: NETWORK & BUDGET -->
     <div id="tab-network" class="tab-panel" role="tabpanel">
       <section class="section-card">

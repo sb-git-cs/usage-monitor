@@ -563,48 +563,25 @@ function sendFlyoutState() {
   flyout.webContents.send("usage://flyout-state", {
     docked: !!cfg.flyout_docked,
     pinned: !!cfg.flyout_pinned,
-    canDock: IS_WINDOWS,
+    canDock: true,
   });
 }
 
-function placeFlyoutDocked() {
+function placeFlyoutRight(bounds, requestedWidth) {
   if (!flyout) return;
-  const [w, h] = flyout.getSize();
-  const extras = otherDockedRects("flyout");
-  const pos = taskbarLayout.anchorAboveTaskbar(w, h, extras, cfg.flyout_dock_x);
-  if (pos && pos.ok) {
-    cfg.flyout_dock_x = pos.x;
-    cfg.flyout_dock_y = pos.y;
-    applyDockedPos(flyout, pos);
-  }
-}
-
-function placeFlyoutNearTray(bounds) {
-  if (!flyout) return;
-  const wa = screen.getPrimaryDisplay().workArea;
-  const [w, h] = flyout.getSize();
-  let x;
-  let y;
-  if (cfg.flyout_docked) {
-    placeFlyoutDocked();
-    return;
-  }
-  if (cfg.flyout_pinned && cfg.flyout_x != null && cfg.flyout_y != null) {
-    x = cfg.flyout_x;
-    y = cfg.flyout_y;
-  } else if (bounds && bounds.x != null) {
-    x = Math.round(bounds.x + bounds.width / 2 - w / 2);
-    y = Math.round(bounds.y - h);
-  } else {
-    // Bottom edge flush with the top of the taskbar.
-    x = wa.x + wa.width - w - 16;
-    y = wa.y + wa.height - h;
-  }
-  const p = clampToWorkArea(x, y, w, h);
+  const area = screen.getDisplayMatching(bounds || flyout.getBounds()).workArea;
+  const scale = (cfg.display?.scale || 100) / 100;
+  const width = Math.min(area.width, Math.max(320, Math.min(860, Math.round(requestedWidth || 620 * scale))));
+  const next = { x: area.x + area.width - width, y: area.y, width, height: area.height };
+  const current = flyout.getBounds();
+  if (Object.keys(next).every((key) => current[key] === next[key])) return;
   placingFlyout = true;
-  flyout.setPosition(p.x, p.y);
+  flyout.setBounds(next);
   placingFlyout = false;
 }
+
+function placeFlyoutDocked() { placeFlyoutRight(); }
+function placeFlyoutNearTray(bounds) { placeFlyoutRight(bounds || (chips && !chips.isDestroyed() ? chips.getBounds() : undefined)); }
 
 function persistFlyoutPosition() {
   if (!flyout || cfg.flyout_docked || placingFlyout) return;
@@ -630,13 +607,7 @@ function setFlyoutDocked(docked, opts = {}) {
     placeFlyoutDocked();
     flyout.setAlwaysOnTop(true, "pop-up-menu");
     if (!flyout.isVisible()) flyout.showInactive();
-  } else if (opts.keepPos && flyout) {
-    const [w, h] = flyout.getSize();
-    const p = clampToWorkArea(cfg.flyout_x, cfg.flyout_y, w, h);
-    placingFlyout = true;
-    flyout.setPosition(p.x, p.y);
-    placingFlyout = false;
-  }
+  } else placeFlyoutRight();
 }
 
 function setFlyoutPinned(pinned) {
@@ -650,8 +621,7 @@ function setFlyoutPinned(pinned) {
 function showFlyout(bounds) {
   if (!flyout) return;
   if (flyout.isMinimized()) flyout.restore();
-  if (cfg.flyout_docked) placeFlyoutDocked();
-  else if (!flyout.isVisible()) placeFlyoutNearTray(bounds);
+  placeFlyoutNearTray(bounds);
   flyout.show();
   flyout.focus();
   broadcastNet();
@@ -820,7 +790,7 @@ function buildMenu() {
 function taskbarMenuItems() {
   return [
     {
-      label: cfg.flyout_docked ? "Unsnap flyout from taskbar" : "Snap flyout to taskbar",
+      label: cfg.flyout_docked ? "Hide flyout when focus leaves" : "Keep flyout open",
       click: () => {
         if (cfg.flyout_docked) {
           setFlyoutDocked(false);
@@ -1260,19 +1230,7 @@ function reclampWidgets() {
     if (cfg.chips_docked) placeChipsDocked();
     else if (!cfg.chips_hidden) placeChipsFloating();
   }
-  if (flyout && !flyout.isDestroyed()) {
-    if (cfg.flyout_docked) placeFlyoutDocked();
-    else if (flyout.isVisible()) {
-      const [x, y] = flyout.getPosition();
-      const [w, h] = flyout.getSize();
-      const p = clampToWorkArea(x, y, w, h);
-      if (p.x !== x || p.y !== y) {
-        placingFlyout = true;
-        flyout.setPosition(p.x, p.y);
-        placingFlyout = false;
-      }
-    }
-  }
+  if (flyout && !flyout.isDestroyed() && (flyout.isVisible() || cfg.flyout_docked)) placeFlyoutRight();
 }
 
 function popupAppMenu() {
@@ -1298,6 +1256,7 @@ function createWindows() {
     focusable: true,
     hasShadow: false,
   });
+  placeFlyoutRight(chips && !chips.isDestroyed() ? chips.getBounds() : screen.getPrimaryDisplay().workArea);
   flyout.loadFile(ui("flyout.html"));
   flyout.setAlwaysOnTop(true, cfg.flyout_docked || cfg.flyout_pinned ? "pop-up-menu" : "floating");
   flyout.on("blur", () => {
@@ -1416,28 +1375,11 @@ function wireIpc() {
   ipcMain.handle("usage://get-flyout-state", () => ({
     docked: !!(cfg && cfg.flyout_docked),
     pinned: !!(cfg && cfg.flyout_pinned),
-    canDock: IS_WINDOWS,
+    canDock: true,
   }));
   ipcMain.on("usage://flyout-resize", (_e, h, w) => {
     if (!flyout || !Number.isFinite(h) || !Number.isFinite(w)) return;
-    const area = screen.getDisplayMatching(flyout.getBounds()).workArea;
-    const width = Math.min(area.width, Math.max(320, Math.min(860, Math.round(w || 580))));
-    const height = Math.min(area.height, Math.max(140, Math.min(860, Math.round(h))));
-    if (cfg.flyout_docked || dragState) {
-      setSizeKeepPos(flyout, width, height);
-      if (cfg.flyout_docked && !dragState) placeFlyoutDocked();
-      return;
-    }
-    const [x, y] = flyout.getPosition();
-    const [cw, ch] = flyout.getSize();
-    if (cw === width && ch === height) return;
-    // A flyout resting on the taskbar grows upward; otherwise it grows down but stays in the work area.
-    const wa = screen.getDisplayMatching(flyout.getBounds()).workArea;
-    const onTaskbar = y + ch >= wa.y + wa.height - 2;
-    const p = clampToWorkArea(x, onTaskbar ? wa.y + wa.height - height : y, width, height);
-    placingFlyout = true;
-    flyout.setBounds({ x: p.x, y: p.y, width, height });
-    placingFlyout = false;
+    placeFlyoutRight(undefined, w);
   });
   ipcMain.on("usage://tray-menu", () => popupAppMenu());
   ipcMain.on("usage://open-network", () => netUsage.openWindow());

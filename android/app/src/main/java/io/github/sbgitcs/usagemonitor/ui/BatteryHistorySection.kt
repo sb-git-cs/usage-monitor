@@ -54,7 +54,7 @@ fun BatteryHistorySection() {
     var clearing by remember { mutableStateOf(false) }
     var showAll by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(history.error) }
-    WhileVisible(days, 60_000) {
+    WhileVisible(days, 10_000) {
         points = withContext(Dispatchers.IO) {
             runCatching { BatteryMonitor.refresh(context) }
             history.view(days)

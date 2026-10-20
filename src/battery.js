@@ -3,6 +3,7 @@ const path = require("node:path");
 const si = require("systeminformation");
 const { cacheDir } = require("./paths");
 const Model = require("./battery-model");
+const { createWorker, spawnWorker } = require("./system");
 const DAY = 86400000;
 
 class BatteryHistory {
@@ -47,7 +48,9 @@ class BatteryHistory {
   }
 }
 
-function start(history, onUpdate, { read = () => si.battery(), interval = 60000, timeout = 8000 } = {}) {
+function start(history, onUpdate, { read, interval = 10000, timeout = 8000 } = {}) {
+  const worker = !read && process.platform === "win32" ? createWorker({ start: () => spawnWorker("battery-windows.ps1") }) : null;
+  read ||= worker ? () => worker.sample() : () => si.battery();
   let stopped = false, paused = false, pending = false, generation = 0;
   let deadline;
   async function refresh() {
@@ -69,6 +72,6 @@ function start(history, onUpdate, { read = () => si.battery(), interval = 60000,
   const timer = setInterval(refresh, interval);
   refresh();
   return { refresh, setPaused(value) { paused = value; generation++; history.boundary = true; if (!paused) refresh(); },
-    stop() { stopped = true; clearTimeout(deadline); clearInterval(timer); } };
+    stop() { stopped = true; clearTimeout(deadline); clearInterval(timer); worker?.stop(); } };
 }
 module.exports = { BatteryHistory, start };

@@ -31,6 +31,7 @@ let memCreds = null;
 let oauthClient = null;
 const wincred = { at: 0, blob: undefined };
 const clientLookup = { key: null };
+const poolKinds = new Map();
 
 function probe() {
   return {
@@ -345,7 +346,12 @@ function mapGeminiPools(rows) {
   const list = [...pools.values()];
   if (!list.length) return [];
   if (list.length === 1 && list[0].count > 1 && list[0].reset) {
-    return [windowOf({ kind: "five_hour", label: "5h", usedPct: list[0].used, resetsAt: list[0].reset })];
+    const pool = list[0];
+    const kind = /REQUESTS/i.test(pool.tokenType) ? "daily"
+      : poolKinds.get(pool.reset) || (Date.parse(pool.reset) - Date.now() > 6 * 3600000 ? "weekly" : "five_hour");
+    poolKinds.set(pool.reset, kind);
+    if (poolKinds.size > 128) poolKinds.delete(poolKinds.keys().next().value);
+    return [windowOf({ kind, label: kind === "weekly" ? "Weekly" : kind === "daily" ? "Daily" : "5h", usedPct: pool.used, resetsAt: pool.reset })];
   }
   list.sort((a, b) => b.used - a.used);
   return list.slice(0, 2).map((pool) =>
@@ -428,92 +434,38 @@ function parse429Reset(res) {
   return null;
 }
 
-function combineWindows(bestWindows, newWindows) {
-  if (!bestWindows || !bestWindows.length) return newWindows || [];
-  if (!newWindows || !newWindows.length) return bestWindows || [];
-
-  const hasBothAndActive = (wins) => {
-    const kinds = new Set(wins.map((w) => w.kind));
-    const five = wins.find((w) => w.kind === "five_hour");
-    return kinds.has("weekly") && kinds.has("five_hour") && five && five.used_pct > 0;
-  };
-
-  if (hasBothAndActive(newWindows) && !hasBothAndActive(bestWindows)) {
-    return newWindows;
+function combineWindows(previous, current) {
+  const windows = new Map();
+  const prior = current?.some((w) => w.kind === "weekly" && w.used_pct > 0) && previous?.every((w) => w.used_pct === 0)
+    ? previous.filter((w) => w.kind !== "five_hour") : previous || [];
+  for (const w of [...prior, ...(current || [])]) {
+    // The later successful endpoint is authoritative, including a legitimate decrease/reset.
+    const key = ["weekly", "five_hour"].includes(w.kind) ? w.kind : `${w.kind}|${w.label}`;
+    windows.set(key, w);
   }
-  if (hasBothAndActive(bestWindows) && !hasBothAndActive(newWindows)) {
-    return bestWindows;
-  }
-
-  const all = [...bestWindows, ...newWindows];
-  const weeklies = all.filter((w) => w.kind === "weekly");
-  const bestWeekly = weeklies.find((w) => w.used_pct > 0) || weeklies[0] || null;
-
-  const fiveHours = all.filter((w) => w.kind === "five_hour");
-  let bestFive = null;
-  if (fiveHours.length) {
-    bestFive = fiveHours.reduce((best, cur) => {
-      if (!best) return cur;
-      if (cur.used_pct > 0 && best.used_pct === 0) return cur;
-      if (best.used_pct > 0 && cur.used_pct === 0) return best;
-      return cur.used_pct > best.used_pct ? cur : best;
-    }, null);
-  }
-
-  const others = all.filter((w) => w.kind !== "weekly" && w.kind !== "five_hour");
-  const res = [];
-  if (bestWeekly) res.push(bestWeekly);
-  if (bestFive) res.push(bestFive);
-  if (!res.length) res.push(...others.slice(0, 2));
-  return res;
+  return [...windows.values()].sort((a, b) => (["weekly", "five_hour"].indexOf(a.kind) < 0 ? 2 : ["weekly", "five_hour"].indexOf(a.kind))
+    - (["weekly", "five_hour"].indexOf(b.kind) < 0 ? 2 : ["weekly", "five_hour"].indexOf(b.kind)));
 }
 
 async function fetchFromHost(host, token, loadBody) {
   const load = await assistPost(host, token, "loadCodeAssist", loadBody);
-  if (load.status === 401 || load.status === 403) return { authFailed: true, load };
-  if (load.status === 429) {
-    const resetIso = parse429Reset(load);
-    return { failed: true, status: 429, resetsAt: resetIso };
-  }
+  if (load.status === 401) return { authFailed: true };
   if (load.status !== 200 || !load.json) return { failed: true, status: load.status };
-  const project = extractProject(load.json);
-  const plan = planLabel(load.json);
-  const quotaBody = project ? { project } : {};
-
-  const summary = await assistPost(host, token, "retrieveUserQuotaSummary", quotaBody);
-  if (summary.status === 429) {
-    const resetIso = parse429Reset(summary);
-    return { failed: true, status: 429, plan, resetsAt: resetIso };
+  const project = extractProject(load.json), plan = planLabel(load.json);
+  const body = project ? { project } : {};
+  let windows = [], lastStatus;
+  for (const [method, map] of [["retrieveUserQuotaSummary", mapSummary], ["retrieveUserQuota", mapQuotaBuckets], ["fetchAvailableModels", mapModels]]) {
+    const result = await assistPost(host, token, method, body);
+    if (result.status === 401) return { authFailed: true };
+    if (result.status === 429) return { failed: true, status: 429, plan };
+    if (result.status === 200 && result.json) {
+      const mapped = map(result.json);
+      windows = combineWindows(windows, mapped);
+      if (method !== "retrieveUserQuotaSummary" && mapped.length) return { ok: true, plan, windows };
+    } else lastStatus = result.status;
+    if (method === "retrieveUserQuota" && windows.length) return { ok: true, plan, windows };
   }
-  if (summary.status === 401 || summary.status === 403) return { authFailed: true };
-  if (summary.status === 200 && summary.json) {
-    const windows = mapSummary(summary.json);
-    if (windows.length) return { ok: true, plan, windows };
-  }
-
-  const quota = await assistPost(host, token, "retrieveUserQuota", quotaBody);
-  if (quota.status === 429) {
-    const resetIso = parse429Reset(quota);
-    return { failed: true, status: 429, plan, resetsAt: resetIso };
-  }
-  if (quota.status === 401 || quota.status === 403) return { authFailed: true };
-  if (quota.status === 200 && quota.json) {
-    const windows = mapQuotaBuckets(quota.json);
-    if (windows.length) return { ok: true, plan, windows };
-  }
-
-  const models = await assistPost(host, token, "fetchAvailableModels", quotaBody);
-  if (models.status === 429) {
-    const resetIso = parse429Reset(models);
-    return { failed: true, status: 429, plan, resetsAt: resetIso };
-  }
-  if (models.status === 401 || models.status === 403) return { authFailed: true };
-  if (models.status === 200 && models.json) {
-    const windows = mapModels(models.json);
-    if (windows.length) return { ok: true, plan, windows };
-  }
-
-  return { failed: true, status: [models, quota, summary].find((r) => r.status !== 200)?.status, plan };
+  return windows.length ? { ok: true, plan, windows } : { failed: true, status: lastStatus, plan };
 }
 
 function ideType(creds) {
@@ -585,24 +537,9 @@ async function fetchUsage(cfg) {
           windows: combineWindows(best.windows, result.windows),
         };
       }
-      // Stop once both weekly and an active (non-zero) 5-hour window are present
-      const kinds = new Set(best.windows.map((w) => w.kind));
-      const five = best.windows.find((w) => w.kind === "five_hour");
-      if (kinds.has("weekly") && kinds.has("five_hour") && five && five.used_pct > 0) {
-        break;
-      }
       continue;
     }
     lastFail = result;
-    if (result.status === 429 && result.resetsAt) {
-      const limitedWindow = windowOf({ kind: "five_hour", label: "5h", usedPct: 100, resetsAt: result.resetsAt });
-      if (!best) {
-        best = { ok: true, plan: result.plan, windows: [limitedWindow] };
-      } else {
-        best = { ok: true, plan: result.plan || best.plan, windows: combineWindows(best.windows, [limitedWindow]) };
-      }
-      break;
-    }
     if (result.status === 429) break;
   }
 
