@@ -193,7 +193,8 @@ test("paused sampling stops reading until it resumes", async (t) => {
   let reads = 0;
   const fake = fakeWorker(() => { reads++; return { gpuPresent: false, gpu: null, disks: [] }; });
   const api = load("src/system.js", {
-    systeminformation: { fsSize: async () => [], graphics: async () => { reads++; return { controllers: [] }; }, fsStats: async () => ({ rx_sec: 0, wx_sec: 0 }), mem: async () => ({ total: 1, available: 1 }) },
+    // Off Windows the GPU list is cached, so the disk probe is what each sample reads.
+    systeminformation: { fsSize: async () => [], graphics: async () => { reads++; return { controllers: [] }; }, fsStats: async () => { reads++; return { rx_sec: 0, wx_sec: 0 }; }, mem: async () => ({ total: 1, available: 1 }) },
     "node:child_process": { spawn: () => fake.start() },
   });
   const poll = api.start(() => {});
