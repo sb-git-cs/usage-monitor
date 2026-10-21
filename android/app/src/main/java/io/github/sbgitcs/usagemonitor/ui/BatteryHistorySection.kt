@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -30,6 +31,7 @@ import io.github.sbgitcs.usagemonitor.device.BatteryLogic
 import io.github.sbgitcs.usagemonitor.device.BatteryMonitor
 import io.github.sbgitcs.usagemonitor.device.BatteryReading
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
@@ -47,25 +49,27 @@ fun BatterySummaryChip(reading: BatteryReading?, onClick: () -> Unit) {
 @Composable
 fun BatteryHistorySection() {
     val context = LocalContext.current
-    val history = remember { BatteryHistory.get(context) }
+    val scope = rememberCoroutineScope()
     var days by remember { mutableIntStateOf(7) }
-    var points by remember { mutableStateOf(history.view(days)) }
+    // The history file is read off the main thread; a history already in memory shows at once.
+    var points by remember { mutableStateOf(BatteryHistory.loaded()?.view(days).orEmpty()) }
     var selected by remember(days, points.size) { mutableIntStateOf((points.size - 1).coerceAtLeast(0)) }
     var clearing by remember { mutableStateOf(false) }
     var showAll by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf(history.error) }
+    var error by remember { mutableStateOf(BatteryHistory.loaded()?.error ?: false) }
     WhileVisible(days, 10_000) {
-        points = withContext(Dispatchers.IO) {
+        val (read, failed) = withContext(Dispatchers.IO) {
             runCatching { BatteryMonitor.refresh(context) }
-            history.view(days)
+            BatteryHistory.get(context).let { it.view(days) to it.error }
         }
-        error = history.error
+        points = read
+        error = failed
     }
     val date = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
     Section("Battery history · this phone") {
         Note("30 days stored locally. Shading marks charging; gaps mark missing observations. Background updates may be delayed by Android.")
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (d in listOf(1, 7, 14, 30)) FilterChip(selected = days == d, onClick = { days = d; points = history.view(d) },
+            for (d in listOf(1, 7, 14, 30)) FilterChip(selected = days == d, onClick = { days = d },
                 label = { Text(if (d == 1) "24h" else "${d}d") })
         }
         if (error) Note("Battery history could not be saved.", color = MaterialTheme.colorScheme.error)
@@ -108,6 +112,13 @@ fun BatteryHistorySection() {
     }
     if (clearing) AlertDialog(onDismissRequest = { clearing = false }, title = { Text("Clear battery history?") },
         text = { Text("This removes battery observations stored on this phone.") },
-        confirmButton = { TextButton(onClick = { history.clear(); points = history.view(days); error = history.error; clearing = false }) { Text("Clear") } },
+        confirmButton = { TextButton(onClick = {
+            clearing = false
+            scope.launch {
+                val (read, failed) = withContext(Dispatchers.IO) { BatteryHistory.get(context).let { it.clear(); it.view(days) to it.error } }
+                points = read
+                error = failed
+            }
+        }) { Text("Clear") } },
         dismissButton = { TextButton(onClick = { clearing = false }) { Text("Cancel") } })
 }

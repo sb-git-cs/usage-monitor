@@ -97,6 +97,11 @@ class Store {
     }
     this.pendingUsage = new Map();
     this.pendingFlows = new Map();
+    // Totals are read many times a second (live chips, open windows). The database part of a
+    // range only changes when rows are written, so it is cached per range and reused until the
+    // next write bumps queryGen; unflushed rows are merged in live on every call.
+    this.queryGen = 0;
+    this.totalsCache = new Map();
     this.q = {
       insertApp: this.db.prepare("INSERT INTO apps (key, name, path) VALUES (?, ?, ?)"),
       renameApp: this.db.prepare("UPDATE apps SET name = ?, path = ? WHERE id = ?"),
@@ -109,7 +114,17 @@ class Store {
           "ON CONFLICT (app_id, remote, port, proto) DO UPDATE SET rx = rx + excluded.rx, tx = tx + excluded.tx, " +
           "last_seen = MAX(last_seen, excluded.last_seen), domain = COALESCE(excluded.domain, domain)"
       ),
+      // INDEXED BY so a short range seeks the minute index instead of scanning the whole table.
+      totals: this.db.prepare(
+        "SELECT app_id AS id, SUM(rx) AS rx, SUM(tx) AS tx, MIN(minute) AS first FROM usage INDEXED BY usage_minute WHERE minute >= ? GROUP BY app_id"
+      ),
     };
+  }
+
+  // Bumped whenever the usage table changes, to drop the cached database totals.
+  touched() {
+    this.queryGen++;
+    this.totalsCache.clear();
   }
 
   close() {
@@ -191,15 +206,23 @@ class Store {
     }
     this.pendingUsage.clear();
     this.pendingFlows.clear();
+    this.touched();
+  }
+
+  // Database totals for a range, cached until the usage table next changes.
+  dbTotals(sinceMinute) {
+    const cached = this.totalsCache.get(sinceMinute);
+    if (cached && cached.gen === this.queryGen) return cached.rows;
+    const rows = this.q.totals.all(sinceMinute);
+    if (this.totalsCache.size > 64) this.totalsCache.clear();
+    this.totalsCache.set(sinceMinute, { gen: this.queryGen, rows });
+    return rows;
   }
 
   // Per-app totals since a minute (inclusive), including unflushed data.
   totals(sinceMinute) {
     const byId = new Map();
-    const rows = this.db
-      .prepare("SELECT app_id AS id, SUM(rx) AS rx, SUM(tx) AS tx, MIN(minute) AS first FROM usage WHERE minute >= ? GROUP BY app_id")
-      .all(sinceMinute);
-    for (const r of rows) byId.set(r.id, { rx: r.rx, tx: r.tx, first: r.first });
+    for (const r of this.dbTotals(sinceMinute)) byId.set(r.id, { rx: r.rx, tx: r.tx, first: r.first });
     for (const u of this.pendingUsage.values()) {
       if (u.minute < sinceMinute) continue;
       const cur = byId.get(u.id) || { rx: 0, tx: 0, first: u.minute };
@@ -278,6 +301,7 @@ class Store {
     const kept = "SELECT a.id FROM apps a WHERE a.key IN (SELECT value FROM json_each(?))";
     this.db.prepare(`DELETE FROM usage WHERE minute < ? AND app_id NOT IN (${kept})`).run(cutoffMinute, keep);
     this.db.prepare(`DELETE FROM connections WHERE last_seen < ? AND app_id NOT IN (${kept})`).run(cutoffMinute * 60, keep);
+    this.touched();
   }
 
   deleteApp(key) {
@@ -287,6 +311,7 @@ class Store {
     for (const [k, f] of this.pendingFlows) if (f.id === id) this.pendingFlows.delete(k);
     this.db.prepare("DELETE FROM usage WHERE app_id = ?").run(id);
     this.db.prepare("DELETE FROM connections WHERE app_id = ?").run(id);
+    this.touched();
   }
 
   deleteConnections(key) {
@@ -300,6 +325,7 @@ class Store {
     this.flush();
     this.db.prepare("DELETE FROM usage WHERE minute < ?").run(cutoffMinute);
     this.db.prepare("DELETE FROM connections WHERE last_seen < ?").run(cutoffMinute * 60);
+    this.touched();
   }
 
   deleteAll() {
@@ -309,6 +335,7 @@ class Store {
     this.ids.clear();
     this.apps.clear();
     this.db.exec("VACUUM");
+    this.touched();
   }
 
   // Moves the records to another folder, or switches to a database already there.

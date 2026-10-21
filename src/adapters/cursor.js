@@ -4,7 +4,7 @@ const { cursorAuth, cursorStateDb, cliOnPath, fileExists } = require("../paths")
 const { readValue } = require("../cursor-local");
 const { windowOf, emptyProvider } = require("../models");
 const { postJson } = require("../http");
-const { jwtExpMs } = require("../jwt");
+const { jwtExpMs, jwtClaims } = require("../jwt");
 const { sharedWeekly } = require("../subscription");
 
 const DISPLAY = "Cursor";
@@ -130,6 +130,7 @@ async function fetchUsage() {
   if (planRes.status === 429 || usageRes.status === 429) {
     const result = failed("fetch_failed", { message: "rate limited" });
     result._rateLimited = true;
+    result._retryAfter = (usageRes.status === 429 ? usageRes : planRes).headers?.["retry-after"];
     return result;
   }
   if (usageRes.status !== 200 || !usageRes.json) {
@@ -147,4 +148,10 @@ function linkToken() {
   return { access_token: token, expires_at: exp };
 }
 
-module.exports = { id: "cursor", displayName: DISPLAY, fetchUsage, accessToken, linkToken };
+// The Cursor user the saved session belongs to; it stays the same when the session is renewed.
+function accountRef() {
+  const claims = jwtClaims(accessToken());
+  return (claims && claims.sub) || null;
+}
+
+module.exports = { id: "cursor", displayName: DISPLAY, fetchUsage, accessToken, linkToken, accountRef };

@@ -18,7 +18,7 @@ function setPopped(popped) {
   if (window.__last) render(window.__last);
 }
 
-bindDrag(bar, "button, .pct-icon, .net-chip");
+bindDrag(bar, "button, .pct-icon, .net-chip, .session-chip");
 
 let lastKey = "";
 

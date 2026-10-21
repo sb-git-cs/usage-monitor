@@ -116,6 +116,45 @@ test("stalled sampling becomes unavailable without launching overlapping probes"
   assert.equal(values.length, 1, "late samples after timeout are ignored");
 });
 
+test("history writes only on a change or every ten minutes and flushes pending on demand", (t) => {
+  const { history, time } = store(t);
+  const realWrite = fs.writeFileSync;
+  let writes = 0;
+  fs.writeFileSync = (...args) => { writes++; return realWrite(...args); };
+  t.after(() => { fs.writeFileSync = realWrite; });
+  history.record(raw(60)); assert.equal(writes, 1, "the first reading is written");
+  time(1); history.record(raw(60)); assert.equal(writes, 1, "a steady minute keeps a point but writes nothing");
+  time(2); history.record(raw(60)); assert.equal(writes, 1);
+  time(2.1); history.record(raw(59, true)); assert.equal(writes, 2, "a state change is written at once");
+  time(4); history.record(raw(59, true)); assert.equal(writes, 2, "still within ten minutes of the last write");
+  time(13); history.record(raw(59, true)); assert.equal(writes, 3, "ten minutes on, the held-back point is written");
+  assert.equal(history.flush(), true); assert.equal(writes, 3, "there is nothing to flush right after a write");
+  time(14); history.record(raw(59, true)); assert.equal(writes, 3);
+  assert.ok(history.flush()); assert.equal(writes, 4, "flush persists the point the throttle held back");
+});
+
+test("a machine with no battery slows its polling and speeds back up when a battery appears", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  const { history } = store(t);
+  let present = false, reads = 0;
+  const read = () => { reads++; return Promise.resolve(present ? raw(60) : { hasBattery: false }); };
+  const sampler = start(history, () => {}, { read, interval: 1000, slowInterval: 60000, timeout: 100000 });
+  t.after(() => sampler.stop());
+  const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
+  await settle();                              // initial read -> empty 1
+  t.mock.timers.tick(1000); await settle();    // empty 2
+  t.mock.timers.tick(1000); await settle();    // empty 3 -> slow cadence
+  t.mock.timers.tick(1000); await settle();    // the one-second cadence no longer fires
+  assert.equal(reads, 3, "three empty readings stop the every-ten-second polling");
+  t.mock.timers.tick(60000); await settle();   // the slow cadence still checks
+  assert.equal(reads, 4);
+  present = true;
+  await sampler.refresh(); await settle();      // a battery appears
+  assert.equal(reads, 5);
+  t.mock.timers.tick(1000); await settle();
+  assert.equal(reads, 6, "the fast cadence resumes once a battery is present");
+});
+
 test("power draw produces an immediate estimate without a percentage warm-up", () => {
   const discharging = M.normalize({ ...raw(60), currentCapacity: 30000, powerRate: -15000 });
   assert.equal(discharging.seconds, 7200); assert.equal(discharging.source, "power");

@@ -59,3 +59,17 @@ test("browser formatting shares reset logic, escapes HTML and warns at exactly 8
   assert.equal(context.escapeHtml('<img title="x">&'), "&lt;img title=&quot;x&quot;&gt;&amp;");
   assert.equal(context.flyoutLabel({ kind: "daily", label: "Pro" }), "Pro");
 });
+
+test("resets and forecasts beyond the coming week show their date, not just a weekday", () => {
+  const context = vm.createContext({ Date });
+  vm.runInContext(fs.readFileSync(require.resolve("../src/models"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(require.resolve("../src/ui/format"), "utf8"), context);
+  const at = (days) => new Date(Date.now() + days * 86400000);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  assert.match(context.formatEta(at(3).toISOString()), /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{1,2}:\d\d (AM|PM)$/);
+  for (const days of [6.5, 13, 27]) {
+    const d = at(days);
+    assert.equal(context.formatEta(d.toISOString()).split(" ").slice(0, 2).join(" "), `${months[d.getMonth()]} ${d.getDate()}`);
+    assert.ok(context.formatClock(d.toISOString()).startsWith(`${months[d.getMonth()]} ${d.getDate()} `));
+  }
+});

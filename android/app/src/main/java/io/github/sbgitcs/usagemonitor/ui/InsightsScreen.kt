@@ -47,7 +47,8 @@ fun InsightsScreen(settings: Settings, onDisplayChanged: () -> Unit, onAccounts:
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var days by remember { mutableIntStateOf(7) }
-    var data by remember { mutableStateOf(InsightHistory.read(settings.insightsJson)) }
+    // The history file can be megabytes; it is read off the main thread below.
+    var data by remember { mutableStateOf(JSONObject()) }
     var view by remember { mutableStateOf(PlanReadings.read(settings)) }
     var message by remember { mutableStateOf<String?>(null) }
     var exportText by remember { mutableStateOf("") }
@@ -63,7 +64,10 @@ fun InsightsScreen(settings: Settings, onDisplayChanged: () -> Unit, onAccounts:
             message = if (result.isSuccess) "Report saved." else "Could not save the report. Check folder permissions and free space."
         }
     }
-    WhileVisible(Unit, 10_000) { data = InsightHistory.read(settings.insightsJson); view = PlanReadings.read(settings) }
+    WhileVisible(Unit, 10_000) {
+        data = withContext(Dispatchers.IO) { InsightHistory.read(settings.insightsJson) }
+        view = PlanReadings.read(settings)
+    }
     val series = data.optJSONObject("series") ?: JSONObject()
     val cutoff = System.currentTimeMillis() - days * InsightHistory.DAY
     val observations = series.keys().asSequence().mapNotNull { series.optJSONObject(it) }.mapNotNull { s ->
@@ -131,7 +135,8 @@ fun InsightsScreen(settings: Settings, onDisplayChanged: () -> Unit, onAccounts:
                 view.snapshot?.providers?.forEach { p -> Note("${p.name}: ${p.state} · ${p.source} · last read ${p.fetchedAt?.let(time) ?: "unknown"}") }
                 TextButton(enabled = !busy, onClick = { scope.launch {
                     busy = true
-                    runCatching { PlanReadings.refresh(context, settings, force = true) }.onSuccess { view = it; data = InsightHistory.read(settings.insightsJson); message = "Readings refreshed." }.onFailure { message = "Refresh failed. Review Accounts and your computer connection." }
+                    runCatching { PlanReadings.refresh(context, settings, force = true) }.onSuccess { view = it; message = "Readings refreshed." }.onFailure { message = "Refresh failed. Review Accounts and your computer connection." }
+                    data = withContext(Dispatchers.IO) { InsightHistory.read(settings.insightsJson) }
                     busy = false
                 } }) { Text(if (busy) "Refreshing…" else "Retry readings") }
                 TextButton(onClick = onAccounts) { Text("Open Accounts") }

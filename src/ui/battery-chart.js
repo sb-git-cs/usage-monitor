@@ -1,5 +1,8 @@
 /* Shared SVG chart for the flyout and Insights. Each segment keeps recording gaps visible. */
 window.drawBatteryChart = function (root, points, detail, compact = false) {
+  // A new sample redraws the chart; someone inspecting it with the keyboard keeps focus and the reading.
+  const focused = root.contains(document.activeElement);
+  const kept = focused ? Number(root.dataset.selected) : NaN;
   root.replaceChildren();
   if (!points?.length) { root.textContent = "No battery observations yet."; return; }
   const ns = "http://www.w3.org/2000/svg";
@@ -36,9 +39,11 @@ window.drawBatteryChart = function (root, points, detail, compact = false) {
     make("text", { x: 785, y: bottom + 29, fill: "currentColor", "font-size": 11, "text-anchor": "end" }, new Date(points.at(-1).t).toLocaleString()));
   const dot = make("circle", { r: 4, fill: "currentColor" });
   svg.append(dot);
-  let selected = points.length - 1;
+  const at = Number.isFinite(kept) ? points.findIndex((p) => p.t >= kept) : -1;
+  let selected = at >= 0 ? at : points.length - 1;
   const inspect = () => {
     const p = points[selected]; dot.setAttribute("cx", x(p)); dot.setAttribute("cy", y(p));
+    root.dataset.selected = String(p.t);
     const text = `${new Date(p.t).toLocaleString()} · ${p.percent}% · ${p.state} · ${BatteryModel.label(p)}${p.source ? ` (${p.source})` : ""}`;
     if (detail) detail.textContent = text;
     svg.setAttribute("aria-label", `${text}. Use arrow keys to inspect readings.`);
@@ -56,4 +61,5 @@ window.drawBatteryChart = function (root, points, detail, compact = false) {
     inspect();
   });
   inspect(); root.append(svg);
+  if (focused) svg.focus({ preventScroll: true });
 };

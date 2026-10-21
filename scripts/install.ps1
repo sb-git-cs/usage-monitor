@@ -75,14 +75,15 @@ Write-Host "Repo: $Root"
 Write-Host ""
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Host "Node.js 20+ is required. Install it from https://nodejs.org/ then re-run."
+  Write-Host "Node.js 22.13+ is required. Install it from https://nodejs.org/ then re-run."
   exit 1
 }
 
+# Matches "engines" in package.json.
 $nodeVer = (node -v).TrimStart("v")
-$major = [int]($nodeVer.Split(".")[0])
-if ($major -lt 20) {
-  Write-Host "Node.js $nodeVer found. Need 20 or newer."
+$parts = $nodeVer.Split(".")
+if ([int]$parts[0] -lt 22 -or ([int]$parts[0] -eq 22 -and [int]$parts[1] -lt 13)) {
+  Write-Host "Node.js $nodeVer found. Need 22.13 or newer."
   exit 1
 }
 

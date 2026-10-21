@@ -110,13 +110,16 @@ async function fetchUsage() {
   } catch (err) {
     return failed("fetch_failed", { message: String(err.message || err) });
   }
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     return failed("logged_out", { hint: "Run: gh auth login" });
   }
   if (res.status === 404) return failed("not_installed", { hint: "GitHub Copilot isn't enabled for this login" });
-  if (res.status === 429) {
+  // GitHub also answers 403 at a rate limit. Any other 403 stays retryable and keeps the last reading.
+  const h = res.headers || {};
+  if (res.status === 429 || (res.status === 403 && (h["x-ratelimit-remaining"] === "0" || h["retry-after"]))) {
     const result = failed("fetch_failed", { message: "rate limited" });
     result._rateLimited = true;
+    result._retryAfter = h["retry-after"] || (Number(h["x-ratelimit-reset"]) > 0 ? new Date(h["x-ratelimit-reset"] * 1000).toISOString() : null);
     return result;
   }
   if (res.status !== 200 || !res.json) return failed("fetch_failed", { message: `HTTP ${res.status}` });

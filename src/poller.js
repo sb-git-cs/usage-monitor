@@ -10,12 +10,13 @@ const { createHash } = require("node:crypto");
 const { regime } = require("./subscription");
 
 const adapters = { claude, codex, gemini, grok, cursor, copilot };
-const backoffUntil = {};
+const backoff = {};
 const pending = {};
 const pendingScope = {};
 let activePoll = null;
 let activeKey = null;
 const ADAPTER_TIMEOUT_MS = 12000;
+const ACCOUNT_TIMEOUT_MS = 5000;
 // While the screen is locked or the computer is idle, providers are asked at most this often.
 const AWAY_INTERVAL_SECS = 60;
 
@@ -33,6 +34,13 @@ function withTimeout(promise, ms, label) {
       }
     );
   });
+}
+
+// Retry-After is seconds or a date; without one, each refusal in a row doubles the wait (1 min to 1 h).
+function backoffMs(retryAfter, strikes) {
+  const secs = Number(retryAfter);
+  const asked = Number.isFinite(secs) ? secs * 1000 : Date.parse(retryAfter) - Date.now();
+  return Math.min(Math.max(asked > 0 ? asked : 60_000 * 2 ** (strikes - 1), 60_000), 3_600_000);
 }
 
 function mergeWithCache(fresh, cached) {
@@ -59,10 +67,13 @@ async function collect(cfg) {
     PROVIDERS.map(async ({ id }) => {
       let scope;
       try {
-        const token = adapters[id].linkToken ? await adapters[id].linkToken(cfg) : null;
-        scope = createHash("sha256").update(JSON.stringify([id, regime(cfg.subscription_regime), cfg.accounts?.[id] || "", token?.account_id || token?.user_id || token?.access_token || "unidentified"])).digest("hex").slice(0, 32);
+        // The signed-in account, from the tool's own files. A token never keys the cache: it changes
+        // on every refresh, which would split one account's readings and history.
+        const account = adapters[id].accountRef
+          ? await withTimeout(Promise.resolve().then(() => adapters[id].accountRef(cfg)), ACCOUNT_TIMEOUT_MS, id).catch(() => null) : null;
+        scope = createHash("sha256").update(JSON.stringify([id, regime(cfg.subscription_regime), cfg.accounts?.[id] || "", account || "unidentified"])).digest("hex").slice(0, 32);
         const cached = previous?.cached_readings?.[`${id}|${scope}`] || (prevById[id]?.cache_scope === scope ? prevById[id] : null);
-        if (backoffUntil[scope] && Date.now() < backoffUntil[scope]) {
+        if (backoff[scope] && Date.now() < backoff[scope].until) {
           if (cached && cached.windows.length) {
             const age = Math.max(0, (Date.now() - Date.parse(cached.fetched_at || 0)) / 1000);
             return { ...cached, status: { state: "stale", age_secs: Math.round(age) }, source: "cache" };
@@ -83,11 +94,13 @@ async function collect(cfg) {
         fresh.cache_scope = scope;
         fresh.subscription_regime = regime(cfg.subscription_regime);
         if (fresh && fresh._rateLimited) {
-          backoffUntil[scope] = Date.now() + 60 * 1000;
-          delete fresh._rateLimited;
+          const strikes = (backoff[scope]?.strikes || 0) + 1;
+          backoff[scope] = { strikes, until: Date.now() + backoffMs(fresh._retryAfter, strikes) };
         } else if (fresh && fresh.status && fresh.status.state === "ok") {
-          delete backoffUntil[scope];
+          delete backoff[scope];
         }
+        delete fresh._rateLimited;
+        delete fresh._retryAfter;
         return mergeWithCache(fresh, cached);
       } catch (err) {
         if (err.code !== "POLL_TIMEOUT") delete pending[id];

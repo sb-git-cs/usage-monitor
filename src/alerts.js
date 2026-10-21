@@ -14,7 +14,8 @@ function keyFor(provider, win) {
   let resets = "0";
   if (win.resets_at) {
     const t = Date.parse(win.resets_at);
-    resets = Number.isNaN(t) ? String(win.resets_at) : String(Math.floor(t / 60000));
+    // Rounded to five minutes: providers repeat a window's reset time with up to a second of jitter.
+    resets = Number.isNaN(t) ? String(win.resets_at) : String(Math.round(t / 300000) * 5);
   }
   const label = win.label || "";
   const account = provider.account_id || provider.account || identity(provider);
@@ -26,7 +27,8 @@ function prune(fired) {
   const now = Date.now();
   const next = {};
   for (const [k, v] of Object.entries(fired)) {
-    if (!v || typeof v !== "object") continue;
+    // An entry that never warned holds nothing, and kept forever it only grows the file.
+    if (!v || typeof v !== "object" || !(v.crossed80 || v.crossed100 || v.forecast)) continue;
     if (v.until && Date.parse(v.until) > now) next[k] = v;
     else if (!v.until) next[k] = v;
   }
@@ -91,7 +93,8 @@ function evaluate(snapshot, { onClick, onEvent, notifyOnLimit, threshold = ALERT
         prev.crossed80 = false;
         prev.crossed100 = false;
       }
-      state.fired[key] = prev;
+      if (prev.crossed80 || prev.crossed100 || prev.forecast) state.fired[key] = prev;
+      else delete state.fired[key];
     }
   }
 

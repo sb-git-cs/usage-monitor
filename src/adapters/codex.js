@@ -1,6 +1,6 @@
 const fs = require("fs");
 const { codexAuth, cliOnPath, fileExists } = require("../paths");
-const { windowOf, emptyProvider } = require("../models");
+const { windowOf, emptyProvider, percentage } = require("../models");
 const { getJson } = require("../http");
 const { jwtExpMs } = require("../jwt");
 
@@ -37,13 +37,20 @@ function classifyWindow(usedPct, seconds, resetAt, resetAfter, fallbackLabel) {
   return windowOf({ kind, label, usedPct, resetsAt });
 }
 
+// A remaining percentage only counts when it is a number; a blank one is not 100% used.
+function usedOf(w) {
+  if (w.used_percent != null) return w.used_percent;
+  const left = percentage(w.remaining_percent);
+  return left == null ? null : 100 - left;
+}
+
 function mapWham(body) {
   const windows = [];
   const rl = body.rate_limit || {};
   const primary = rl.primary_window;
   const secondary = rl.secondary_window;
   if (primary && (primary.used_percent != null || primary.remaining_percent != null)) {
-    const used = primary.used_percent != null ? primary.used_percent : 100 - primary.remaining_percent;
+    const used = usedOf(primary);
     windows.push(
       classifyWindow(
         used,
@@ -55,7 +62,7 @@ function mapWham(body) {
     );
   }
   if (secondary && (secondary.used_percent != null || secondary.remaining_percent != null)) {
-    const used = secondary.used_percent != null ? secondary.used_percent : 100 - secondary.remaining_percent;
+    const used = usedOf(secondary);
     windows.push(
       classifyWindow(
         used,
@@ -68,19 +75,20 @@ function mapWham(body) {
   }
   for (const extra of Array.isArray(body.additional_rate_limits) ? body.additional_rate_limits : []) {
     if (!extra) continue;
-    const w = extra.primary_window;
-    if (!w) continue;
-    const used = w.used_percent != null ? w.used_percent : null;
-    if (used == null) continue;
-    windows.push(
-      classifyWindow(
-        used,
-        w.limit_window_seconds,
-        w.reset_at,
-        w.reset_after_seconds,
-        extra.name || extra.id || "extra"
-      )
-    );
+    // Current responses nest a model's windows under rate_limit; earlier ones put them on the entry.
+    const limits = extra.rate_limit || extra;
+    for (const w of [limits.primary_window, limits.secondary_window]) {
+      if (!w || w.used_percent == null) continue;
+      windows.push(
+        classifyWindow(
+          w.used_percent,
+          w.limit_window_seconds,
+          w.reset_at,
+          w.reset_after_seconds,
+          extra.limit_name || extra.name || extra.id || "extra"
+        )
+      );
+    }
   }
   const credits = body.rate_limit_reset_credits;
   if (credits && credits.available_count > 0) {
@@ -151,7 +159,9 @@ async function fetchUsage() {
     "User-Agent": "Mozilla/5.0 usage-monitor/1.0",
   });
 
-  if (res.status === 401 || res.status === 403) {
+  // Only 401 means the login expired. A 403 can come from the site's firewall, so it stays
+  // retryable and the last reading is kept.
+  if (res.status === 401) {
     return emptyProvider("codex", "Codex", {
       state: "logged_out",
       hint: "Open Codex once to refresh login",
@@ -163,6 +173,7 @@ async function fetchUsage() {
       message: "rate limited",
     });
     err._rateLimited = true;
+    err._retryAfter = res.headers && res.headers["retry-after"];
     return err;
   }
   if (res.status !== 200 || !res.json) {
@@ -189,4 +200,13 @@ function linkToken() {
   return { access_token: tokens.access_token, account_id: tokens.account_id || null, expires_at: exp };
 }
 
-module.exports = { id: "codex", displayName: "Codex", probe, fetchUsage, linkToken };
+// The ChatGPT account the saved login belongs to, even while its token is expired.
+function accountRef() {
+  try {
+    return JSON.parse(fs.readFileSync(codexAuth(), "utf8"))?.tokens?.account_id || null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { id: "codex", displayName: "Codex", probe, fetchUsage, linkToken, accountRef };

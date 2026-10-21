@@ -3,10 +3,13 @@ package io.github.sbgitcs.usagemonitor
 import io.github.sbgitcs.usagemonitor.pairing.PairingCrypto
 import io.github.sbgitcs.usagemonitor.pairing.PairingLink
 import org.json.JSONObject
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -57,5 +60,28 @@ class PairingCryptoTest {
         assertEquals(50000, PairingLink.manual("192.168.1.5:50000", "ABCDEFGHJKMNPQRSTVWX")!!.port)
         assertNull(PairingLink.manual("192.168.1.500", "ABCDEFGHJKMNPQRSTVWX"))
         assertNull(PairingLink.manual("192.168.1.5:99999", "ABCDEFGHJKMNPQRSTVWX"))
+    }
+
+    @Test
+    fun pairingLinksOnlyReachPrivateAndVpnAddresses() {
+        for (ok in listOf("10.0.0.1", "172.16.0.1", "172.31.255.254", "192.168.0.10", "100.64.0.1", "100.127.255.254"))
+            assertTrue(ok, PairingLink.isAddress(ok))
+        for (bad in listOf("8.8.8.8", "172.15.0.1", "172.32.0.1", "192.169.0.1", "100.63.255.255", "100.128.0.1",
+                "127.0.0.1", "0.0.0.0", "255.255.255.255", "169.254.1.1", "١٩٢.١٦٨.١.١", "192.168.1"))
+            assertFalse(bad, PairingLink.isAddress(bad))
+        val link = "usagemonitor://pair?h=8.8.8.8,192.168.1.20&c=ABCDE-FGHJK-MNPQR-STVWX"
+        assertEquals(listOf("192.168.1.20"), PairingLink.parse(link)!!.addresses)
+        assertNull(PairingLink.parse("usagemonitor://pair?h=8.8.8.8,127.0.0.1&c=ABCDE-FGHJK-MNPQR-STVWX"))
+        assertNull(PairingLink.manual("203.0.113.5", "ABCDEFGHJKMNPQRSTVWX"))
+    }
+
+    @Test
+    fun keysFromTheComputerRoundTrip() {
+        // Node's randomBytes(32).toString("base64url") for these bytes: unpadded, with the URL alphabet.
+        val bytes = intArrayOf(250, 31, 68, 105, 142, 179, 216, 253, 34, 71, 108, 145, 182, 219, 0, 37, 74, 111, 148, 185,
+            222, 3, 40, 77, 114, 151, 188, 225, 6, 43, 80, 117).map { it.toByte() }.toByteArray()
+        val fromNode = "-h9EaY6z2P0iR2yRttsAJUpvlLneAyhNcpe84QYrUHU"
+        assertArrayEquals(bytes, PairingCrypto.decodeKey(fromNode))
+        assertEquals(fromNode, PairingCrypto.encodeKey(bytes))
     }
 }

@@ -78,3 +78,16 @@ test("computeHealth assigns grades and generates actionable recommendations", ()
   assert.ok(health.recommendations.length > 0);
   assert.equal(health.recommendations[0].type, "warning");
 });
+
+test("analyzeBurn leaves out windows that have reset since, or are no longer being read", () => {
+  const now = 100 * 3600000;
+  const series = (id, lastAt, reset) => ({ id, provider: "gemini", label: "5h", kind: "five_hour", account: "a",
+    points: [{ t: lastAt - 600000, used: 90, reset }, { t: lastAt, used: 100, reset }] });
+  const analysis = analyzeBurn([
+    series("reset-passed", now - 60000, new Date(now - 1000).toISOString()),
+    series("no-longer-read", now - 2 * 3600000, new Date(now + 3600000).toISOString()),
+    series("current", now - 60000, new Date(now + 3600000).toISOString()),
+  ], () => now);
+  assert.deepEqual(analysis.map((w) => w.id), ["current"]);
+  assert.equal(computeHealth(analysis, []).score, 70, "only the live exhausted window costs health");
+});

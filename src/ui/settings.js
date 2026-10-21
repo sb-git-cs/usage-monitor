@@ -117,6 +117,7 @@ function renderPhone(phone) {
       $("pairQr").src = pairing.qr || "";
       $("pairQr").dataset.link = pairing.link;
     }
+    $("pairQr").hidden = !pairing.qr;
     $("pairAddress").textContent = phone.addresses.length ? phone.addresses.map((a) => `${a}:${phone.port}`).join("   ") : "No network address found";
     $("pairCode").textContent = pairing.code;
     const tick = () => {

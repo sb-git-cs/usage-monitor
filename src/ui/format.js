@@ -25,11 +25,18 @@ function formatEta(iso) {
     return h ? `${h}h ${pad(m)}m` : `${m}m`;
   }
   const d = new Date(t);
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   let hours = d.getHours();
   const ampm = hours >= 12 ? "PM" : "AM";
   hours = hours % 12 || 12;
-  return `${days[d.getDay()]} ${hours}:${pad(d.getMinutes())} ${ampm}`;
+  return `${dayLabel(d)} ${hours}:${pad(d.getMinutes())} ${ampm}`;
+}
+
+// A weekday alone is only clear within the coming week; monthly resets and far forecasts get the date.
+function dayLabel(d) {
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const ahead = d.getTime() - Date.now();
+  return ahead > -86400000 && ahead < 6 * 86400000 ? days[d.getDay()] : `${months[d.getMonth()]} ${d.getDate()}`;
 }
 
 function flyoutLabel(win) {
@@ -57,8 +64,7 @@ function formatClock(iso) {
   const ampm = hours >= 12 ? "PM" : "AM";
   hours = hours % 12 || 12;
   const sameDay = new Date().toDateString() === d.toDateString();
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  return `${sameDay ? "" : `${days[d.getDay()]} `}${hours}:${pad(d.getMinutes())} ${ampm}`;
+  return `${sameDay ? "" : `${dayLabel(d)} `}${hours}:${pad(d.getMinutes())} ${ampm}`;
 }
 
 function alerting(win) {

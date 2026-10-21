@@ -61,31 +61,56 @@ function fallbackFromScreen() {
   }
 }
 
-function refreshAsync() {
+function ownerWant() {
+  return owner.hwnd ? `${owner.hwnd}:${owner.own ? 1 : 0}:${owner.capture ? 1 : 0}` : null;
+}
+
+function ownerCommand() {
+  return `own ${owner.hwnd} ${owner.own ? 1 : 0} ${owner.capture ? 1 : 0} ${process.pid}`;
+}
+
+// Sends a line to the long-lived watch process; false when it is not running.
+function sendToWatch(line) {
+  if (!watchProc || !watchProc.stdin || !watchProc.stdin.writable) return false;
+  try {
+    watchProc.stdin.write(`${line}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function applyLayout(parsed) {
+  if (!parsed) return;
+  if (parsed.tray) cache = { at: Date.now(), data: toDipLayout(parsed) };
+  if (parsed.ownerApplied && typeof parsed.owner === "string") owner.applied = parsed.owner;
+}
+
+// A one-shot probe, used only before the watch process is up (or if it has stopped). A read
+// (allowRerun false) never queues a second probe; an owner change does, so its new state applies.
+function refreshAsync(allowRerun = false) {
   // Only Windows has a taskbar to probe; elsewhere the screen work area is used.
   if (process.platform !== "win32") return;
   if (refreshing) {
-    rerun = true;
+    if (allowRerun) rerun = true;
     return;
   }
   refreshing = true;
   const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", layoutScript()];
-  const want = owner.hwnd ? `${owner.hwnd}:${owner.own ? 1 : 0}:${owner.capture ? 1 : 0}` : null;
+  const want = ownerWant();
   if (want) args.push("-Hwnd", owner.hwnd, "-Own", owner.own ? "1" : "0", "-Capture", owner.capture ? "1" : "0", "-AppPid", String(process.pid));
   execFile("powershell.exe", args, { encoding: "utf8", timeout: 6000, windowsHide: true }, (err, stdout) => {
     refreshing = false;
     if (!err && stdout) {
       try {
-        const parsed = JSON.parse(String(stdout).trim());
-        if (parsed && parsed.tray) cache = { at: Date.now(), data: toDipLayout(parsed) };
-        if (want && parsed && parsed.ownerApplied) owner.applied = want;
+        applyLayout(JSON.parse(String(stdout).trim()));
       } catch {
         /* keep previous */
       }
     }
     if (rerun) {
       rerun = false;
-      refreshAsync();
+      refreshAsync(allowRerun);
     }
   });
 }
@@ -95,7 +120,9 @@ function setChipsOwner(hwnd, own, capture) {
   owner.hwnd = String(hwnd);
   owner.own = !!own;
   owner.capture = !!capture;
-  if (owner.applied !== `${owner.hwnd}:${owner.own ? 1 : 0}:${owner.capture ? 1 : 0}`) refreshAsync();
+  if (owner.applied === ownerWant()) return;
+  // The running watch process applies it; a one-shot probe does so only when it is not up.
+  if (!sendToWatch(ownerCommand())) refreshAsync(true);
 }
 
 // One hidden PowerShell process reports when the taskbar slides away or comes back.
@@ -104,9 +131,12 @@ function startTaskbarWatch() {
   const { spawn } = require("child_process");
   const proc = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", layoutScript(), "-Watch"], {
     windowsHide: true,
-    stdio: ["ignore", "pipe", "ignore"],
+    stdio: ["pipe", "pipe", "ignore"],
   });
   watchProc = proc;
+  proc.stdin.on("error", () => {});
+  // Hand the process the current owner so it keeps the chips attached without a separate probe.
+  if (ownerWant()) sendToWatch(ownerCommand());
   let buffer = "";
   proc.stdout.setEncoding("utf8");
   proc.stdout.on("data", (chunk) => {
@@ -116,9 +146,15 @@ function startTaskbarWatch() {
     while ((index = buffer.indexOf("\n")) >= 0) {
       const line = buffer.slice(0, index).trim();
       buffer = buffer.slice(index + 1);
-      if (line !== "shown=0" && line !== "shown=1") continue;
-      const shown = line === "shown=1";
-      for (const cb of watchCallbacks) cb(shown);
+      if (line === "shown=0" || line === "shown=1") {
+        for (const cb of watchCallbacks) cb(line === "shown=1");
+      } else if (line.startsWith("layout=")) {
+        try {
+          applyLayout(JSON.parse(line.slice(7)));
+        } catch {
+          /* keep previous */
+        }
+      }
     }
   });
   const ended = () => {
@@ -162,13 +198,14 @@ function toDipLayout(layout) {
 
 function loadLayout() {
   const now = Date.now();
-  if (!cache.data || now - cache.at > 8000) refreshAsync();
+  // The watch process streams fresh layouts, so a reading never spawns a probe while it is up.
+  if (!cache.data || (now - cache.at > 8000 && !watchProc)) refreshAsync();
   return cache.data || fallbackFromScreen();
 }
 
 function invalidate() {
   cache = { at: 0, data: cache.data };
-  refreshAsync();
+  if (!sendToWatch("probe")) refreshAsync();
 }
 
 function axisOf(tray) {

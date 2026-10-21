@@ -7,8 +7,10 @@ import android.os.BatteryManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -75,10 +77,15 @@ object BatteryLogic {
     }
 }
 
-/** Local observations only. Atomic replacement protects history if a write is interrupted. */
-class BatteryHistory internal constructor(context: Context) {
+/**
+ * Local observations only. Each new point is appended to a journal; the whole history is rewritten,
+ * by atomic replacement, only after a day's worth of points or to repair an unreadable file.
+ */
+class BatteryHistory internal constructor(context: Context, private val compactAfter: Int = COMPACT_AFTER) {
     private val file = File(context.filesDir, "battery-history.json")
+    private val journal = File(context.filesDir, "battery-history.log")
     private var boundary = true
+    private var appended = 0
     private val points = mutableListOf<BatteryReading>()
     var error = false; private set
     var latest: BatteryReading? = null; private set
@@ -86,31 +93,42 @@ class BatteryHistory internal constructor(context: Context) {
         runCatching {
             val data = JSONObject(file.readText())
             val rows = if (data.optInt("version") == 1) data.optJSONArray("points") else null
-            for (i in 0 until (rows?.length() ?: 0)) {
-                val p = rows!!.optJSONObject(i) ?: continue
-                val pct = p.optInt("percent", -1)
-                val t = p.optLong("t")
-                val state = p.optString("state")
-                if (pct in 0..100 && t > 0 && state in listOf("charging", "discharging", "full", "plugged", "unknown"))
-                    points += BatteryReading(t, pct, state, p.optLong("seconds", -1).takeIf { it >= 0 },
-                        p.optString("source").takeIf { it in listOf("system", "power", "observed") }, p.optBoolean("g"))
-            }
-            points.sortBy { it.t }
+            for (i in 0 until (rows?.length() ?: 0)) parse(rows!!.optJSONObject(i))?.let { points += it }
         }.onFailure { error = it !is java.io.FileNotFoundException }
+        // Points added since the last rewrite; a line cut short by an interrupted write is skipped.
+        if (journal.exists()) runCatching { journal.readLines() }.getOrDefault(emptyList()).forEach { line ->
+            runCatching { parse(JSONObject(line)) }.getOrNull()?.let { points += it; appended++ }
+        }
+        val loaded = points.distinct().sortedBy { it.t }
+        points.clear()
+        points += loaded
         prune(System.currentTimeMillis())
     }
+    private fun parse(p: JSONObject?): BatteryReading? {
+        if (p == null) return null
+        val pct = p.optInt("percent", -1)
+        val t = p.optLong("t")
+        val state = p.optString("state")
+        return if (pct in 0..100 && t > 0 && state in listOf("charging", "discharging", "full", "plugged", "unknown"))
+            BatteryReading(t, pct, state, p.optLong("seconds", -1).takeIf { it >= 0 },
+                p.optString("source").takeIf { it in listOf("system", "power", "observed") }, p.optBoolean("g"))
+        else null
+    }
+    private fun row(p: BatteryReading) = JSONObject().put("t", p.t).put("percent", p.percent).put("state", p.state)
+        .put("seconds", p.seconds ?: JSONObject.NULL).put("source", p.source ?: JSONObject.NULL).put("g", p.gap)
     private fun prune(now: Long) {
         points.removeAll { it.t < now - 30 * BatteryLogic.DAY || it.t > now }
         if (points.size > 45000) points.subList(0, points.size - 45000).clear()
     }
     @Synchronized fun record(raw: BatteryReading): BatteryReading {
+        if (breakRequested.getAndSet(false)) boundary = true
         val last = points.lastOrNull()
         if (last != null && raw.t <= last.t && !boundary) return latest ?: raw
         val reading = BatteryLogic.estimate(raw.copy(gap = boundary || last == null || raw.t - last.t > BatteryLogic.GAP || raw.t <= last.t), points)
         latest = reading
         if (reading.percent == null) { boundary = true; return reading }
         if (last != null && !reading.gap && last.state == reading.state && reading.t - last.t < 60_000) return reading
-        points += reading; boundary = false; prune(reading.t); save()
+        points += reading; boundary = false; prune(reading.t); append(reading)
         return reading
     }
     @Synchronized fun view(days: Int = 7): List<BatteryReading> {
@@ -118,26 +136,45 @@ class BatteryHistory internal constructor(context: Context) {
         return points.filter { it.t >= now - days * BatteryLogic.DAY }
     }
     @Synchronized fun clear(): Boolean { points.clear(); boundary = true; return save() }
-    @Synchronized fun breakSegment() { boundary = true }
+    /** Adds one line to the journal; rewrites the whole history when the journal is long or the file needs repair. */
+    private fun append(p: BatteryReading): Boolean {
+        if (error || appended >= compactAfter) return save()
+        return try {
+            // Each point starts a new line, so one cut short by an interrupted write stays on its own.
+            FileOutputStream(journal, true).use { it.write("\n${row(p)}".toByteArray(Charsets.UTF_8)) }
+            appended++
+            true
+        } catch (_: Exception) { error = true; false }
+    }
     private fun save(): Boolean {
         return try {
             val rows = JSONArray()
-            for (p in points) rows.put(JSONObject().put("t", p.t).put("percent", p.percent).put("state", p.state)
-                .put("seconds", p.seconds ?: JSONObject.NULL).put("source", p.source ?: JSONObject.NULL).put("g", p.gap))
+            for (p in points) rows.put(row(p))
             val temp = File(file.parentFile, "${file.name}.tmp")
             temp.outputStream().use {
                 it.write(JSONObject().put("version", 1).put("points", rows).toString().toByteArray(Charsets.UTF_8))
                 it.fd.sync()
             }
             Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            // Its points are in the file now; a journal left behind is read without duplicates.
+            journal.delete()
+            appended = 0
             error = false; true
         } catch (_: Exception) { error = true; false }
     }
     companion object {
+        /** About a day of readings at the most frequent rate (one a minute) between full rewrites. */
+        private const val COMPACT_AFTER = 1440
         @Volatile private var instance: BatteryHistory? = null
+        private val breakRequested = AtomicBoolean(false)
+        /** Loads the history from disk on first use; call it off the main thread. */
         fun get(context: Context): BatteryHistory = instance ?: synchronized(this) {
             instance ?: BatteryHistory(context.applicationContext).also { instance = it }
         }
+        /** The history if it is already in memory; never reads the disk. */
+        fun loaded(): BatteryHistory? = instance
+        /** The next reading starts a new segment. Safe on the main thread: nothing is loaded. */
+        fun breakSegment() = breakRequested.set(true)
     }
 }
 

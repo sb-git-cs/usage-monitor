@@ -21,6 +21,9 @@ const MAX_ATTEMPTS = 3;
 const TAIL_BYTES = 256 * 1024;
 const HEAD_MAX_BYTES = 2 * 1024 * 1024;
 const ROLLOUT_DAYS = 14;
+// A `codex resume <id>` whose rollout is not found walks the whole sessions tree; remember a miss
+// and skip the walk until this window passes, so the deep walk does not repeat on every scan.
+const RESUME_RETRY_MS = 5 * 60_000;
 const RESUME_TEXT = "continue";
 // Claude Code: "You've hit your session limit · resets 10:10pm", "5-hour limit reached";
 // Codex: "You've hit your usage limit". The terminal must still show one before anything is typed,
@@ -448,6 +451,7 @@ function createWatcher({
   const transcripts = new Map(); // sessionId -> path
   const tails = new Map(); // path -> { key, state }
   const heads = new Map(); // rollout path -> session header
+  const resumeMisses = new Map(); // resume id with no rollout found -> last time its tree walk ran
   const limitsSeen = new Map(); // other CLI session key -> { resets }, fixed when its limit message first showed
   const spentSeen = new Map(); // provider -> latest used-up reset the meters reported
   let view = { auto_resume: false, can_resume: platform === "win32", sessions: [] };
@@ -536,20 +540,28 @@ function createWatcher({
     for (const id of ids) {
       if ([...heads.values()].some((h) => h && h.id === id)) {
         for (const [file, h] of heads) if (h && h.id === id) files.add(file);
+        resumeMisses.delete(id);
         continue;
       }
+      const tried = resumeMisses.get(id);
+      if (tried != null && now() - tried < RESUME_RETRY_MS) continue;
+      let found = false;
       try {
         outer: for (const y of fs.readdirSync(root)) for (const m of fs.readdirSync(path.join(root, y))) for (const d of fs.readdirSync(path.join(root, y, m))) {
           const n = fs.readdirSync(path.join(root, y, m, d)).find((f) => f.endsWith(`${id}.jsonl`));
           if (n) {
             files.add(path.join(root, y, m, d, n));
+            found = true;
             break outer;
           }
         }
       } catch {
         /* not found */
       }
+      if (found) resumeMisses.delete(id);
+      else resumeMisses.set(id, now());
     }
+    for (const id of resumeMisses.keys()) if (!ids.includes(id)) resumeMisses.delete(id);
     const out = [];
     for (const file of files) {
       let st;

@@ -1,5 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { load } = require("./helpers");
 
 const noPaths = { cliOnPath: () => false, fileExists: () => false };
@@ -200,7 +203,7 @@ test("Claude preserves rate limit response after token refresh", async () => {
   let calls = 0;
   const adapter = load("src/adapters/claude.js", {
     fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify({ claudeAiOauth: { accessToken: "fake", refreshToken: "fake" } }), writeFileSync() {}, renameSync() {} },
-    "../paths": { ...noPaths, claudeCredentials: () => "fake", fileExists: () => true },
+    "../paths": { ...noPaths, claudeCredentials: () => "fake", fileExists: () => true, writeSecretFile() {} },
     "../http": { getJson: async () => ({ status: ++calls === 1 ? 401 : 429 }), postJson: async () => ({ status: 200, json: { access_token: "fresh" } }) },
   });
   const result = await adapter.fetchUsage({});
@@ -216,9 +219,8 @@ test("Grok updates the selected account and avoids refreshing a rotated token tw
   let saved;
   let refreshes = 0;
   const adapter = load("src/adapters/grok.js", {
-    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify(accounts),
-      writeFileSync: (_p, data) => { saved = JSON.parse(data); }, renameSync() {} },
-    "../paths": { ...noPaths, grokAuth: () => "fake", fileExists: () => true },
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify(accounts) },
+    "../paths": { ...noPaths, grokAuth: () => "fake", fileExists: () => true, writeSecretFile: (_p, data) => { saved = JSON.parse(data); } },
     "../http": { getJson: async (url) => ({ status: url.includes("openid") ? 404 : 401 }),
       postForm: async () => { refreshes++; return { status: 200, json: { access_token: "fresh", refresh_token: "rotated" } }; } },
   });
@@ -329,4 +331,204 @@ test("a linked phone gets only current access tokens, never refresh tokens", asy
   for (const token of linked) {
     assert.ok(!Object.values(token).includes("rt"), "refresh tokens stay on the computer");
   }
+});
+
+test("each tool names its signed-in account from its own files, never from a token", async () => {
+  const jwt = (claims) => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
+  let reads = 0;
+  const claude = load("src/adapters/claude.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => { reads++; return JSON.stringify({ oauthAccount: { accountUuid: "uuid-1", emailAddress: "a@b.co" } }); } },
+    "../paths": { ...noPaths, home: () => "home" },
+  });
+  assert.equal(claude.accountRef(), "uuid-1");
+  assert.equal(claude.accountRef(), "uuid-1");
+  assert.equal(reads, 1, "the global config is read again only when it changes");
+
+  const codex = load("src/adapters/codex.js", { fs: { readFileSync: () => JSON.stringify({ tokens: { access_token: jwt({ exp: 1 }), account_id: "acct" } }) }, "../paths": { ...noPaths, codexAuth: () => "auth.json" } });
+  assert.equal(codex.accountRef(), "acct", "even while the token is expired");
+
+  const stored = { old: { key: "k1", user_id: 7, create_time: "2024" }, current: { key: "k2", user_id: 8, create_time: "2025" } };
+  const grok = load("src/adapters/grok.js", { fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify(stored) }, "../paths": { ...noPaths, grokAuth: () => "grok.json" } });
+  assert.equal(grok.accountRef({}), "8");
+  assert.equal(grok.accountRef({ accounts: { grok: 7 } }), "7");
+
+  let session = jwt({ sub: "user|1", exp: 2000000000, randomness: "a" });
+  const cursor = load("src/adapters/cursor.js", { fs: { readFileSync: () => JSON.stringify({ accessToken: session }) }, "../paths": { ...noPaths, cursorAuth: () => "auth.json", cursorStateDb: () => "state.vscdb" } });
+  assert.equal(cursor.accountRef(), "user|1");
+  session = jwt({ sub: "user|1", exp: 2000003600, randomness: "b" });
+  assert.equal(cursor.accountRef(), "user|1", "a renewed session is the same account");
+
+  const saved = { token: { access_token: "a", refresh_token: "r" }, id_token: jwt({ sub: "google-1", email: "g@b.co" }) };
+  const gem = load("src/adapters/gemini.js", {
+    fs: { readFileSync: (p) => { if (p !== "token") throw new Error("ENOENT"); return JSON.stringify(saved); } },
+    "../wincred": { readGenericCredential: async () => null },
+    "../paths": { ...noPaths, antigravityToken: () => "token", geminiOAuth: () => "oauth" },
+  });
+  assert.equal(await gem.accountRef(), "google-1");
+  delete saved.id_token;
+  assert.equal(await gem.accountRef(), null, "no ID token: unidentified, not the token");
+});
+
+test("Grok does not refresh and rewrite the CLI's login on every poll while billing answers 403", async () => {
+  const stored = { a: { key: "tok", refresh_token: "rt", oidc_client_id: "client", user_id: "u", expires_at: new Date(Date.now() + 3600000).toISOString() } };
+  let refreshes = 0, writes = 0;
+  const adapter = load("src/adapters/grok.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify(stored) },
+    "../paths": { ...noPaths, grokAuth: () => "grok.json", fileExists: () => true, writeSecretFile: () => { writes++; } },
+    "../http": { getJson: async (url) => ({ status: url.includes("openid") ? 404 : 403 }),
+      postForm: async () => { refreshes++; return { status: 200, json: { access_token: `tok${refreshes}`, refresh_token: `rt${refreshes}` } }; } },
+  });
+  for (let i = 0; i < 3; i++) assert.equal((await adapter.fetchUsage({})).status.state, "fetch_failed");
+  assert.equal(refreshes, 1, "one refresh tells whether the 403 was an old token");
+  assert.equal(writes, 1);
+});
+
+test("a refused refresh token is not resent on every poll", async () => {
+  const expired = { claudeAiOauth: { accessToken: "old", refreshToken: "dead-1", expiresAt: Date.now() - 1000 } };
+  let tokenStatus = 429, tokenCalls = 0;
+  const claude = load("src/adapters/claude.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify(expired) },
+    "../paths": { ...noPaths, claudeCredentials: () => "c.json", fileExists: () => true, writeSecretFile() {} },
+    "../http": { getJson: async () => ({ status: 401 }), postJson: async () => { tokenCalls++; return { status: tokenStatus, headers: { "retry-after": "120" } }; } },
+  });
+  const limited = await claude.fetchUsage({});
+  assert.equal(limited.status.state, "fetch_failed", "a throttled token server is not a sign-out");
+  assert.equal(limited._rateLimited, true);
+  assert.equal(limited._retryAfter, "120");
+  await claude.fetchUsage({});
+  assert.equal(tokenCalls, 1, "one token request across two polls, not two per poll");
+  Object.assign(expired.claudeAiOauth, { refreshToken: "dead-2" }); tokenStatus = 503;
+  assert.equal((await claude.fetchUsage({})).status.message, "HTTP 503");
+  Object.assign(expired.claudeAiOauth, { refreshToken: "dead-3" }); tokenStatus = 400;
+  assert.equal((await claude.fetchUsage({})).status.state, "logged_out");
+  assert.equal((await claude.fetchUsage({})).status.state, "logged_out");
+  assert.equal(tokenCalls, 3);
+
+  let refreshes = 0;
+  const grok = load("src/adapters/grok.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify({ a: { key: "tok", refresh_token: "dead", oidc_client_id: "client", user_id: "u", expires_at: "2020-01-01" } }) },
+    "../paths": { ...noPaths, grokAuth: () => "grok.json", fileExists: () => true, writeSecretFile() {} },
+    "../http": { getJson: async (url) => ({ status: url.includes("openid") ? 404 : 401 }), postForm: async () => { refreshes++; return { status: 400 }; } },
+  });
+  for (let i = 0; i < 3; i++) assert.equal((await grok.fetchUsage({})).status.state, "logged_out");
+  assert.equal(refreshes, 1);
+});
+
+test("refreshed tokens survive a failed write, and the failed write leaves no copy behind", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "um-secret-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const target = path.join(dir, "auth.json");
+  fs.mkdirSync(target);
+  const { writeSecretFile } = require("../src/paths");
+  assert.throws(() => writeSecretFile(target, "secret"));
+  assert.equal(fs.existsSync(`${target}.tmp`), false);
+
+  const fail = () => { throw new Error("EPERM"); };
+  const fresh = { status: 200, json: { access_token: "fresh", refresh_token: "rotated", expires_in: 3600 } };
+  let refreshes = 0;
+  const seen = [];
+  const creds = { claudeAiOauth: { accessToken: "old", refreshToken: "rt", expiresAt: Date.now() - 1000 } };
+  const claude = load("src/adapters/claude.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify(creds) },
+    "../paths": { ...noPaths, claudeCredentials: () => "c.json", fileExists: () => true, writeSecretFile: fail },
+    "../http": { getJson: async (_url, headers) => { seen.push(headers.Authorization); return { status: 200, json: {} }; }, postJson: async () => { refreshes++; return fresh; } },
+  });
+  await claude.fetchUsage({}); await claude.fetchUsage({});
+  assert.deepEqual(seen, ["Bearer fresh", "Bearer fresh"]);
+  assert.equal(refreshes, 1, "the spent refresh token is not sent again");
+  assert.equal((await claude.linkToken()).access_token, "fresh");
+
+  seen.length = 0;
+  const stored = { a: { key: "old", refresh_token: "rt", oidc_client_id: "client", user_id: "u", expires_at: "2020-01-01" } };
+  const grok = load("src/adapters/grok.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify(stored) },
+    "../paths": { ...noPaths, grokAuth: () => "grok.json", fileExists: () => true, writeSecretFile: fail },
+    "../http": {
+      getJson: async (url, headers) => {
+        if (url.includes("openid")) return { status: 404 };
+        seen.push(headers.Authorization);
+        return { status: 200, json: { config: { creditUsagePercent: 1, currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end: "2099-01-01T00:00:00Z" } } } };
+      },
+      postForm: async () => { refreshes++; return fresh; },
+    },
+  });
+  await grok.fetchUsage({}); await grok.fetchUsage({});
+  assert.deepEqual(seen, ["Bearer fresh", "Bearer fresh"]);
+  assert.equal(refreshes, 2);
+  assert.equal(grok.linkToken({}).access_token, "fresh");
+});
+
+test("Gemini reads a new sign-in at once instead of a remembered token", async () => {
+  const saved = { token: { access_token: "OLD", refresh_token: "rt", expiry: new Date(Date.now() + 3600000).toISOString() } };
+  const valid = new Set(["OLD"]);
+  const used = [];
+  const adapter = load("src/adapters/gemini.js", {
+    fs: { readFileSync: (p) => { if (p !== "token") throw new Error("ENOENT"); return JSON.stringify(saved); } },
+    "../wincred": { readGenericCredential: async () => null },
+    "../paths": { ...noPaths, cliOnPath: () => true, antigravityToken: () => "token", geminiOAuth: () => "oauth", agyBinaryCandidates: () => [], cliPath: () => null },
+    "../http": {
+      postJson: async (url, headers) => {
+        const token = headers.Authorization.slice(7);
+        used.push(token);
+        if (!valid.has(token)) return { status: 401 };
+        return { status: 200, json: url.endsWith("loadCodeAssist") ? {} : { groups: [{ displayName: "Gemini", buckets: [{ bucketId: "gemini-5h", window: "5h", remainingFraction: 0.5 }] }] } };
+      },
+      postForm: async () => ({ status: 400 }),
+    },
+  });
+  assert.equal((await adapter.fetchUsage({})).status.state, "ok");
+  valid.delete("OLD"); valid.add("NEW"); saved.token.access_token = "NEW";
+  used.length = 0;
+  assert.equal((await adapter.fetchUsage({})).status.state, "ok");
+  assert.deepEqual([...new Set(used)], ["NEW"]);
+});
+
+test("Gemini keeps quota read before a 429 unless it is an all-zero placeholder", async (t) => {
+  const prev = process.env.ANTIGRAVITY_ACCESS_TOKEN;
+  process.env.ANTIGRAVITY_ACCESS_TOKEN = "fake";
+  t.after(() => {
+    if (prev == null) delete process.env.ANTIGRAVITY_ACCESS_TOKEN;
+    else process.env.ANTIGRAVITY_ACCESS_TOKEN = prev;
+  });
+  let remainingFraction = 0.3;
+  const adapter = load("src/adapters/gemini.js", {
+    "../wincred": { readGenericCredential: async () => null },
+    "../paths": { ...noPaths, cliOnPath: () => true, geminiOAuth: () => "oauth", antigravityToken: () => "token", agyBinaryCandidates: () => [], cliPath: () => null },
+    "../http": { postJson: async (url) => {
+      if (url.endsWith("loadCodeAssist")) return { status: 200, json: {} };
+      if (url.endsWith("retrieveUserQuotaSummary")) return { status: 200, json: { groups: [{ displayName: "Gemini", buckets: [{ bucketId: "gemini-weekly", window: "weekly", remainingFraction, resetTime: "2099-01-01T00:00:00Z" }] }] } };
+      return { status: 429, headers: { "retry-after": "30" } };
+    } },
+  });
+  const kept = await adapter.fetchUsage({});
+  assert.equal(kept.status.state, "ok");
+  assert.equal(Math.round(kept.windows[0].used_pct), 70);
+  assert.equal(kept._rateLimited, true, "still backs off");
+  assert.ok(Date.parse(kept._retryAfter) > Date.now());
+  remainingFraction = 1;
+  const placeholder = await adapter.fetchUsage({});
+  assert.equal(placeholder.status.state, "fetch_failed");
+  assert.equal(placeholder._rateLimited, true);
+});
+
+test("Codex reads per-model limits in the nested and the flat layout; a blank remaining is not 100%; 403 is retryable", async () => {
+  const adapter = load("src/adapters/codex.js", {}, ["mapWham"]);
+  const win = (used, seconds) => ({ used_percent: used, limit_window_seconds: seconds, reset_at: 2000000000 });
+  const nested = adapter.mapWham({ rate_limit: { primary_window: win(40, 18000) }, additional_rate_limits: [
+    { limit_name: "Spark", metered_feature: "spark", rate_limit: { allowed: true, limit_reached: false, primary_window: win(97, 18000), secondary_window: win(20, 604800) } },
+  ] });
+  assert.deepEqual(nested.windows.map((w) => [w.label, w.used_pct]), [["5h", 40], ["Spark 5h", 97], ["Spark Weekly", 20]]);
+  const flat = adapter.mapWham({ additional_rate_limits: [{ name: "Spark", primary_window: win(5, 18000) }] });
+  assert.deepEqual(flat.windows.map((w) => [w.label, w.used_pct]), [["Spark 5h", 5]]);
+  for (const remaining_percent of ["", false, []]) {
+    assert.equal(adapter.mapWham({ rate_limit: { primary_window: { remaining_percent, limit_window_seconds: 18000 } } }).windows[0].used_pct, null);
+  }
+  assert.equal(adapter.mapWham({ rate_limit: { primary_window: { remaining_percent: "25", limit_window_seconds: 18000 } } }).windows[0].used_pct, 75);
+
+  const forbidden = load("src/adapters/codex.js", {
+    fs: { readFileSync: () => JSON.stringify({ tokens: { access_token: "fake", account_id: "acct" } }) },
+    "../paths": { ...noPaths, codexAuth: () => "auth.json", fileExists: () => true },
+    "../http": { getJson: async () => ({ status: 403 }) },
+  });
+  assert.equal((await forbidden.fetchUsage()).status.state, "fetch_failed");
 });

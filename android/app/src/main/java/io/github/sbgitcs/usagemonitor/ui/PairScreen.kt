@@ -86,7 +86,10 @@ fun PairScreen(settings: Settings, incoming: PairingInfo?, onPaired: (PairedComp
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val client = DesktopClient(settings)
+                    val previous = settings.computer
                     val computer = client.pair(info)
+                    // The pairing this one replaces stops receiving sign-ins; best effort, in the background.
+                    if (previous != null && previous.deviceId != computer.deviceId) client.unlinkInBackground(previous)
                     // Readings and sign-ins from a computer paired before must not carry over to the new one.
                     settings.snapshotJson = null
                     settings.snapshotAt = 0
@@ -131,6 +134,10 @@ fun PairScreen(settings: Settings, incoming: PairingInfo?, onPaired: (PairedComp
             if (incoming != null) {
                 Text("Pair with ${incoming.name}?", style = MaterialTheme.typography.titleMedium)
                 Note("Usage Monitor on ${incoming.name} (${incoming.addresses.joinToString(", ")}) will share its plan meters and system readings with this phone.")
+                // A link can come from any app or web page, so say what it would undo.
+                val current = remember { settings.computer }
+                if (current != null) Note("This replaces the pairing with ${current.name} and removes the sign-ins linked from it.",
+                    color = MaterialTheme.colorScheme.error)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(enabled = !busy, onClick = { pair(incoming) }) { Text("Pair") }
                     TextButton(onClick = onCancel) { Text("Cancel") }

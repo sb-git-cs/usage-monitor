@@ -84,6 +84,20 @@ class UsageApiTest {
         assertNull(p.windows[3].usedPct)
     }
 
+    @Test fun codexReadsPerModelLimitsInTheNestedAndTheFlatLayout() {
+        val win = { used: Int, seconds: Int -> """{"used_percent":$used,"limit_window_seconds":$seconds,"reset_at":2000000000}""" }
+        val nested = UsageApi.mapCodex(JSONObject("""{"rate_limit":{"primary_window":${win(40, 18000)}},"additional_rate_limits":[
+          {"limit_name":"Spark","metered_feature":"spark","rate_limit":{"allowed":true,"limit_reached":false,
+            "primary_window":${win(97, 18000)},"secondary_window":${win(20, 604800)}}}]}"""), now)
+        assertEquals(listOf("5h" to 40.0, "Spark 5h" to 97.0, "Spark Weekly" to 20.0), nested.windows.map { it.label to it.usedPct })
+        val flat = UsageApi.mapCodex(JSONObject("""{"additional_rate_limits":[{"name":"Spark","primary_window":${win(5, 18000)}}]}"""), now)
+        assertEquals(listOf("Spark 5h" to 5.0), flat.windows.map { it.label to it.usedPct })
+        for (remaining in listOf("\"\"", "false", "[]")) {
+            assertNull(UsageApi.mapCodex(JSONObject("""{"rate_limit":{"primary_window":{"remaining_percent":$remaining,"limit_window_seconds":18000}}}"""), now).windows[0].usedPct)
+        }
+        assertEquals(75.0, UsageApi.mapCodex(JSONObject("""{"rate_limit":{"primary_window":{"remaining_percent":"25","limit_window_seconds":18000}}}"""), now).windows[0].usedPct!!, 0.0)
+    }
+
     @Test fun grokMonthlyFallbackIsNotMislabeledWeekly() {
         val p = UsageApi.mapGrok(JSONObject("""{"used":{"val":25},"monthlyLimit":{"val":100},"productUsage":[null,{}]}"""), now)
         assertEquals("monthly", p.windows[0].kind)

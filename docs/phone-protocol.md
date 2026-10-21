@@ -22,7 +22,7 @@ usagemonitor://pair?h=192.168.1.20,100.101.102.103&p=47329&c=ABCDE-FGHJK-MNPQR-S
 - MAC key: `HKDF-SHA256(ikm = master key, salt = empty, info = "um-mac-v1", 32 bytes)`
 - encryption key: `HKDF-SHA256(ikm = master key, salt = empty, info = "um-enc-v1", 32 bytes)`
 
-The first correctly signed request with the pending code's device id completes the pairing; the computer then stores the id, the master key and the phone's name (`X-UM-Name`, URL-encoded). **Remove** in Settings revokes a phone.
+The first correctly signed request with the pending code's device id completes the pairing; the computer then stores the id, the master key and the phone's name (`X-UM-Name`, URL-encoded). The phone then replaces the code-derived master key through `/v1/rekey` (below); the random key takes its place, and the MAC and encryption keys derive from it the same way. **Remove** in Settings revokes a phone.
 
 ## Requests
 
@@ -35,14 +35,20 @@ X-UM-Sig:  base64url(HMAC-SHA256(MAC key, "GET\n" + path + "\n" + time))
 X-UM-Name: phone name (optional, used when pairing)
 ```
 
-Wrong or missing signatures get `401`; more than 20 failures a minute from one address get `429`.
+Wrong or missing signatures get `401`; more than 20 failures a minute from one address get `429`. A correct signature whose time is more than 5 minutes off gets `400 { "error": "clock" }`, so the phone can ask for its clock to be checked instead of a new pairing.
+
+```
+POST /v1/rekey     answers { ok: true, key }
+```
+
+The pairing key derives from the code, which was on screen. Right after pairing, and once for pairings made before this request existed, the phone asks for a random 32-byte `key` (base64url) and signs every later request with it. The computer accepts the old key until the first request signed with the new one, then forgets the old key, so a lost reply does not break the pairing. A computer without this request answers `404`, and the phone keeps its key.
 
 ```
 POST /v1/account/<tool>          ask the computer to open that tool's sign-in
 POST /v1/account/<tool>/<id>     ask the computer to meter a saved sign-in
 ```
 
-`<tool>` is `claude`, `codex`, `gemini`, `grok`, `cursor` or `copilot`. `<id>` is the saved account id from the snapshot (letters, digits and `_. : @ -`). The signature uses `POST` as the method. The computer confirms before it switches, and answers `{ ok: true, provider, account }` immediately. The snapshot's `account` is the email or name the meter is reading, and `accounts` lists saved sign-ins when there is more than one. Cursor and Copilot are included in the snapshot when that login is present on the computer.
+`<tool>` is `claude`, `codex`, `gemini`, `grok`, `cursor` or `copilot`. `<id>` is the saved account id from the snapshot (letters, digits and `_. : @ -`). The signature uses `POST` as the method. Every POST is accepted once: the same id, path and time again gets `409`, so a request recorded on the network cannot be replayed while its time is still valid. The computer confirms before it switches, and answers `{ ok: true, provider, account }` immediately. The snapshot's `account` is the email or name the meter is reading, and `accounts` lists saved sign-ins when there is more than one. Cursor and Copilot are included in the snapshot when that login is present on the computer.
 
 ### Direct reading
 

@@ -1,6 +1,6 @@
 {
   "name": "usage-monitor",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Plan meters for Claude Code, Codex, Gemini, Grok Build, Cursor and GitHub Copilot, plus per-app network usage, for Windows, macOS and Linux",
   "main": "src/main.js",
   "private": true,
@@ -68,6 +68,13 @@
     "electronLanguages": [
       "en-US"
     ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true,
+      "resetAdHocDarwinSignature": true
+    },
     "directories": {
       "output": "dist"
     },

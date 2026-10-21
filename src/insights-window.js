@@ -110,17 +110,24 @@ function generateReport(v) {
   return lines.join("\n");
 }
 
-function view(days) {
+// The window refreshes every 10 seconds; transcripts are rescanned at most every 30 seconds per
+// period, and a scan already running is shared instead of started again.
+const TOKENS_TTL_MS = 30_000;
+const tokenScans = new Map();
+function tokensFor(days) {
+  const cached = tokenScans.get(days);
+  if (cached && Date.now() - cached.at < TOKENS_TTL_MS) return cached.result;
+  const result = Promise.resolve().then(() => scanTokens({ days })).catch(() => null);
+  tokenScans.set(days, { at: Date.now(), result });
+  return result;
+}
+
+async function view(days) {
   const series = ctx.insights.report(days);
   const burn = analyzeBurn(series);
   const events = [...ctx.insights.data.events].reverse();
   const health = computeHealth(burn, events);
-  let tokens = null;
-  try {
-    tokens = scanTokens({ days });
-  } catch {
-    tokens = null;
-  }
+  const tokens = await tokensFor(days);
 
   // Sanitize sessions if available
   let activeSessions = [];
@@ -147,6 +154,7 @@ function view(days) {
     budget: ctx.insights.budgetView(),
     diagnostics: diagnostic(),
     display: ctx.cfg.display,
+    alert_threshold: ctx.cfg.alert_threshold,
     dark: nativeTheme.shouldUseDarkColors,
     burn,
     health,
@@ -195,8 +203,8 @@ function init(context) {
     try {
       let content;
       if (format === "diagnostics") content = JSON.stringify(diagnostic(), null, 2);
-      else if (format.startsWith("models-")) content = modelExport(view(days).tokens, format, model);
-      else if (format === "report") content = generateReport(view(days));
+      else if (format.startsWith("models-")) content = modelExport((await view(days)).tokens, format, model);
+      else if (format === "report") content = generateReport(await view(days));
       else if (format === "battery-csv") content = ctx.battery.csv(days);
       else if (format === "json") content = JSON.stringify({ ...JSON.parse(ctx.insights.export(days, format)), battery: ctx.battery?.view(days) }, null, 2);
       else content = ctx.insights.export(days, format);

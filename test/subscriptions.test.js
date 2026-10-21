@@ -148,3 +148,25 @@ test("Cursor ignores an out-of-range billing date without losing valid usage", (
   assert.equal(result.windows[0].used_pct, 25);
   assert.equal(result.windows[0].resets_at, null);
 });
+
+test("copilot treats GitHub's rate-limit 403 as a back-off, and other 403s as retryable, not a sign-out", async () => {
+  let res;
+  const adapter = load("src/adapters/copilot.js", {
+    "../paths": { ghHosts: () => [], cliOnPath: () => true, fileExists: () => false },
+    "../github-auth": { token: async () => FAKE_TOKEN, forget() {} },
+    "../accounts": { observe() {} },
+    "../http": { getJson: async () => res },
+  });
+  const reset = Math.floor(Date.now() / 1000) + 900;
+  res = { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } };
+  const limited = await adapter.fetchUsage();
+  assert.equal(limited.status.state, "fetch_failed");
+  assert.equal(limited._rateLimited, true);
+  assert.equal(Date.parse(limited._retryAfter), reset * 1000);
+  res = { status: 403, headers: {} };
+  const denied = await adapter.fetchUsage();
+  assert.equal(denied.status.state, "fetch_failed", "the last reading is kept");
+  assert.equal(denied._rateLimited, undefined);
+  res = { status: 401, headers: {} };
+  assert.equal((await adapter.fetchUsage()).status.state, "logged_out");
+});

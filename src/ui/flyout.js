@@ -54,8 +54,12 @@ window.addEventListener("resize", fitFlyout);
 
 function render(snapshot) {
   const focused = document.activeElement?.dataset.id;
-  const overview = UsageOverview.summarize(snapshot.providers, alertThreshold);
-  document.getElementById("overviewReporting").textContent = `${overview.reporting} of ${(snapshot.providers || []).length}`;
+  // Hidden providers have no card, so they are left out of the overview too.
+  const visible = (snapshot.providers || []).filter((p) => p.id === "x_subscription"
+    ? !["grok", "cursor"].every((id) => (display.hidden || []).includes(id)) : !(display.hidden || []).includes(p.id))
+    .sort((a, b) => (display.order || []).indexOf(a.id === "x_subscription" ? "grok" : a.id) - (display.order || []).indexOf(b.id === "x_subscription" ? "grok" : b.id));
+  const overview = UsageOverview.summarize(visible, alertThreshold);
+  document.getElementById("overviewReporting").textContent = `${overview.reporting} of ${visible.length}`;
   const attention = document.getElementById("overviewAttention");
   attention.textContent = overview.attention ? `${overview.attention} at risk` : overview.reporting ? "Within limits" : "No current data";
   attention.classList.toggle("at-risk", overview.attention > 0);
@@ -65,9 +69,9 @@ function render(snapshot) {
   reset.textContent = overview.nextReset ? formatEta(reset.dataset.reset) : "Not reported";
   reset.title = overview.nextReset ? `${overview.nextReset.provider} · ${overview.nextReset.label} · ${new Date(overview.nextReset.at).toLocaleString()}` : "No current reset time reported";
   const parts = [];
-  const visible = (snapshot.providers || []).filter((p) => p.id === "x_subscription"
-    ? !["grok", "cursor"].every((id) => (display.hidden || []).includes(id)) : !(display.hidden || []).includes(p.id))
-    .sort((a, b) => (display.order || []).indexOf(a.id === "x_subscription" ? "grok" : a.id) - (display.order || []).indexOf(b.id === "x_subscription" ? "grok" : b.id));
+  if (!visible.length && (snapshot.providers || []).length) {
+    parts.push(`<div class="hint">All providers are hidden. Choose which to show in Insights → Diagnostics &amp; Display.</div>`);
+  }
   for (const p of visible) {
     const hint = statusText(p);
     parts.push(`<section class="provider accent-${escapeHtml(p.id)}" data-id="${escapeHtml(p.id)}" role="button" tabindex="0" aria-label="Open ${escapeHtml(p.display_name)} usage">
@@ -322,6 +326,7 @@ function renderPairing(phone) {
     img.src = pairing.qr || "";
     img.dataset.link = pairing.link;
   }
+  img.hidden = !pairing.qr;
   document.getElementById("pairCode").textContent = pairing.code;
   const where = phone.addresses && phone.addresses.length
     ? phone.addresses.map((a) => `${a}:${phone.port}`).join("   ")

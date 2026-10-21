@@ -60,20 +60,23 @@ function codexRows(lines) {
   }
   return items;
 }
-function filesIn(root, since, coverage, depth = 0, files = []) {
-  let entries; try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return files; }
+// Reads run asynchronously and yield after each parsed file, so a first scan of weeks of
+// transcripts does not freeze the chips and flyout, which share the main process.
+const yieldTurn = () => new Promise((resolve) => setImmediate(resolve));
+async function filesIn(root, since, coverage, depth = 0, files = []) {
+  let entries; try { entries = await fs.promises.readdir(root, { withFileTypes: true }); } catch { return files; }
   for (const entry of entries) {
     if (files.length >= MAX_FILES * 5) { coverage.truncated = true; break; }
     const file = path.join(root, entry.name);
-    if (entry.isDirectory() && depth < 3) filesIn(file, since, coverage, depth + 1, files);
+    if (entry.isDirectory() && depth < 3) await filesIn(file, since, coverage, depth + 1, files);
     else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-      try { const stat = fs.statSync(file); if (stat.mtimeMs >= since) files.push({ file, stat }); } catch { coverage.skipped_files++; }
+      try { const stat = await fs.promises.stat(file); if (stat.mtimeMs >= since) files.push({ file, stat }); } catch { coverage.skipped_files++; }
     }
   }
   return files;
 }
-function scan(provider, root, since, now, coverage) {
-  const files = filesIn(root, since, coverage).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+async function scan(provider, root, since, now, coverage) {
+  const files = (await filesIn(root, since, coverage)).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
   if (files.length > MAX_FILES) coverage.truncated = true;
   const result = [];
   for (const { file, stat } of files.slice(0, MAX_FILES)) {
@@ -81,7 +84,7 @@ function scan(provider, root, since, now, coverage) {
     let cached = fileCache.get(file);
     if (!cached || cached.mtime !== stat.mtimeMs || cached.size !== stat.size) {
       try {
-        const rawLines = fs.readFileSync(file, "utf8").split("\n");
+        const rawLines = (await fs.promises.readFile(file, "utf8")).split("\n");
         const truncated = rawLines.some((line) => line.length > 8 * 1024 * 1024);
         const lines = rawLines.filter((line) => line.length && line.length <= 8 * 1024 * 1024);
         const session = digest(`${provider}|${file}`);
@@ -90,6 +93,7 @@ function scan(provider, root, since, now, coverage) {
         fileCache.set(file, cached);
         if (fileCache.size > MAX_FILES * 2) fileCache.delete(fileCache.keys().next().value);
       } catch { coverage.skipped_files++; continue; }
+      await yieldTurn();
     }
     if (cached.truncated) coverage.truncated = true;
     result.push(...cached.items.filter((item) => Number.isFinite(item.t) && item.t >= since && item.t <= now));
@@ -101,13 +105,13 @@ function add(target, item) {
   target.total += item.input + item.output + item.cache_read + item.cache_write; target.turns++;
 }
 function dayKey(t) { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
-function scanTokens({ days = 7, claudeDir = claudeConfigDir, codexDir = codexHome, now = Date.now } = {}) {
+async function scanTokens({ days = 7, claudeDir = claudeConfigDir, codexDir = codexHome, now = Date.now } = {}) {
   const nowMs = typeof now === "function" ? now() : now;
   const numDays = [1, 7, 14, 30].includes(Number(days)) ? Number(days) : 7, since = nowMs - numDays * 86400000;
   const coverage = { providers: ["claude", "codex"], skipped_files: 0, truncated: false };
   const root = (value) => typeof value === "function" ? value() : value;
-  const items = [...scan("claude", path.join(root(claudeDir), "projects"), since, nowMs, coverage),
-    ...scan("codex", path.join(root(codexDir), "sessions"), since, nowMs, coverage)];
+  const items = [...await scan("claude", path.join(root(claudeDir), "projects"), since, nowMs, coverage),
+    ...await scan("codex", path.join(root(codexDir), "sessions"), since, nowMs, coverage)];
   const summary = empty(), byProvider = { claude: empty(), codex: empty() }, models = new Map(), sessions = new Map(), daily = new Map();
   const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, label: `${hour}:00`, tokens: 0, turns: 0 }));
   for (const item of items) {

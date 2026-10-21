@@ -52,4 +52,28 @@ class BatteryStoreTest {
         history.record(BatteryReading(now - 30_000, null, "unknown"))
         assertTrue(history.record(BatteryReading(now, 59, "discharging")).gap)
     }
+    @Test fun pointsAreAppendedAndFoldedIntoTheFileAfterADay() {
+        val context = context()
+        val file = File(context.filesDir, "battery-history.json")
+        val journal = File(context.filesDir, "battery-history.log")
+        val start = System.currentTimeMillis() - 2 * BatteryLogic.DAY
+        // A history written by earlier versions is read as it is.
+        file.writeText("""{"version":1,"points":[{"t":$start,"percent":80,"state":"discharging","seconds":null,"source":null,"g":true}]}""")
+        val history = BatteryHistory(context)
+        assertEquals(1, history.view(3).size)
+        history.record(BatteryReading(start + 60_000, 79, "discharging"))
+        assertFalse("one point does not rewrite the file", file.readText().contains("\"percent\":79"))
+        assertEquals(1, journal.readLines().count { it.isNotBlank() })
+        journal.appendText("\n{\"t\":") // a write cut short
+        // A full journal (a day of points by default; two here) is folded into the file with the next point.
+        val reloaded = BatteryHistory(context, compactAfter = 2)
+        assertEquals(2, reloaded.view(3).size)
+        reloaded.record(BatteryReading(start + 2 * 60_000, 78, "discharging"))
+        assertTrue(journal.exists())
+        reloaded.record(BatteryReading(start + 3 * 60_000, 77, "discharging"))
+        assertFalse(journal.exists())
+        assertFalse(reloaded.error)
+        assertTrue(file.readText().contains("\"percent\":77"))
+        assertEquals(4, BatteryHistory(context).view(3).size)
+    }
 }

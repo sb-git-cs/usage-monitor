@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const { cacheDir } = require("./paths");
 const { digest, identity } = require("./insights");
+const { sameReset } = require("./models");
 
 const FILE = "usage-history.json";
 const MIN_GAP_MS = 60_000;
@@ -108,7 +109,7 @@ class History {
         const key = keyOf(provider.id, win, `${provider.subscription_regime || "legacy"}|${identity(provider) || "unidentified"}`);
         let s = this.series.get(key);
         // A new reset time means a new window; the old trend no longer applies.
-        if (!s || (win.resets_at && s.resets_at && win.resets_at !== s.resets_at) || (s.points.length && win.used_pct < s.points[s.points.length - 1].used - 1)) {
+        if (!s || (win.resets_at && s.resets_at && !sameReset(win.resets_at, s.resets_at)) || (s.points.length && win.used_pct < s.points[s.points.length - 1].used - 1)) {
           s = { resets_at: win.resets_at || null, points: [] };
           this.series.set(key, s);
         }
