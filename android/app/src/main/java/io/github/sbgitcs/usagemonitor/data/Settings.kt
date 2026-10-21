@@ -1,17 +1,26 @@
 package io.github.sbgitcs.usagemonitor.data
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.time.LocalTime
 
-/** The computer this phone is paired with. [masterKey] is base64url; the pairing code itself is not kept. */
-data class PairedComputer(val name: String, val addresses: List<String>, val port: Int, val deviceId: String, val masterKey: String)
+/**
+ * The computer this phone is paired with. [masterKey] is base64url; the pairing code itself is not kept.
+ * [rekeyed]: the key is a random one from the computer, no longer the one derived from the code.
+ */
+data class PairedComputer(val name: String, val addresses: List<String>, val port: Int, val deviceId: String, val masterKey: String,
+                          val rekeyed: Boolean = false)
 
 /** Everything the app remembers, in one SharedPreferences file that widgets and workers can read. */
 class Settings(context: Context) {
-    private val p: SharedPreferences = context.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    private val app = context.applicationContext
+    private val p: SharedPreferences = app.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    private val insightsFile by lazy { AtomicFile(File(app.filesDir, "insights.json")) }
     var subscriptionRegime: String
         get() = if (p.getString("subscription_regime", "legacy") == "combined") "combined" else "legacy"
         set(v) = p.edit().putString("subscription_regime", if (v == "combined") "combined" else "legacy").apply()
@@ -21,20 +30,28 @@ class Settings(context: Context) {
             runCatching {
                 val o = JSONObject(raw)
                 val list = o.getJSONArray("addresses")
-                PairedComputer(o.getString("name"), (0 until list.length()).map { list.getString(it) }, o.getInt("port"), o.getString("id"), o.getString("key"))
+                PairedComputer(o.getString("name"), (0 until list.length()).map { list.getString(it) }, o.getInt("port"), o.getString("id"), o.getString("key"),
+                    o.optBoolean("rekeyed"))
             }.getOrNull()
         }
-        set(value) {
+        @SuppressLint("ApplySharedPref") set(value) {
             val raw = value?.let {
-                JSONObject().put("name", it.name).put("addresses", JSONArray(it.addresses)).put("port", it.port).put("id", it.deviceId).put("key", it.masterKey).toString()
+                JSONObject().put("name", it.name).put("addresses", JSONArray(it.addresses)).put("port", it.port).put("id", it.deviceId).put("key", it.masterKey)
+                    .put("rekeyed", it.rekeyed).toString()
             }
-            p.edit().putString("computer", raw).apply()
+            // Written at once: after a rekey the computer drops the old key at this phone's next request.
+            p.edit().putString("computer", raw).commit()
         }
+
+    /** When a computer too old for /v1/rekey last said so; it is asked again a day later. */
+    var rekeyCheckedAt: Long
+        get() = p.getLong("rekey_checked_at", 0)
+        set(v) = p.edit().putLong("rekey_checked_at", v).apply()
 
     /** Unpairs: drops the key and everything read from that computer. Linked sign-ins are dropped by the caller. */
     fun forgetComputer() {
         p.edit().remove("computer").remove("last_address").remove("snapshot").remove("snapshot_at").remove("last_error")
-            .remove("direct_link").remove("tokens_at").apply()
+            .remove("direct_link").remove("tokens_at").remove("rekey_checked_at").apply()
     }
 
     /** Direct reading with the computer's sign-ins: "off", "asked" (waiting for the computer to allow it) or "on". */
@@ -92,9 +109,39 @@ class Settings(context: Context) {
     var snoozeUntil: Long
         get() = p.getLong("snooze_until", 0)
         set(v) = p.edit().putLong("snooze_until", v.coerceAtLeast(0)).apply()
+    /**
+     * Quota history and recorded alerts (InsightHistory). It grows to megabytes, so it has a file of
+     * its own: every preference write rewrites the whole preferences file. Blocking; use it off the
+     * main thread.
+     */
     var insightsJson: String?
-        get() = p.getString("insights", null)
-        set(v) = p.edit().putString("insights", v).apply()
+        get() = synchronized(InsightHistory) {
+            moveInsights()
+            runCatching { String(insightsFile.readFully(), Charsets.UTF_8) }.getOrNull()
+        }
+        set(v) = synchronized(InsightHistory) {
+            moveInsights()
+            if (v == null) insightsFile.delete() else writeInsights(v)
+        }
+
+    /** Earlier versions kept the history in the preferences; it moves to its file once. */
+    private fun moveInsights() {
+        val old = p.getString("insights", null) ?: return
+        // A failed write throws and leaves the preference for the next try.
+        if (!insightsFile.baseFile.exists()) writeInsights(old)
+        p.edit().remove("insights").apply()
+    }
+
+    private fun writeInsights(v: String) {
+        val out = insightsFile.startWrite()
+        try {
+            out.write(v.toByteArray(Charsets.UTF_8))
+            insightsFile.finishWrite(out)
+        } catch (e: Exception) {
+            insightsFile.failWrite(out)
+            throw e
+        }
+    }
     fun recordInsights(snapshot: io.github.sbgitcs.usagemonitor.model.DesktopSnapshot?) = synchronized(InsightHistory) {
         val previous = insightsJson
         val next = InsightHistory.record(previous, snapshot)

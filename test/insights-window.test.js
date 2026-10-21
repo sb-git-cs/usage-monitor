@@ -74,7 +74,7 @@ test("Insights IPC only accepts its own renderer and support reports omit sensit
   assert.equal(await handles["insights:export"](other, "diagnostics"), null);
   assert.equal(retries, 0);
   const own = { sender: win.webContents };
-  const report = handles["insights:get"](own).diagnostics;
+  const report = (await handles["insights:get"](own)).diagnostics;
   assert.equal(report.providers[0].state, "fetch_failed");
   assert.doesNotMatch(JSON.stringify(report), /private|secret|sensitive|account|token/);
   await handles["insights:action"](own, "retry"); assert.equal(retries, 1);

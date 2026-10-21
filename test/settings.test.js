@@ -15,6 +15,20 @@ test("configuration containing pairing keys is stored with private POSIX permiss
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });
 
+test("refreshed CLI credentials stay owner-only, even over a leftover temporary file", (t) => {
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+  const { writeSecretFile } = require("../src/paths");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "um-secret-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, ".credentials.json");
+  fs.writeFileSync(file, "{\"old\":true}", { mode: 0o600 });
+  fs.writeFileSync(`${file}.tmp`, "stale", { mode: 0o644 });
+  writeSecretFile(file, "{\"accessToken\":\"synthetic\"}");
+  assert.equal(fs.readFileSync(file, "utf8"), "{\"accessToken\":\"synthetic\"}");
+  assert.equal(fs.existsSync(`${file}.tmp`), false);
+  if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});
+
 test("new settings are validated and never share nested defaults", () => {
   const cfg = config.normalize({
     alert_threshold: 73,

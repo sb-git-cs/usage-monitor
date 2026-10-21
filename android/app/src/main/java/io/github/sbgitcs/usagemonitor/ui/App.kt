@@ -41,6 +41,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import io.github.sbgitcs.usagemonitor.R
 import io.github.sbgitcs.usagemonitor.data.Settings
 import io.github.sbgitcs.usagemonitor.direct.PlanReadings
+import io.github.sbgitcs.usagemonitor.pairing.DesktopClient
 import io.github.sbgitcs.usagemonitor.pairing.PairingInfo
 import kotlinx.coroutines.launch
 
@@ -65,7 +66,7 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
     // Bumped on every return to the app, so permission states are read again.
     var resumes by remember { mutableIntStateOf(0) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        io.github.sbgitcs.usagemonitor.device.BatteryHistory.get(context).breakSegment()
+        io.github.sbgitcs.usagemonitor.device.BatteryHistory.breakSegment()
         resumes++
     }
     WhileVisible(resumes, 10_000) {
@@ -115,6 +116,8 @@ fun App(settings: Settings, incoming: PairingInfo?, onIncomingHandled: () -> Uni
                 onPair = { pairing = true },
                 onForget = {
                     scope.launch {
+                        // Best effort, in the background: the computer stops sending tokens to this pairing.
+                        DesktopClient(settings).unlinkInBackground(settings.computer)
                         PlanReadings.dropLinked(context, settings)
                         settings.forgetComputer()
                         computer = null

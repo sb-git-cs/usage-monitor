@@ -63,6 +63,38 @@ test("pruning keeps apps marked keep-forever and deletion is per app or global",
   store.close();
 });
 
+test("the indexed, cached totals match the database across ranges, flushes and deletes", (t) => {
+  const dir = tempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const store = new Store(path.join(dir, "network.db"));
+  const ids = [];
+  for (let a = 0; a < 6; a++) ids.push(store.appId(`app${a}`, `App ${a}`, null));
+  const base = 1_000_000;
+  for (let i = 0; i < 400; i++) store.addUsage(ids[i % ids.length], base + (i % 120), i * 3 + 1, i * 2 + 1);
+  // Reference totals via the plain, un-indexed, un-cached query the planner would otherwise choose.
+  const ref = (since) => {
+    const byId = new Map();
+    for (const r of store.db.prepare("SELECT app_id AS id, SUM(rx) AS rx, SUM(tx) AS tx, MIN(minute) AS first FROM usage WHERE minute >= ? GROUP BY app_id").all(since))
+      byId.set(r.id, { rx: r.rx, tx: r.tx, first: r.first });
+    for (const u of store.pendingUsage.values()) {
+      if (u.minute < since) continue;
+      const c = byId.get(u.id) || { rx: 0, tx: 0, first: u.minute };
+      c.rx += u.rx; c.tx += u.tx; c.first = Math.min(c.first, u.minute); byId.set(u.id, c);
+    }
+    return [...byId].map(([id, t]) => [store.apps.get(id).key, t.rx, t.tx, t.first]).sort();
+  };
+  const got = (since) => store.totals(since).map((r) => [r.key, r.rx, r.tx, r.first]).sort();
+  for (const since of [0, base + 30, base + 119, base + 200]) assert.deepEqual(got(since), ref(since), `pending range ${since}`);
+  store.flush();
+  // A repeat call for the same range is served from the cache and must still match the database.
+  for (const since of [0, base + 30, base + 119]) { assert.deepEqual(got(since), ref(since)); assert.deepEqual(got(since), ref(since)); }
+  store.addUsage(ids[0], base + 10, 100, 50);
+  assert.deepEqual(got(0), ref(0), "pending added after a flush is merged on top of the cache");
+  store.deleteApp("app0");
+  assert.deepEqual(got(0), ref(0), "a delete drops the cache");
+  store.close();
+});
+
 test("connections merge by endpoint, keep the first and last time seen, and learn domains later", (t) => {
   const dir = tempDir();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

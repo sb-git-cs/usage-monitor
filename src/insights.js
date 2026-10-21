@@ -2,8 +2,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { cacheDir } = require("./paths");
+const { sameReset } = require("./models");
 
 const DAY = 86400000;
+// Byte counters and last-success times change every second or poll. On their own they are
+// written at most this often; new readings and events still save within a minute.
+const MINOR_SAVE_MS = 15 * 60000;
 const PROVIDERS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "x_subscription"];
 const digest = (value) => crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
 const identity = (p) => p.cache_scope || p.account_id || p.account || null;
@@ -24,7 +28,7 @@ function displayPrefs(raw = {}) {
 }
 class Insights {
   constructor({ file = path.join(cacheDir(), "insights.json"), now = Date.now } = {}) {
-    this.file = file; this.now = now; this.savedAt = 0; this.dirty = false; this.error = false;
+    this.file = file; this.now = now; this.savedAt = 0; this.dirty = false; this.minor = false; this.error = false;
     this.data = { series: {}, events: [], days: {}, lastSuccess: {}, snoozeUntil: 0, observedSince: now(), budget: { limit: 0, day: 1 }, budgetFired: {} };
     try {
       const raw = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -59,7 +63,7 @@ class Insights {
     const now = this.now();
     for (const p of snapshot?.providers || []) {
       if (p.status?.state !== "ok" || !PROVIDERS.includes(p.id)) continue;
-      if (Number.isFinite(Date.parse(p.fetched_at))) { this.data.lastSuccess[p.id] = p.fetched_at; this.dirty = true; }
+      if (Number.isFinite(Date.parse(p.fetched_at))) { this.data.lastSuccess[p.id] = p.fetched_at; this.minor = true; }
       const account = identity(p) ? digest(identity(p)) : "unidentified";
       for (const w of p.windows || []) {
         if (!Number.isFinite(w.used_pct)) continue;
@@ -67,7 +71,7 @@ class Insights {
         const s = this.data.series[key] ||= { provider: p.id, account, kind: w.kind, label: w.label || w.kind, points: [] };
         const last = s.points.at(-1);
         const reset = Number.isFinite(Date.parse(w.resets_at)) ? w.resets_at : "unknown";
-        let cycle = last?.reset === reset ? last.cycle : `${reset}-${now}`;
+        let cycle = last && sameReset(last.reset, reset) ? last.cycle : `${reset}-${now}`;
         if (last && w.used_pct < last.used - 1) cycle = `${reset}-${now}`;
         if (last && now - last.t < 300000 && last.cycle === cycle) continue;
         s.points.push({ t: now, used: w.used_pct, cycle, reset }); this.dirty = true;
@@ -97,7 +101,7 @@ class Insights {
     const d = new Date(this.now());
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     this.data.days[key] = (this.data.days[key] || 0) + bytes;
-    this.dirty = true; this.save();
+    this.minor = true; this.save();
   }
   budgetView() {
     const now = this.now();
@@ -117,7 +121,7 @@ class Insights {
   }
   report(days = 7) {
     this.prune();
-    const since = this.now() - ([1, 7, 30].includes(days) ? days : 7) * DAY;
+    const since = this.now() - ([1, 7, 14, 30].includes(days) ? days : 7) * DAY;
     return Object.entries(this.data.series).map(([id, s]) => ({ id, ...s, points: s.points.filter((p) => p.t >= since) })).filter((s) => s.points.length);
   }
   export(days, format) {
@@ -127,11 +131,12 @@ class Insights {
     return ["provider,account_ref,window,reset_or_segment,time,used_percent", ...series.flatMap((s) => s.points.map((p) => [s.provider, s.account, s.label, p.cycle, new Date(p.t).toISOString(), p.used].map(cell).join(",")))].join("\n");
   }
   save(force = false) {
-    if (!this.dirty || (!force && this.now() - this.savedAt < 60000)) return;
+    if (!this.dirty && !this.minor) return;
+    if (!force && this.now() - this.savedAt < (this.dirty ? 60000 : MINOR_SAVE_MS)) return;
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       fs.writeFileSync(`${this.file}.tmp`, JSON.stringify({ version: 1, ...this.data }), { encoding: "utf8", mode: 0o600 });
-      fs.renameSync(`${this.file}.tmp`, this.file); this.savedAt = this.now(); this.dirty = false; this.error = false;
+      fs.renameSync(`${this.file}.tmp`, this.file); this.savedAt = this.now(); this.dirty = false; this.minor = false; this.error = false;
     } catch { this.error = true; }
   }
 }

@@ -21,7 +21,7 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       publish: ${{ steps.tag.outputs.publish }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Work out the release tag
         id: tag
         env:
@@ -62,8 +62,8 @@ jobs:
             dist: npm run dist:linux
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -73,7 +73,7 @@ jobs:
         run: ${{ matrix.dist }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installers-${{ runner.os }}
           if-no-files-found: error
@@ -92,8 +92,8 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: 17
@@ -120,7 +120,7 @@ jobs:
           cd android
           ./gradlew --no-daemon releaseBundle
           ls -la app/build/dist
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installers-android
           if-no-files-found: ignore
@@ -136,7 +136,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: installers-*
           path: installers
@@ -160,7 +160,7 @@ jobs:
       - name: Write download checksums
         working-directory: installers
         run: sha256sum * > SHA256SUMS
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: CHANGELOG.md
           sparse-checkout-cone-mode: false
@@ -196,7 +196,7 @@ jobs:
             awk -v v="$version" 'index($0, "## " v " ") == 1 { found = 1; print "## What changed"; next } /^## / && found { exit } found' repo/CHANGELOG.md
           } > notes.md
           cat notes.md
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           target_commitish: ${{ github.sha }}

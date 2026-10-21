@@ -1,3 +1,62 @@
+# 1.10.0 audit: bugs, security and monitor performance (2026-10-21)
+
+Scope: every desktop module, the Windows capture helper, the Android app, build and CI. Evidence came from the code, the installed 1.9.0's own log and cache files, live process sampling, and stubbed reproductions. Every fix has a regression test that fails on the 1.9.0 code, except where noted.
+
+## High (fixed)
+
+- **Taskbar probe CPU.** Every docked placement started one or two new PowerShell processes, each compiling C# (`Add-Type`), about every 9 s, including while locked: about 11% of one core, roughly 18k launches a day. The long-lived `-Watch` process now streams layouts and applies ownership (`scripts/taskbar-layout.ps1`, `src/taskbarLayout.js`). Steady state starts no processes. The watcher exits when the app's pipe closes. Placement also pauses while the screen is locked.
+- **Reset-time jitter.** Providers repeat a reset time with up to about 1 s of jitter, so history restarted on every reading. Claude never got a forecast, limit alerts fired twice (seen in the event log), and Codex reached the 9,000-point cap within 6.4 days. Resets within 5 minutes are now the same window (`src/models.js` `sameReset`), and alert keys round to 5 minutes.
+- **Account keys from rotating tokens.** Cache, history and alert keys hashed the access token. The 1.9.0 `insights.json` held 168 Gemini "accounts". Each tool's account now comes from its own files (`accountRef`), never from a token.
+- **Grok 403 loop.** A lasting 403 refreshed the token and rewrote the Grok CLI's `auth.json` on every poll, rotating its refresh token about 720 times an hour. It now refreshes once per account.
+- **Credential files lost owner-only permissions.** Refreshed Claude Code and Grok credentials were written with the default umask on macOS/Linux. `paths.writeSecretFile` now writes 0600, removes a stray temporary file on failure, and keeps refreshed tokens in memory if the write fails.
+- **SYSTEM helper `BLOCK` accepted any path.** UNC paths could make the SYSTEM service authenticate to a remote host, and Windows or Defender programs could be blocked for every user. Blocking now needs a program on a local fixed drive, outside Windows and Defender. The rule is checked again on the final path (`GetFinalPathNameByHandle`) to defeat 8.3 names and junctions. The self-test covers 11 cases, and CI now fails on a self-test failure. Installed helpers show **Update** (hash change); until it is clicked they keep the old check.
+
+## Medium (fixed)
+
+- **Insights froze the app.** It parsed every transcript synchronously on the main process: 2.8–4.5 s cold here, then every 10 s. The scan is now asynchronous, yields per file, is cached for 30 s per period, and skips refreshes while hidden.
+- **Phone pairing key never rotated.** It was derived from the on-screen code, so anyone who saw the QR could later read the meters and, with direct reading on, the linked access tokens. `/v1/rekey` replaces the key with a random one at its first use; a lost reply leaves the old key working. The phone rekeys after pairing and once for existing pairings, and unlinks before it forgets a computer. POST replays within the 5-minute window get 409. A wrong phone clock gets `400 clock` instead of "pair again".
+- **Write amplification.** These were rewritten every minute: `insights.json` (6.4 MB, network byte counters), `battery.json` (up to 4 MB) and Android battery history (about 4 MB). `alert-state.json` had grown to 19,354 entries (2 MB), re-read and rewritten on every poll. Counter-only Insights changes now save every 15 min. Desktop battery saves on state change or every 10 min. Android battery appends. Alert state keeps fired alerts only (8 entries on a copy of the real file).
+- **Network totals scanned the whole table each second.** The query now uses the minute index (60-minute range: 106 ms → 0.1 ms on 1 year of synthetic records), and database totals are cached per flush.
+- **Provider error handling.** Retry-After is honoured, with doubling back-off from 1 min to 1 h. Refused or throttled token refreshes are not resent every poll. A 403 from GitHub or chatgpt.com is retryable instead of "signed out". Gemini drops a rejected in-memory token and keeps quota read before a 429. Codex reads per-model limits in the nested `rate_limit` layout (desktop and phone) and validates `remaining_percent`. Burn analysis ignores expired or unread windows.
+- **Android main-thread I/O and ANR risk.** Insights history moved from `settings.xml` to its own atomic file. Battery and insights load on IO. Settings are excluded from cloud backup and device transfer. Pairing links are limited to private and CGNAT addresses, with a replacement warning. Replies are bounded (2 MB, 15 s deadline), as are update downloads, and update checks are single-flight.
+
+## Low (fixed)
+
+- The sessions chip could not be clicked (its drag handler captured the pointer).
+- Resets more than 6 days away showed only a weekday.
+- The 14-day Insights period returned 7 days.
+- "Longest Runway" showed the riskiest window; it is now "Shortest Runway".
+- Insights ignored the warn threshold.
+- Hidden providers counted in the flyout overview.
+- X Subscription sign-in from Insights failed.
+- Keyboard focus was lost on each refresh.
+- From the installed app's log: IPC handlers were missing at startup, and a missing QR module broke Settings.
+- The click-away window had no CSP and the full preload; pairing, update and auto-resume IPC now only accept the flyout.
+- Packaged builds now disable run-as-Node, `NODE_OPTIONS` and inspector flags (Electron fuses, verified on a local build).
+- Workflow actions are pinned to commit SHAs.
+- The installer's Node check matches `engines`.
+- An Android phone without a browser no longer crashes on a usage link.
+
+## Deferred (not fixed)
+
+- **Capture helper sees other users' traffic (shared PCs only).** On a multi-user PC the helper forwards every user's traffic and DNS names to the enrolled user. It needs per-event SID filtering in `NetCapture.cs`, verified elevated.
+- **Elevated setup writes its result to a user-writable folder.** Low risk, over-the-shoulder elevation only.
+- **"GB" means 10⁹ in Insights and 2³⁰ elsewhere.** Changing either would shift users' saved budgets.
+- **Android: an unauthenticated 403 still clears linked sign-ins.** LAN denial of service only. The provider-API HTTP client on the phone is not size-capped.
+- **The folder menu asks for administrator approval on each launch until accepted.** This is owner-designed and left unchanged.
+- **Not enabled: the asar integrity fuse, and `unsafe-inline` styles in the Insights CSP.** Both are low value next to their risk of a launch or rendering regression that cannot be checked here.
+
+## Verification and limits
+
+- **Desktop:** 256 tests, 254 pass, 0 fail, 2 platform skips (baseline 229 pass). The Electron UI smoke test passes for flyout, chips, net, settings and Insights; two runs during a parallel Gradle build failed on timing only and passed when re-run on an idle machine. `git diff --check` passes. Runtime dependency audit: zero advisories. The build-tool chain still has 8 moderate advisories, none high or critical.
+- **Windows packaging:** the packaged `--dir` build succeeds with the fuses flipped and the new files inside the asar. The packaged executable was not launched, because it would share the running installed app's profile and single-instance lock. The capture helper compiles as CI does, and its self-test passes.
+- **Android (Docker SDK 35):** 108 unit tests pass (was 97), lint has 0 errors and 13 warnings, and the debug APK builds. It was not installed on the phone.
+- **Live 1.9.0:** main process about 1.9% of one core and about 320 MB private memory, flat over 10 min. Four resident PowerShell helpers used about 300 MB. The taskbar probe CPU comes from the reviewer's measurement on this machine; the new watcher was run here and exits on pipe close.
+- **Not exercised:**
+  - Live provider responses for the new Codex layout (inferred from the installed CLI's strings) and for Retry-After values.
+  - macOS and Linux runtime.
+  - The rekey against a real phone.
+
 # Follow-up review (2026-10-21)
 
 ## Blocker

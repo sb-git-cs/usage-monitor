@@ -313,8 +313,14 @@ namespace UsageMonitorNet
 
         static void RequireProgram(string path)
         {
-            if (string.IsNullOrEmpty(path) || !Path.IsPathRooted(path) || !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
-                throw new ArgumentException("Only an existing .exe path can be blocked.");
+            string error = PathRules.Error(path);
+            if (error != null) throw new ArgumentException(error);
+            if (!File.Exists(path)) throw new ArgumentException("Only an existing .exe path can be blocked.");
+            // A short 8.3 name or a junction can spell a protected program differently; the
+            // firewall acts on the real file, so the rules are checked again on that.
+            string real = PathRules.FinalPath(path);
+            error = real == null ? "The program's location could not be verified." : PathRules.Error(real);
+            if (error != null) throw new ArgumentException(error);
         }
 
         void Uninstall(LineWriter writer, string id)
@@ -1087,8 +1093,109 @@ namespace UsageMonitorNet
         }
     }
 
+    // Decides which program files BLOCK may act on. The helper runs as SYSTEM, so an unchecked
+    // path could make it authenticate to a remote server (UNC) or break Windows for every user by
+    // blocking a system or security program. These rules keep BLOCK to local, ordinary programs.
+    static class PathRules
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern uint GetFinalPathNameByHandleW(IntPtr file, StringBuilder path, uint size, uint flags);
+
+        // The file's real path with short names and junctions resolved, as a drive path; null when
+        // it cannot be opened or lives on a network share.
+        public static string FinalPath(string path)
+        {
+            // No access rights requested: only the name is read. Share everything; open directories too.
+            IntPtr h = CreateFileW(path, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+            if (h == IntPtr.Zero || h == new IntPtr(-1)) return null;
+            try
+            {
+                var sb = new StringBuilder(1024);
+                uint n = GetFinalPathNameByHandleW(h, sb, (uint)sb.Capacity, 0);
+                if (n == 0 || n >= sb.Capacity) return null;
+                string p = sb.ToString();
+                if (p.StartsWith("\\\\?\\UNC\\", StringComparison.OrdinalIgnoreCase)) return null;
+                return p.StartsWith("\\\\?\\") ? p.Substring(4) : p;
+            }
+            finally { Native.CloseHandle(h); }
+        }
+
+        static bool IsDriveRooted(string p)
+        {
+            return p.Length >= 3 && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':' && p[2] == '\\';
+        }
+
+        static bool IsUnder(string path, string baseDir)
+        {
+            if (string.IsNullOrEmpty(baseDir)) return false;
+            string b = baseDir.TrimEnd('\\') + "\\";
+            return path.StartsWith(b, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Why this path cannot be blocked, or null when it is a safe local program file.
+        public static string Error(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "No program to block.";
+            // "\\\\" is a UNC or device path (\\server, \\?\, \\.\); blocking it could reach the network as SYSTEM.
+            if (path.StartsWith("\\\\")) return "Network and device paths cannot be blocked.";
+            if (!IsDriveRooted(path)) return "Only a local drive path can be blocked.";
+            if (path.IndexOf("..") >= 0) return "Relative path segments are not allowed.";
+            if (!path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return "Only a program file (.exe) can be blocked.";
+            try { if (new DriveInfo(path.Substring(0, 3)).DriveType != DriveType.Fixed) return "Only a program on a fixed drive can be blocked."; }
+            catch { return "The drive could not be verified."; }
+            string windir = Environment.GetEnvironmentVariable("windir");
+            if (string.IsNullOrEmpty(windir)) windir = Environment.GetEnvironmentVariable("SystemRoot");
+            if (IsUnder(path, windir)) return "Windows system programs cannot be blocked.";
+            foreach (string pf in new[] { Environment.GetEnvironmentVariable("ProgramW6432"), Environment.GetEnvironmentVariable("ProgramFiles"), Environment.GetEnvironmentVariable("ProgramFiles(x86)") })
+                if (IsUnder(path, string.IsNullOrEmpty(pf) ? null : Path.Combine(pf, "Windows Defender"))) return "Security programs cannot be blocked.";
+            string programData = Environment.GetEnvironmentVariable("ProgramData");
+            if (IsUnder(path, string.IsNullOrEmpty(programData) ? null : Path.Combine(programData, "Microsoft\\Windows Defender"))) return "Security programs cannot be blocked.";
+            return null;
+        }
+    }
+
     static class SelfTest
     {
+        // path, and whether PathRules must refuse it. The real program need not exist: these check
+        // the path rules only, which run before the File.Exists test in RequireProgram.
+        static readonly string[][] PathCases = new string[][] {
+            new[] { Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles") ?? "C:\\Program Files", "Example App\\example.exe"), "allow" },
+            new[] { "\\\\server\\share\\app.exe", "block" },
+            new[] { "\\\\?\\C:\\Users\\x\\app.exe", "block" },
+            new[] { "\\??\\C:\\Users\\x\\app.exe", "block" },
+            new[] { "app.exe", "block" },
+            new[] { "C:\\Users\\x\\..\\y\\app.exe", "block" },
+            new[] { "C:\\Users\\x\\note.txt", "block" },
+            new[] { Path.Combine(Environment.GetEnvironmentVariable("windir") ?? "C:\\Windows", "System32\\svchost.exe"), "block" },
+            new[] { Path.Combine(Environment.GetEnvironmentVariable("ProgramFiles") ?? "C:\\Program Files", "Windows Defender\\MsMpEng.exe"), "block" },
+            new[] { Path.Combine(Environment.GetEnvironmentVariable("ProgramData") ?? "C:\\ProgramData", "Microsoft\\Windows Defender\\Platform\\x\\MsMpEng.exe"), "block" },
+        };
+
+        static bool AppendPathRules(StringBuilder sb)
+        {
+            bool allOk = true;
+            int pass = 0, fail = 0;
+            var cases = new StringBuilder();
+            foreach (var c in PathCases)
+            {
+                bool blocked = PathRules.Error(c[0]) != null;
+                bool ok = blocked == (c[1] == "block");
+                if (ok) pass++; else { fail++; allOk = false; }
+                if (cases.Length > 0) cases.Append(',');
+                cases.Append("{\"path\":").Append(Json.Str(c[0])).Append(",\"blocked\":").Append(blocked ? "true" : "false")
+                     .Append(",\"expect\":").Append(Json.Str(c[1])).Append(",\"ok\":").Append(ok ? "true" : "false").Append('}');
+            }
+            // The resolved path of a real system program must still be refused.
+            string real = PathRules.FinalPath(Path.Combine(Environment.GetEnvironmentVariable("windir") ?? "C:\\Windows", "System32\\svchost.exe"));
+            bool finalOk = real != null && real.EndsWith("svchost.exe", StringComparison.OrdinalIgnoreCase) && PathRules.Error(real) != null;
+            if (!finalOk) { fail++; allOk = false; } else pass++;
+            sb.Append(",\"pathRules\":{\"pass\":").Append(pass).Append(",\"fail\":").Append(fail).Append(",\"finalPath\":").Append(Json.Str(real ?? "")).Append(",\"cases\":[").Append(cases).Append("]}");
+            return allOk;
+        }
+
         public static int Run(string output)
         {
             var sb = new StringBuilder();
@@ -1097,6 +1204,7 @@ namespace UsageMonitorNet
               .Append(",\"properties\":").Append(Marshal.SizeOf(typeof(Native.EVENT_TRACE_PROPERTIES)))
               .Append(",\"header\":").Append(Marshal.SizeOf(typeof(Native.TRACE_LOGFILE_HEADER)))
               .Append(",\"elevated\":").Append(new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator) ? "true" : "false");
+            bool pathRulesOk = AppendPathRules(sb);
             try
             {
                 var capture = new Capture("selftest");
@@ -1115,7 +1223,7 @@ namespace UsageMonitorNet
             catch (Exception ex) { sb.Append(",\"firewallError\":").Append(Json.Str(ex.Message)); }
             sb.Append('}');
             File.WriteAllText(output, sb.ToString());
-            return 0;
+            return pathRulesOk ? 0 : 3;
         }
     }
 

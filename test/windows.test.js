@@ -159,7 +159,7 @@ test("docked chips are handed to the taskbar probe with this process id, and rel
   const calls = [];
   const layout = load("src/taskbarLayout.js", {
     electron: { screen: { screenToDipRect: (_w, r) => r } },
-    child_process: { execFile: (_cmd, args, _opts, cb) => { calls.push(args); cb(null, JSON.stringify({ tray: { x: 0, y: 0, w: 100, h: 48 }, occupied: [], ownerApplied: true })); } },
+    child_process: { execFile: (_cmd, args, _opts, cb) => { calls.push(args); cb(null, JSON.stringify({ tray: { x: 0, y: 0, w: 100, h: 48 }, occupied: [], owner: "123456:1:0", ownerApplied: true })); } },
   });
   layout.setChipsOwner("not-a-handle", true);
   layout.setChipsOwner("123456", true);
@@ -173,4 +173,48 @@ test("docked chips are handed to the taskbar probe with this process id, and rel
   const flag = (args, name) => args[args.indexOf(name) + 1];
   assert.deepEqual([flag(calls[0], "-Hwnd"), flag(calls[0], "-Own"), flag(calls[0], "-AppPid")], ["123456", "1", String(process.pid)]);
   assert.equal(flag(calls[1], "-Own"), "0");
+});
+
+test("a taskbar read starts at most one probe, and the running watch answers without spawning", () => {
+  const execCalls = [];
+  let execCb = null;
+  const spawned = [];
+  const child_process = {
+    execFile: (_cmd, args, _opts, cb) => { execCalls.push(args); execCb = cb; },
+    spawn: () => {
+      const proc = { stdin: { writable: true, write() {}, on() {} }, stdout: { setEncoding() {}, on(ev, fn) { if (ev === "data") proc.emit = fn; } }, on() {}, kill() {} };
+      spawned.push(proc);
+      return proc;
+    },
+  };
+  const electron = {
+    app: { isPackaged: false },
+    screen: {
+      screenToDipRect: (_w, r) => r,
+      getDisplayMatching: () => ({ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }),
+      getPrimaryDisplay: () => ({ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, workArea: { x: 0, y: 0, width: 1920, height: 1032 } }),
+    },
+  };
+  const layout = load("src/taskbarLayout.js", { child_process, electron });
+  const tray = (h) => JSON.stringify({ tray: { x: 0, y: 1080 - h, w: 1920, h }, occupied: [], owner: null, ownerApplied: false, shown: true });
+
+  // Several reads before the first result resolves must share one probe (no queued rerun).
+  for (let i = 0; i < 5; i++) { layout.loadLayout(); layout.dockRoom(200, 44, []); layout.snapDocked(1500, 1034, 200, 44, []); }
+  if (process.platform !== "win32") {
+    assert.equal(execCalls.length, 0, "only Windows probes a taskbar");
+    return;
+  }
+  assert.equal(execCalls.length, 1, "repeated reads within the cache window start a single probe");
+  execCb(null, tray(48));
+  for (let i = 0; i < 5; i++) layout.loadLayout();
+  assert.equal(execCalls.length, 1, "a fresh cache needs no further probe");
+
+  // Once the watch is running it streams layouts; a read spawns no probe even with a stale cache.
+  layout.watchTaskbar(() => {});
+  assert.equal(spawned.length, 1);
+  spawned[0].emit("layout=" + tray(60) + "\n");
+  layout.invalidate();
+  for (let i = 0; i < 5; i++) layout.loadLayout();
+  assert.equal(execCalls.length, 1, "the watch feeds layouts, so reads spawn no extra probe");
+  assert.equal(layout.loadLayout().tray.h, 60, "the streamed layout is used");
 });

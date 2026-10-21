@@ -62,3 +62,20 @@ test("history records fresh readings once a minute, starts over on a new window 
   reloaded.record(reading(3, new Date(now + 5 * 60 * MIN).toISOString()));
   assert.equal(reloaded.series.get(key).points.length, 1, "a new reset time starts a new series");
 });
+
+test("a reset time repeated with a second of jitter is the same window and still gets a forecast", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "um-history-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let now = T0;
+  const h = new History({ file: path.join(dir, "h.json"), now: () => now });
+  const reset = T0 + 3 * 60 * MIN;
+  const reading = (used, offset) => ({ providers: [{ id: "claude", status: { state: "ok" }, windows: [{ kind: "five_hour", label: "5h", used_pct: used, resets_at: new Date(reset + offset).toISOString() }] }] });
+  const jitter = [411, -191, 347, -483, 10];
+  for (let i = 0; i < 12; i++) {
+    now = T0 + i * MIN;
+    h.record(reading(40 + i, jitter[i % jitter.length]));
+  }
+  assert.equal(h.series.size, 1);
+  assert.equal([...h.series.values()][0].points.length, 12, "jitter does not start a new window");
+  assert.ok(h.annotate(reading(51, -191)).providers[0].windows[0].forecast_at);
+});

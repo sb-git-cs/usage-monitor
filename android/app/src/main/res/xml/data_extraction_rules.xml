@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backups are off (android:allowBackup="false"), but from Android 12 a transfer to a new phone
+     still copies app data unless excluded here. The pairing key and readings stay on this phone.
+     Sign-ins are in no_backup, which is never copied, under a key that never leaves the Keystore. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="settings.xml" />
+        <exclude domain="file" path="insights.json" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="settings.xml" />
+        <exclude domain="file" path="insights.json" />
+    </device-transfer>
+</data-extraction-rules>

@@ -146,6 +146,22 @@ function fileExists(p) {
   }
 }
 
+// Replaces a CLI's credential file after a token refresh. The CLIs keep these owner-only
+// (0600); a plain write would leave the new tokens readable by other users on macOS and Linux.
+// A leftover .tmp keeps its old mode on write, so the mode is set explicitly as well.
+function writeSecretFile(file, text) {
+  const tmp = `${file}.tmp`;
+  try {
+    fs.writeFileSync(tmp, text, { encoding: "utf8", mode: 0o600 });
+    if (process.platform !== "win32") fs.chmodSync(tmp, 0o600);
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    // A failed replace must not leave the new tokens behind in a stray file.
+    try { fs.unlinkSync(tmp); } catch { /* never written */ }
+    throw err;
+  }
+}
+
 module.exports = {
   cursorCliDir,
   home,
@@ -174,4 +190,5 @@ module.exports = {
   cliPath,
   cliOnPath,
   fileExists,
+  writeSecretFile,
 };

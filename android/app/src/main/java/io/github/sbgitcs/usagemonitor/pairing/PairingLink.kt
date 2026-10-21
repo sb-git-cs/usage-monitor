@@ -36,8 +36,14 @@ object PairingLink {
 
     private fun decode(s: String): String = URLDecoder.decode(s, "UTF-8")
 
-    private fun isAddress(s: String): Boolean {
+    /**
+     * A private (10/8, 172.16/12, 192.168/16) or carrier-grade NAT (100.64/10, which VPNs such as
+     * Tailscale use) IPv4 address: a link from a web page must not point the phone at a public host.
+     */
+    internal fun isAddress(s: String): Boolean {
         val parts = s.split(".")
-        return parts.size == 4 && parts.all { p -> p.isNotEmpty() && p.length <= 3 && p.all(Char::isDigit) && p.toInt() in 0..255 }
+        if (parts.size != 4 || !parts.all { p -> p.isNotEmpty() && p.length <= 3 && p.all { it in '0'..'9' } && p.toInt() in 0..255 }) return false
+        val (a, b) = parts.map { it.toInt() }
+        return a == 10 || (a == 172 && b in 16..31) || (a == 192 && b == 168) || (a == 100 && b in 64..127)
     }
 }

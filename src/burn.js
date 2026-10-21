@@ -31,6 +31,8 @@ function analyzeBurn(seriesList = [], now = Date.now) {
     const last = pts.at(-1);
     const used = Math.max(0, Math.min(100, last.used));
     const lookback = lookbackMs(s.kind);
+    // A window that has reset since, or is no longer being read, says nothing about the current pace.
+    if (Date.parse(last.reset) <= nowMs || nowMs - last.t > lookback) continue;
     const recent = pts.filter((p) => p.t >= nowMs - lookback && p.t <= nowMs);
     const sample = recent.length >= 2 ? recent : pts.slice(-5);
     const rawRate = slopePerHour(sample);

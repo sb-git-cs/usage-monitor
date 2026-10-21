@@ -125,6 +125,7 @@ function normalizePhone(raw) {
     .map((d) => ({
       id: d.id,
       key: d.key,
+      ...(/^[A-Za-z0-9_-]{43}$/.test(d.next_key) ? { next_key: d.next_key } : {}),
       name: typeof d.name === "string" && d.name.trim() ? d.name.trim().slice(0, 60) : "Phone",
       created_at: Number.isFinite(d.created_at) ? d.created_at : Date.now(),
       last_seen: Number.isFinite(d.last_seen) ? d.last_seen : null,

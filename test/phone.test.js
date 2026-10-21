@@ -133,7 +133,9 @@ test("unsigned, wrongly signed, stale and unknown requests are refused", async (
   const now = clock.get();
   assert.equal((await request(port)).status, 401);
   assert.equal((await request(port, { headers: { ...signed(code, now), "X-UM-Sig": "x".repeat(43) } })).status, 401);
-  assert.equal((await request(port, { headers: signed(code, now - 6 * 60_000) })).status, 401, "more than five minutes off");
+  const skewed = await request(port, { headers: signed(code, now - 6 * 60_000) });
+  assert.deepEqual([skewed.status, skewed.body], [400, { error: "clock" }], "a correct signature more than five minutes off is told to check the clock");
+  assert.equal((await request(port, { headers: { ...signed(code, now - 6 * 60_000), "X-UM-Sig": "x".repeat(43) } })).status, 401);
   assert.equal((await request(port, { headers: signed(phone.newCode(), now) })).status, 401);
   assert.equal((await request(port, { path: "/admin" })).status, 404);
   clock.set(now + 11 * 60_000);
@@ -213,13 +215,62 @@ test("tokens are served only after the computer allows direct reading, until it 
   const body = phone.decrypt(key, time, res.body);
   assert.deepEqual(body.tokens, { claude: { access_token: "at-1", expires_at: 123, plan: "Max" } });
   assert.ok(!/at-1/.test(Buffer.from(res.body.data, "base64url").toString("latin1")), "tokens are encrypted on the wire");
-  assert.equal((await post(port, "/v1/link", signed(code, time, "/v1/link", {}, "POST"))).status, 200);
+  assert.equal((await post(port, "/v1/link", signed(code, time + 1, "/v1/link", {}, "POST"))).status, 200);
   assert.equal(asked.length, 1, "an allowed phone is not asked about again");
 
   const stopped = await post(port, "/v1/unlink", signed(code, time, "/v1/unlink", {}, "POST"));
   assert.deepEqual(phone.decrypt(key, time, stopped.body), { ok: true, direct: false });
   assert.equal((await request(port, { path: "/v1/tokens", headers: signed(code, time, "/v1/tokens") })).status, 403);
   assert.equal((await request(port, { path: "/v1/tokens", headers: signed(code, time, "/v1/snapshot") })).status, 401, "a signature for another path is refused");
+});
+
+test("a recorded request that changes something is accepted only once", async (t) => {
+  const asked = [];
+  const { link, cfg, port, clock } = await startLink(t, { onAccount: (provider, id) => asked.push([provider, id]) });
+  const code = link.startPairing().pairing.code;
+  const time = clock.get();
+  assert.equal((await request(port, { path: "/v1/ping", headers: signed(code, time, "/v1/ping") })).status, 200);
+  const path = "/v1/account/claude/user-1";
+  const headers = signed(code, time, path, {}, "POST");
+  assert.equal((await post(port, path, headers)).status, 200);
+  assert.equal((await post(port, path, headers)).status, 409, "the same signed switch is refused");
+  assert.deepEqual(asked, [["claude", "user-1"]], "the computer is asked once");
+  link.setDirect(phone.deviceId(code), true);
+  const unlink = signed(code, time, "/v1/unlink", {}, "POST");
+  assert.equal((await post(port, "/v1/unlink", unlink)).status, 200);
+  link.setDirect(phone.deviceId(code), true);
+  assert.equal((await post(port, "/v1/unlink", unlink)).status, 409);
+  assert.equal(cfg.phone.devices[0].direct, true, "a replayed unlink changes nothing");
+  assert.equal((await post(port, path, signed(code, time + 1, path, {}, "POST"))).status, 200, "a freshly signed request still works");
+  assert.equal((await request(port, { headers: signed(code, time) })).status, 200);
+  assert.equal((await request(port, { headers: signed(code, time) })).status, 200, "reads may repeat; their answers stay encrypted");
+  clock.set(time + 6 * 60_000);
+  link.replayed({ device: { id: "x" }, time: clock.get() }, "POST", "/v1/link");
+  assert.equal(link.seen.size, 1, "expired entries are dropped");
+});
+
+test("a paired phone swaps the code-derived key for a random one at its first use", async (t) => {
+  const { link, cfg, port, clock } = await startLink(t);
+  const code = link.startPairing().pairing.code;
+  const old = phone.masterKey(code);
+  const time = clock.get();
+  assert.equal((await request(port, { path: "/v1/ping", headers: signed(code, time, "/v1/ping") })).status, 200);
+  const res = await post(port, "/v1/rekey", signed(code, time, "/v1/rekey", {}, "POST"));
+  assert.equal(res.status, 200);
+  const fresh = Buffer.from(phone.decrypt(old, time, res.body).key, "base64url");
+  assert.equal(fresh.length, 32);
+  assert.notEqual(fresh.toString("base64url"), old.toString("base64url"));
+  const withKey = (key, at, path = "/v1/snapshot") => ({ "X-UM-Id": phone.deviceId(code), "X-UM-Time": String(at), "X-UM-Sig": phone.sign(key, "GET", path, at) });
+  assert.equal((await request(port, { headers: withKey(old, time + 1) })).status, 200, "a lost reply leaves the old key working");
+  const next = await request(port, { headers: withKey(fresh, time + 2) });
+  assert.equal(next.status, 200);
+  assert.equal(phone.decrypt(fresh, time + 2, next.body).providers[0].windows[0].used_pct, 42);
+  assert.equal(cfg.phone.devices[0].key, fresh.toString("base64url"));
+  assert.equal(cfg.phone.devices[0].next_key, undefined);
+  assert.equal((await request(port, { headers: withKey(old, time + 3) })).status, 401, "the code no longer reads this computer");
+  const config = require("../src/config");
+  const kept = config.normalizePhone({ devices: [{ ...cfg.phone.devices[0], next_key: "A".repeat(43) }] }).devices[0];
+  assert.equal(kept.next_key, "A".repeat(43), "a pending key survives a restart");
 });
 
 test("beginPairing turns sharing on without dropping the new code", () => {

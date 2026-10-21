@@ -10,6 +10,7 @@ const {
 const { windowOf, emptyProvider } = require("../models");
 const { postJson, postForm } = require("../http");
 const { readGenericCredential } = require("../wincred");
+const { jwtClaims } = require("../jwt");
 
 const DISPLAY = "Gemini";
 const WINCRED_TARGET = "gemini:antigravity";
@@ -108,7 +109,13 @@ function expiryEpoch(value) {
   return Number.isNaN(t) ? null : t / 1000;
 }
 
-function fromTokenBlock(token, source) {
+// The Google account a saved sign-in belongs to, from the ID token kept beside its access token.
+function accountOf(saved) {
+  const claims = jwtClaims(saved && saved.id_token) || jwtClaims(saved && saved.token && saved.token.id_token);
+  return (claims && (claims.sub || claims.email)) || null;
+}
+
+function fromTokenBlock(token, source, saved = token) {
   if (!token || typeof token !== "object") return null;
   const access = token.access_token || token.accessToken;
   const refresh = token.refresh_token || token.refreshToken;
@@ -118,13 +125,14 @@ function fromTokenBlock(token, source) {
     refresh_token: refresh || null,
     expiry_epoch: expiryEpoch(token.expiry || token.expiry_date || token.expires_at),
     source,
+    account_id: accountOf(saved),
   };
 }
 
 function fromFile(filePath) {
   try {
     const json = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return fromTokenBlock(json.token || json, "file");
+    return fromTokenBlock(json.token || json, "file", json);
   } catch {
     return null;
   }
@@ -142,7 +150,7 @@ async function readWinCred() {
 async function readStoredCreds() {
   if (process.platform === "win32") {
     const blob = await readWinCred();
-    const fromCred = fromTokenBlock(blob && blob.token, "wincred") || fromTokenBlock(blob, "wincred");
+    const fromCred = fromTokenBlock(blob && blob.token, "wincred", blob) || fromTokenBlock(blob, "wincred");
     if (fromCred) return fromCred;
   }
   const fileCred = fromFile(antigravityToken()) || fromFile(geminiOAuth());
@@ -193,9 +201,12 @@ async function refreshAccess(creds) {
 
 async function getCreds(cfg) {
   const refreshEnabled = cfg?.adapters?.gemini?.refresh_tokens !== false;
-  if (accessValid(memCreds)) return memCreds;
-  let creds = await readStoredCreds();
+  const creds = await readStoredCreds();
   if (!creds) return null;
+  // A refreshed token is reused only while the sign-in it came from is still the saved one, so a
+  // new sign-in or another account is read at once.
+  creds.saved = `${creds.access_token}|${creds.refresh_token}`;
+  if (accessValid(memCreds) && memCreds.saved === creds.saved) return memCreds;
   if (refreshEnabled && !accessValid(creds) && creds.refresh_token) {
     const next = await refreshAccess(creds);
     if (next) return next;
@@ -457,7 +468,7 @@ async function fetchFromHost(host, token, loadBody) {
   for (const [method, map] of [["retrieveUserQuotaSummary", mapSummary], ["retrieveUserQuota", mapQuotaBuckets], ["fetchAvailableModels", mapModels]]) {
     const result = await assistPost(host, token, method, body);
     if (result.status === 401) return { authFailed: true };
-    if (result.status === 429) return { failed: true, status: 429, plan };
+    if (result.status === 429) return { failed: true, status: 429, plan, windows, retryAt: parse429Reset(result) };
     if (result.status === 200 && result.json) {
       const mapped = map(result.json);
       windows = combineWindows(windows, mapped);
@@ -522,6 +533,8 @@ async function fetchUsage(cfg) {
       }
     }
     if (result.authFailed) {
+      // The rejected token is not reused; the next poll reads the saved sign-in again.
+      memCreds = null;
       return empty({
         state: "logged_out",
         hint: "Run: agy  (token expired)",
@@ -543,6 +556,9 @@ async function fetchUsage(cfg) {
     if (result.status === 429) break;
   }
 
+  // Quota read before a 429 is kept, unless it is all zero, which can be a placeholder.
+  const limited = !best && lastFail && lastFail.status === 429 ? lastFail : null;
+  if (limited && (limited.windows || []).some((w) => w.used_pct > 0)) best = limited;
   if (best) {
     return {
       id: "gemini",
@@ -552,12 +568,14 @@ async function fetchUsage(cfg) {
       windows: best.windows,
       fetched_at: new Date().toISOString(),
       source: "api",
+      ...(limited ? { _rateLimited: true, _retryAfter: limited.retryAt } : {}),
     };
   }
 
-  if (lastFail && lastFail.status === 429) {
+  if (limited) {
     const err = empty({ state: "fetch_failed", message: "rate limited" });
     err._rateLimited = true;
+    err._retryAfter = limited.retryAt;
     return err;
   }
 
@@ -583,4 +601,9 @@ async function linkToken(cfg) {
   };
 }
 
-module.exports = { id: "gemini", displayName: DISPLAY, probe, fetchUsage, linkToken };
+// The Google account of the saved sign-in, when the CLI kept its ID token.
+async function accountRef() {
+  return (await readStoredCreds())?.account_id || null;
+}
+
+module.exports = { id: "gemini", displayName: DISPLAY, probe, fetchUsage, linkToken, accountRef };

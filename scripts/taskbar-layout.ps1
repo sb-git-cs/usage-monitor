@@ -56,56 +56,88 @@ function Get-TaskbarShown {
   return $thick -ge 12
 }
 
+# Reads the taskbar rectangles and, when a chips window is given, applies its taskbar ownership
+# and capture exclusion. GetWindowRect must return physical pixels; Electron converts them to DIP.
+function Get-Layout($hwnd, $own, $apppid, $capture) {
+  [void][TaskbarLayout]::SetThreadDpiAwarenessContext([IntPtr]::new(-4))
+  $trayHwnd = [TaskbarLayout]::FindWindow("Shell_TrayWnd", $null)
+  $tray = Rect $trayHwnd
+  $occupied = @()
+  if ($trayHwnd -ne [IntPtr]::Zero) {
+    foreach ($cls in @("TrayNotifyWnd", "ReBarWindow32", "MSTaskSwWClass", "Start")) {
+      $child = [TaskbarLayout]::FindWindowEx($trayHwnd, [IntPtr]::Zero, $cls, $null)
+      $rr = Rect $child
+      if ($rr -and $rr.w -gt 8 -and $rr.h -gt 8) {
+        $occupied += @{ name = $cls; x = $rr.x; y = $rr.y; w = $rr.w; h = $rr.h }
+      }
+    }
+  }
+
+  # Owning the chips by the taskbar keeps them visible when Windows raises the taskbar above
+  # other windows (Start menu, Quick Settings), and re-attaches them after Explorer replaces the
+  # taskbar. Only a window of the calling process is touched.
+  $ownerApplied = $false
+  $ownerTag = $null
+  if ("$hwnd" -match '^\d+$') {
+    $ownerTag = "$hwnd`:$own`:$capture"
+    $chips = [IntPtr]::new([Int64]$hwnd)
+    $windowPid = [uint32]0
+    [void][TaskbarLayout]::GetWindowThreadProcessId($chips, [ref]$windowPid)
+    if ($apppid -gt 0 -and $windowPid -eq $apppid) {
+      $target = if ($own -eq 1) { $trayHwnd } else { [IntPtr]::Zero }
+      if ([TaskbarLayout]::GetWindowLongPtr($chips, -8) -ne $target) { [void][TaskbarLayout]::SetWindowLongPtr($chips, -8, $target) }
+      $ownerApplied = ([TaskbarLayout]::GetWindowLongPtr($chips, -8) -eq $target)
+      # 0x11 excludes the window from screen capture. Docked chips then are not a separate
+      # bar in a share that does not include the taskbar. 0 puts a floating strip back in.
+      $affinity = if ($capture -eq 1) { [uint32]0x11 } else { [uint32]0 }
+      [void][TaskbarLayout]::SetWindowDisplayAffinity($chips, $affinity)
+    }
+  }
+
+  return @{
+    tray = $tray
+    occupied = $occupied
+    owner = $ownerTag
+    ownerApplied = $ownerApplied
+    shown = [bool](Get-TaskbarShown)
+  }
+}
+
 if ($Watch) {
+  # The one long-lived process also answers layout requests, so steady state spawns no new
+  # PowerShell. Owner changes arrive on stdin ("own <hwnd> <own> <capture> <apppid>", "probe");
+  # the async reader never blocks the 200 ms poll that reports when the taskbar slides away.
+  $stdin = New-Object IO.StreamReader ([Console]::OpenStandardInput()), (New-Object Text.UTF8Encoding $false)
+  $pending = $stdin.ReadLineAsync()
+  $curHwnd = $Hwnd; $curOwn = $Own; $curCapture = $Capture; $curPid = $AppPid
   $previous = $null
+  $lastLayout = [DateTime]::MinValue
   while ($true) {
+    $force = $false
+    while ($pending -and $pending.IsCompleted) {
+      $line = $pending.Result
+      # A closed stdin means the app is gone; do not linger as an orphan.
+      if ($null -eq $line) { exit }
+      $pending = $stdin.ReadLineAsync()
+      $parts = $line.Split(' ')
+      if ($parts[0] -eq 'own' -and $parts.Count -ge 5) {
+        $curHwnd = $parts[1]; $curOwn = [int]$parts[2]; $curCapture = [int]$parts[3]; $curPid = [int]$parts[4]
+        $force = $true
+      } elseif ($parts[0] -eq 'probe') { $force = $true }
+    }
     $shown = Get-TaskbarShown
     if ($shown -ne $previous) {
       [Console]::Out.WriteLine($(if ($shown) { "shown=1" } else { "shown=0" }))
-      [Console]::Out.Flush()
       $previous = $shown
+      $force = $true
     }
+    if ($force -or ([DateTime]::UtcNow - $lastLayout).TotalSeconds -ge 8) {
+      [Console]::Out.WriteLine("layout=" + ((Get-Layout $curHwnd $curOwn $curPid $curCapture) | ConvertTo-Json -Compress -Depth 4))
+      $lastLayout = [DateTime]::UtcNow
+    }
+    [Console]::Out.Flush()
     Start-Sleep -Milliseconds 200
   }
 }
 
-# GetWindowRect must return physical pixels; Electron converts them to DIP.
-[void][TaskbarLayout]::SetThreadDpiAwarenessContext([IntPtr]::new(-4))
-$trayHwnd = [TaskbarLayout]::FindWindow("Shell_TrayWnd", $null)
-$tray = Rect $trayHwnd
-$occupied = @()
-if ($trayHwnd -ne [IntPtr]::Zero) {
-  foreach ($cls in @("TrayNotifyWnd", "ReBarWindow32", "MSTaskSwWClass", "Start")) {
-    $child = [TaskbarLayout]::FindWindowEx($trayHwnd, [IntPtr]::Zero, $cls, $null)
-    $rr = Rect $child
-    if ($rr -and $rr.w -gt 8 -and $rr.h -gt 8) {
-      $occupied += @{ name = $cls; x = $rr.x; y = $rr.y; w = $rr.w; h = $rr.h }
-    }
-  }
-}
-
-# Owning the chips by the taskbar keeps them visible when Windows raises the taskbar above
-# other windows (Start menu, Quick Settings). Only a window of the calling process is touched.
-$ownerApplied = $false
-if ($Hwnd -match '^\d+$') {
-  $chips = [IntPtr]::new([Int64]$Hwnd)
-  $windowPid = [uint32]0
-  [void][TaskbarLayout]::GetWindowThreadProcessId($chips, [ref]$windowPid)
-  if ($AppPid -gt 0 -and $windowPid -eq $AppPid) {
-    $target = if ($Own -eq 1) { $trayHwnd } else { [IntPtr]::Zero }
-    if ([TaskbarLayout]::GetWindowLongPtr($chips, -8) -ne $target) { [void][TaskbarLayout]::SetWindowLongPtr($chips, -8, $target) }
-    $ownerApplied = ([TaskbarLayout]::GetWindowLongPtr($chips, -8) -eq $target)
-    # 0x11 excludes the window from screen capture. Docked chips then are not a separate
-    # bar in a share that does not include the taskbar. 0 puts a floating strip back in.
-    $affinity = if ($Capture -eq 1) { [uint32]0x11 } else { [uint32]0 }
-    [void][TaskbarLayout]::SetWindowDisplayAffinity($chips, $affinity)
-  }
-}
-
-$result = @{
-  tray = $tray
-  occupied = $occupied
-  ownerApplied = $ownerApplied
-  shown = [bool](Get-TaskbarShown)
-}
-$result | ConvertTo-Json -Compress -Depth 4
+Get-Layout $Hwnd $Own $AppPid $Capture | ConvertTo-Json -Compress -Depth 4

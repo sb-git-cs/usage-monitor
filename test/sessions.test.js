@@ -637,3 +637,36 @@ test("a Cursor terminal shows the title of the chat it started", async () => {
   const view = await w.scan();
   assert.deepEqual(view.sessions.map((s) => [s.label, s.name, s.state]), [["Cursor Agent", "Wire up the exporter", "idle"]]);
 });
+
+test("a codex resume id with no rollout is searched once, then skipped until the retry window", async (t) => {
+  const codex = tmpdir();
+  t.after(() => fs.rmSync(codex, { recursive: true, force: true }));
+  const root = path.join(codex, "sessions");
+  // A real rollout on today's date, but not the id the process resumes.
+  const now = new Date(NOW);
+  const day = path.join(root, String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0"));
+  fs.mkdirSync(day, { recursive: true });
+  const realId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  fs.writeFileSync(path.join(day, `rollout-x-${realId}.jsonl`),
+    JSON.stringify({ type: "session_meta", payload: { id: realId, cwd: "D:\p", timestamp: now.toISOString() } }) + "\n");
+  const missing = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+  const start = toFiletime(NOW - 5000);
+  const request = async (req) => req.op === "scan"
+    ? { procs: [{ pid: 900, ppid: 1, name: "codex", start, cwd: "D:\p", cmd: `codex resume ${missing}` }] }
+    : { shown: false, text: null };
+  const realReaddir = fs.readdirSync;
+  let rootWalks = 0;
+  fs.readdirSync = (p, ...rest) => { if (String(p) === root) rootWalks++; return realReaddir(p, ...rest); };
+  t.after(() => { fs.readdirSync = realReaddir; });
+  let clock = NOW;
+  const none = path.join(codex, "none");
+  const w = createWatcher({ getConfig: () => ({}), platform: "win32", now: () => clock, request,
+    claudeDir: () => none, codexDir: () => codex, grokDir: () => none, cursorDir: () => none });
+  await w.scan();
+  assert.equal(rootWalks, 1, "the missing id triggers one full-tree walk");
+  await w.scan();
+  assert.equal(rootWalks, 1, "a second scan inside the retry window does not walk again");
+  clock = NOW + 6 * 60_000;
+  await w.scan();
+  assert.equal(rootWalks, 2, "after the retry window it searches once more");
+});

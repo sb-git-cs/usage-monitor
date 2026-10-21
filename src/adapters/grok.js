@@ -1,5 +1,5 @@
 const fs = require("fs");
-const { grokAuth, cliOnPath, fileExists } = require("../paths");
+const { grokAuth, cliOnPath, fileExists, writeSecretFile } = require("../paths");
 const { windowOf, emptyProvider } = require("../models");
 const { getJson, postForm, request } = require("../http");
 const { jwtExpMs } = require("../jwt");
@@ -16,6 +16,17 @@ function probe() {
     cli_on_path: cliOnPath("grok"),
     creds_present: fileExists(grokAuth()),
   };
+}
+
+// A refresh whose write failed is kept until the file changes, so its rotated refresh token is not lost.
+let unsaved = null;
+
+function readAuth() {
+  const file = grokAuth();
+  const { mtimeMs } = fs.statSync(file);
+  const json = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (unsaved && unsaved.file === file && unsaved.mtimeMs === mtimeMs && json && json[unsaved.topKey]) json[unsaved.topKey] = { ...unsaved.entry };
+  return { json, mtimeMs };
 }
 
 function pickEntry(json, preferredId) {
@@ -41,11 +52,19 @@ function cliHeaders(token, entry) {
   return headers;
 }
 
+// A refused refresh is remembered for a few minutes, so a dead refresh token is not sent on every poll.
+const REFRESH_RETRY_MS = 5 * 60_000;
+const refusal = { token: null, at: 0 };
+// Accounts whose 403 outlasted a refresh. Refreshing them on every poll would only keep rotating
+// the CLI's login; a later 401 or success clears the entry.
+const forbidden = new Set();
+
 async function refreshGrok(entry, credsPath, mtimeMs, topKey) {
   const issuer = (entry.oidc_issuer || "https://auth.x.ai").replace(/\/$/, "");
   const clientId = entry.oidc_client_id;
   const refreshToken = entry.refresh_token;
   if (!clientId || !refreshToken) return null;
+  if (refusal.token === refreshToken && Date.now() - refusal.at < REFRESH_RETRY_MS) return null;
   let tokenUrl = issuer + "/oauth/token";
   try {
     const disc = await getJson(issuer + "/.well-known/openid-configuration", {
@@ -62,12 +81,15 @@ async function refreshGrok(entry, credsPath, mtimeMs, topKey) {
     refresh_token: refreshToken,
     client_id: clientId,
   });
-  if (res.status !== 200 || !res.json || !res.json.access_token) return null;
+  if (res.status !== 200 || !res.json || !res.json.access_token) {
+    Object.assign(refusal, { token: refreshToken, at: Date.now() });
+    return null;
+  }
 
   try {
-    const stat = fs.statSync(credsPath);
-    if (stat.mtimeMs !== mtimeMs) return res.json.access_token;
-    const json = JSON.parse(fs.readFileSync(credsPath, "utf8"));
+    const saved = readAuth();
+    if (saved.mtimeMs !== mtimeMs) return res.json.access_token;
+    const json = saved.json;
     const current = json[topKey];
     if (!current || current.key !== entry.key) return res.json.access_token;
     current.key = res.json.access_token;
@@ -75,9 +97,12 @@ async function refreshGrok(entry, credsPath, mtimeMs, topKey) {
     if (res.json.expires_in) {
       current.expires_at = new Date(Date.now() + res.json.expires_in * 1000).toISOString();
     }
-    const tmp = credsPath + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(json, null, 2), { encoding: "utf8" });
-    fs.renameSync(tmp, credsPath);
+    try {
+      writeSecretFile(credsPath, JSON.stringify(json, null, 2));
+      unsaved = null;
+    } catch {
+      unsaved = { file: credsPath, mtimeMs, topKey, entry: current };
+    }
   } catch {
     /* in-memory token still usable */
   }
@@ -301,9 +326,7 @@ async function fetchUsage(cfg) {
   let json;
   let mtimeMs;
   try {
-    const stat = fs.statSync(grokAuth());
-    mtimeMs = stat.mtimeMs;
-    json = JSON.parse(fs.readFileSync(grokAuth(), "utf8"));
+    ({ json, mtimeMs } = readAuth());
   } catch {
     return emptyProvider("grok", "Grok Build", {
       state: "logged_out",
@@ -334,7 +357,8 @@ async function fetchUsage(cfg) {
 
   const headers = cliHeaders(token, entry);
   let res = await getJson(BILLING_URL, headers);
-  if ((res.status === 401 || res.status === 403) && refreshEnabled && !refreshed) {
+  const who = String(entry.user_id || entry.email || topKey);
+  if ((res.status === 401 || (res.status === 403 && !forbidden.has(who))) && refreshEnabled && !refreshed) {
     try {
       const next = await refreshGrok(entry, grokAuth(), mtimeMs, topKey);
       if (next) {
@@ -345,6 +369,8 @@ async function fetchUsage(cfg) {
       /* fall through */
     }
   }
+  if (res.status === 403) forbidden.add(who);
+  else forbidden.delete(who);
   if (res.status === 401) {
     return emptyProvider("grok", "Grok Build", {
       state: "logged_out",
@@ -357,6 +383,7 @@ async function fetchUsage(cfg) {
       message: "rate limited",
     });
     err._rateLimited = true;
+    err._retryAfter = res.headers && res.headers["retry-after"];
     return err;
   }
   if (res.status !== 200 || !res.json) {
@@ -382,7 +409,7 @@ async function fetchUsage(cfg) {
 function linkToken(cfg) {
   let json;
   try {
-    json = JSON.parse(fs.readFileSync(grokAuth(), "utf8"));
+    json = readAuth().json;
   } catch {
     return null;
   }
@@ -393,4 +420,14 @@ function linkToken(cfg) {
   return { access_token: entry.key, user_id: entry.user_id ? String(entry.user_id) : null, expires_at: exp || null };
 }
 
-module.exports = { id: "grok", displayName: "Grok Build", probe, fetchUsage, linkToken };
+// The account the meters read: the saved login the user picked, else the newest.
+function accountRef(cfg) {
+  try {
+    const entry = pickEntry(readAuth().json, cfg && cfg.accounts && cfg.accounts.grok);
+    return entry && (entry.user_id || entry.email) ? String(entry.user_id || entry.email) : null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { id: "grok", displayName: "Grok Build", probe, fetchUsage, linkToken, accountRef };

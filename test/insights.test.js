@@ -49,6 +49,19 @@ test("budget uses observed byte deltas and survives restart; snooze and warnings
   f.advance(3600001); assert.equal(restored.isSnoozed(), false);
   assert.equal(restored.snooze(-1), false); assert.equal(restored.setBudget({ limit: -1, day: 0 }), false);
 });
+test("byte counters alone rewrite the file at most every 15 minutes; new readings within a minute", (t) => {
+  const f = fixture(t);
+  const written = () => (fs.existsSync(f.file) ? fs.statSync(f.file).mtimeMs + fs.readFileSync(f.file, "utf8").length : 0);
+  f.i.record(reading("a@example.com", 10, new Date(f.now() + 3600000).toISOString()));
+  const first = written();
+  for (let i = 0; i < 120; i++) { f.advance(1000); f.i.traffic({ apps: [{ rx: 100, tx: 0 }] }); }
+  assert.equal(written(), first, "two minutes of traffic did not rewrite the file");
+  f.advance(15 * 60000); f.i.traffic({ apps: [{ rx: 100, tx: 0 }] });
+  assert.equal(new Insights({ file: f.file, now: f.now }).budgetView().used, 12100);
+  f.advance(6 * 60000); f.i.record(reading("a@example.com", 30, new Date(f.now() + 3600000).toISOString()));
+  assert.equal(new Insights({ file: f.file, now: f.now }).report()[0].points.length, 2, "a new reading is saved after a minute");
+});
+
 test("billing cycles clamp day 31 to month end and cross years correctly", () => {
   const before = cycleAt(new Date(2026, 1, 15, 12).getTime(), 31);
   assert.equal(new Date(before.start).getDate(), 31); assert.equal(new Date(before.end).getDate(), 28);
@@ -65,8 +78,25 @@ test("history retention, event bound and formula-safe export", (t) => {
   assert.equal(f.i.data.events.length, 200);
   f.advance(32 * 86400000); assert.deepEqual(f.i.report(30), []); assert.equal(f.i.data.events.length, 0);
 });
+test("the 14-day period reports 14 days, not the 7-day fallback", (t) => {
+  const f = fixture(t);
+  f.i.record(reading("a@example.com", 10, new Date(f.now() + 3600000).toISOString()));
+  f.advance(10 * 86400000);
+  f.i.record(reading("a@example.com", 20, new Date(f.now() + 3600000).toISOString()));
+  assert.equal(f.i.report(7)[0].points.length, 1);
+  assert.equal(f.i.report(14)[0].points.length, 2);
+});
+
 test("display preferences validate theme, scale, visibility and provider order", () => {
   const result = displayPrefs({ theme: "invalid", scale: 1000, hidden: ["codex", "bad"], order: ["cursor", "cursor", "bad"] });
   assert.equal(result.theme, "system"); assert.equal(result.scale, 100);
   assert.deepEqual(result.hidden, ["codex"]); assert.equal(result.order[0], "cursor"); assert.equal(result.order.length, 6);
+});
+test("a reset time repeated with a second of jitter keeps one segment and the five-minute spacing", (t) => {
+  const f = fixture(t); const reset = f.now() + 3600000;
+  for (let n = 0; n < 60; n++) { f.i.record(reading("a@example.com", 40, new Date(reset + (n % 2 ? 900 : -900)).toISOString())); f.advance(5000); }
+  const [series] = f.i.report();
+  assert.equal(series.points.length, 1, "a reading every 5 s is stored once per five minutes");
+  f.advance(300000); f.i.record(reading("a@example.com", 41, new Date(reset + 300).toISOString()));
+  assert.equal(new Set(f.i.report()[0].points.map((p) => p.cycle)).size, 1);
 });

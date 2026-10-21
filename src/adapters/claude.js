@@ -1,6 +1,7 @@
 const fs = require("fs");
+const path = require("path");
 const { execFile } = require("child_process");
-const { claudeCredentials, cliOnPath, fileExists } = require("../paths");
+const { home, claudeCredentials, cliOnPath, fileExists, writeSecretFile } = require("../paths");
 const { windowOf, emptyProvider } = require("../models");
 const { getJson, postJson } = require("../http");
 
@@ -18,12 +19,34 @@ function probe() {
   };
 }
 
+// A refresh whose write failed is kept until the file changes, so its rotated refresh token is not lost.
+let unsaved = null;
+
 function readCreds() {
   const p = claudeCredentials();
   const stat = fs.statSync(p);
   const raw = fs.readFileSync(p, "utf8");
   const json = JSON.parse(raw);
-  return { path: p, mtimeMs: stat.mtimeMs, json, oauth: json.claudeAiOauth || null };
+  const kept = unsaved && unsaved.path === p && unsaved.mtimeMs === stat.mtimeMs ? unsaved.oauth : null;
+  return { path: p, mtimeMs: stat.mtimeMs, json, oauth: kept || json.claudeAiOauth || null };
+}
+
+// The account Claude Code is signed in to, from its global config; read again only when that changes.
+const account = { mtimeMs: null, id: null };
+
+function accountRef() {
+  try {
+    const file = path.join(home(), ".claude.json");
+    const { mtimeMs } = fs.statSync(file);
+    if (mtimeMs !== account.mtimeMs) {
+      const acct = JSON.parse(fs.readFileSync(file, "utf8")).oauthAccount;
+      account.id = (acct && (acct.accountUuid || acct.emailAddress)) || null;
+      account.mtimeMs = mtimeMs;
+    }
+    return account.id;
+  } catch {
+    return null;
+  }
 }
 
 // Read-only: refreshing would rotate the token Claude Code relies on, so a Keychain login is never rewritten.
@@ -103,6 +126,18 @@ async function refresh(oauth) {
   return res;
 }
 
+// A refused refresh is remembered for a few minutes, so a dead or throttled refresh token is not
+// sent to the token server on every poll.
+const REFRESH_RETRY_MS = 5 * 60_000;
+const refusal = { token: null, at: 0, res: null };
+
+async function tryRefresh(oauth) {
+  if (refusal.token === oauth.refreshToken && Date.now() - refusal.at < REFRESH_RETRY_MS) return refusal.res;
+  const res = await refresh(oauth);
+  if (res.status !== 200 || !res.json?.access_token) Object.assign(refusal, { token: oauth.refreshToken, at: Date.now(), res: { status: res.status, headers: res.headers } });
+  return res;
+}
+
 function casWriteTokens(creds, tokens) {
   const stat = fs.statSync(creds.path);
   if (stat.mtimeMs !== creds.mtimeMs) return false;
@@ -112,9 +147,12 @@ function casWriteTokens(creds, tokens) {
   if (tokens.expires_in) {
     next.claudeAiOauth.expiresAt = Date.now() + Number(tokens.expires_in) * 1000;
   }
-  const tmp = creds.path + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { encoding: "utf8" });
-  fs.renameSync(tmp, creds.path);
+  try {
+    writeSecretFile(creds.path, JSON.stringify(next, null, 2));
+    unsaved = null;
+  } catch {
+    unsaved = { path: creds.path, mtimeMs: stat.mtimeMs, oauth: next.claudeAiOauth };
+  }
   return true;
 }
 
@@ -206,10 +244,11 @@ async function fetchUsage(cfg) {
 
   const refreshEnabled = cfg?.adapters?.claude?.refresh_tokens !== false && !creds.keychain;
   let refreshed = false;
+  let refused = null;
   const exp = Number(creds.oauth.expiresAt || 0);
   if (refreshEnabled && exp && exp - Date.now() < 60_000 && creds.oauth.refreshToken) {
     try {
-      const r = await refresh(creds.oauth);
+      const r = await tryRefresh(creds.oauth);
       if (r.status === 200 && r.json?.access_token) {
         refreshed = true;
         casWriteTokens(creds, r.json);
@@ -219,7 +258,7 @@ async function fetchUsage(cfg) {
           state: "logged_out",
           hint: "Run: claude auth login",
         });
-      }
+      } else refused = r;
     } catch {
       /* keep going with current token */
     }
@@ -228,16 +267,18 @@ async function fetchUsage(cfg) {
   let res = await getJson(USAGE_URL, usageHeaders(creds.oauth.accessToken));
   if (res.status === 401 && refreshEnabled && !refreshed && creds.oauth.refreshToken) {
     try {
-      const r = await refresh(creds.oauth);
+      const r = await tryRefresh(creds.oauth);
       if (r.status === 200 && r.json?.access_token) {
         casWriteTokens(creds, r.json);
         creds = readCreds();
         res = await getJson(USAGE_URL, usageHeaders(creds.oauth.accessToken));
-      }
+      } else refused = r;
     } catch {
       /* fall through */
     }
   }
+  // A busy or failing token server has not ended the sign-in: keep the last reading and wait.
+  if (res.status === 401 && refused && (refused.status === 429 || refused.status >= 500)) res = refused;
   if (res.status === 401 || res.status === 403) {
     // Claude Code may have rotated its token; read the Keychain again on the next poll.
     if (creds.keychain) forgetKeychain();
@@ -252,6 +293,7 @@ async function fetchUsage(cfg) {
       message: "rate limited",
     });
     err._rateLimited = true;
+    err._retryAfter = res.headers && res.headers["retry-after"];
     return err;
   }
   if (res.status !== 200 || !res.json) {
@@ -279,4 +321,4 @@ async function linkToken() {
   return { access_token: oauth.accessToken, expires_at: exp, plan: planLabel(oauth) };
 }
 
-module.exports = { id: "claude", displayName: "Claude Code", probe, fetchUsage, linkToken };
+module.exports = { id: "claude", displayName: "Claude Code", probe, fetchUsage, linkToken, accountRef };

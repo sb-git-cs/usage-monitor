@@ -169,3 +169,37 @@ test("while nobody is at the computer providers are asked once a minute, and at 
   assert.equal(calls, 4, "then at the chosen interval");
   poll.stop();
 });
+
+test("alerts treat a jittered reset time as the same window and keep only entries that warned", () => {
+  let state = { fired: { "codex|five_hour|5h|29876459": { crossed80: false, crossed100: false }, old: { crossed80: true, until: "2020-01-01T00:00:00Z" } } };
+  const shown = [];
+  class Notification { static isSupported() { return true; } constructor(o) { this.o = o; } show() { shown.push(this.o.body); } }
+  const alerts = load("src/alerts.js", { electron: { Notification }, "./cache": { loadAlertState: () => state, saveAlertState: (s) => { state = s; } } });
+  const hour = new Date(Date.now() + 3 * 3600000); hour.setUTCMinutes(0, 0, 0);
+  const at = (used, ms) => ({ providers: [{ ...provider("claude", used), account_id: "a@b.co", windows: [{ kind: "five_hour", label: "5h", used_pct: used, resets_at: new Date(hour.getTime() + ms).toISOString() }] }] });
+  for (const [used, ms] of [[81, 411], [82, -191], [83, 347], [84, -483]]) alerts.evaluate(at(used, ms), { threshold: 80 });
+  assert.deepEqual(shown, ["5h 81/100% used"], "one warning per window, whichever side of the minute the reset lands");
+  assert.equal(Object.keys(state.fired).length, 1, "stale and never-warned entries are dropped");
+  for (let i = 0; i < 20; i++) alerts.evaluate({ providers: [{ ...provider("codex", 10), windows: [{ kind: "five_hour", label: "5h", used_pct: 10, resets_at: new Date(Date.now() + 3600000 + i * 600000).toISOString() }] }] });
+  assert.equal(Object.keys(state.fired).length, 1, "windows below the threshold add nothing to the saved state");
+});
+
+test("rate limits honour Retry-After, otherwise back off further with each refusal, and recover", async () => {
+  let snapshot, status = { _rateLimited: true, _retryAfter: "600" };
+  const mocks = { "./cache": { loadSnapshot: () => snapshot, saveSnapshot: (s) => { snapshot = s; } } };
+  for (const id of PLAN_IDS) mocks[`./adapters/${id}`] = { fetchUsage: async () => ({ ...provider(id), ...(status ? { windows: [], status: { state: "fetch_failed" }, ...status } : {}) }) };
+  const poller = load("src/poller.js", mocks, ["backoff", "backoffMs"]);
+  const wait = () => Object.values(poller.backoff)[0].until - Date.now();
+  await poller.pollOnce({});
+  assert.ok(Math.abs(wait() - 600_000) < 2000, "the provider's ten minutes");
+  assert.equal(snapshot.providers[0]._retryAfter, undefined);
+  assert.equal(poller.backoffMs(undefined, 1), 60_000);
+  assert.equal(poller.backoffMs(null, 3), 240_000, "doubling without a Retry-After");
+  assert.equal(poller.backoffMs("5", 1), 60_000, "never faster than a minute");
+  assert.equal(poller.backoffMs(undefined, 20), 3_600_000, "never longer than an hour");
+  assert.ok(Math.abs(poller.backoffMs(new Date(Date.now() + 1_200_000).toUTCString(), 1) - 1_200_000) < 2000, "an HTTP date");
+  for (const scope of Object.keys(poller.backoff)) poller.backoff[scope].until = 0;
+  status = null;
+  await poller.pollOnce({});
+  assert.equal(Object.keys(poller.backoff).length, 0, "a good reading clears the back-off");
+});

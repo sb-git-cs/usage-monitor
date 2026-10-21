@@ -87,8 +87,14 @@ function byDay(points) {
   return [...map.values()];
 }
 
+// The "warn at" level from Settings, so Insights colours match the flyout and chips.
+function warnAt() {
+  const n = Number(state?.alert_threshold);
+  return Number.isFinite(n) && n > 0 && n <= 100 ? n : 80;
+}
+
 function heat(used) {
-  return used >= 80 ? "hot" : used >= 50 ? "warm" : "cool";
+  return used >= warnAt() ? "hot" : used >= 50 ? "warm" : "cool";
 }
 
 function latestUsed(series) {
@@ -208,17 +214,18 @@ function chart(canvas, points) {
     c.fillText(`${pct}%`, left - 8, y);
   }
 
-  // 80% Alert Threshold Line
+  // Alert threshold line
+  const warn = warnAt();
   c.strokeStyle = "#ef4444";
   c.fillStyle = "#ef4444";
   c.globalAlpha = 0.7;
   c.setLineDash([4, 4]);
   c.beginPath();
-  c.moveTo(left, yOf(80));
-  c.lineTo(right, yOf(80));
+  c.moveTo(left, yOf(warn));
+  c.lineTo(right, yOf(warn));
   c.stroke();
   c.setLineDash([]);
-  c.fillText("80%", left - 8, yOf(80));
+  c.fillText(`${warn}%`, left - 8, yOf(warn));
   c.globalAlpha = 1;
 
   if (!points.length) {
@@ -492,6 +499,8 @@ function renderHistory(s) {
 
   const history = $("history");
   if (history) {
+    // Rows are rebuilt on every refresh; keyboard focus stays on the same series.
+    const focusedId = history.contains(document.activeElement) ? document.activeElement.dataset.id : null;
     history.replaceChildren();
     if (!ranked.length) {
       history.append(node("p", "No observations in this period yet.", "empty-state"));
@@ -503,6 +512,7 @@ function renderHistory(s) {
       const isSelected = series.id === focus?.id;
       const row = node("button", null, isSelected ? "usage-row selected" : "usage-row");
       row.type = "button";
+      row.dataset.id = series.id;
       row.onclick = () => {
         picked = series.id;
         renderHistory(state);
@@ -524,6 +534,7 @@ function renderHistory(s) {
 
       row.append(who, pill, metaEl, strip);
       history.append(row);
+      if (series.id === focusedId) row.focus({ preventScroll: true });
     }
     if ($("historyNote")) $("historyNote").textContent = "Each bar in the strip is the last reading that day. Select a row to chart its trajectory.";
   }
@@ -564,12 +575,13 @@ function renderBurnAnalysis(s) {
     paceCards.replaceChildren();
     const highestBurn = [...burnList].sort((a, b) => b.burn_rate - a.burn_rate)[0];
     const atRiskCount = burnList.filter((w) => w.status === "critical" || w.status === "exhausted").length;
+    const shortest = burnList.filter((w) => Number.isFinite(w.runway_hours)).sort((x, y) => x.runway_hours - y.runway_hours)[0];
 
     paceCards.append(
       fact("Fastest Burn Rate", highestBurn ? `${formatBurn(highestBurn.burn_rate)}` : "0%/h", highestBurn ? `${names[highestBurn.provider] || highestBurn.provider} · ${highestBurn.label}` : "All idle"),
       fact("At-Risk Quotas", String(atRiskCount), atRiskCount ? "Projected to exhaust before reset" : "All quotas sustainable"),
       fact("Safe Burn Target", highestBurn?.safe_rate != null ? `${highestBurn.safe_rate}%/h` : "Unlimited", "Pace to survive until next reset"),
-      fact("Longest Runway", burnList.length ? `${formatHours(burnList[0]?.runway_hours)}` : "—", "Estimated time until 100% capacity")
+      fact("Shortest Runway", shortest ? formatHours(shortest.runway_hours) : "—", shortest ? `${names[shortest.provider] || shortest.provider} · ${shortest.label} reaches 100% first at this pace` : "No window reaches 100% at this pace")
     );
   }
 
@@ -1016,8 +1028,9 @@ if ($("support")) $("support").onclick = async () => message(await api.export("d
 
 load();
 setInterval(() => {
-  if (!document.querySelector("form:focus-within")) load();
+  if (!document.hidden && !document.querySelector("form:focus-within")) load();
 }, 10000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 
 function renderBattery(view) {
   const r = view?.latest;

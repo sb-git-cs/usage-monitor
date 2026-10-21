@@ -207,7 +207,7 @@ private fun ProviderDetails(settings: Settings, p: Provider, warnAt: Double, now
         }
         p.usageSummary?.let { Text(it) }
         p.windows.filter { it.kind == "credits" && it.usedPct == null }.forEach { Note(it.label) }
-        if (p.id == "x_subscription") TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW,
+        if (p.id == "x_subscription") TextButton(onClick = { openFirst(context, Intent(Intent.ACTION_VIEW,
             Uri.parse(if (p.poolReader == "cursor") "https://cursor.com/dashboard" else "https://grok.com/?_s=usage"))) }) {
             Text("Open usage dashboard")
         }

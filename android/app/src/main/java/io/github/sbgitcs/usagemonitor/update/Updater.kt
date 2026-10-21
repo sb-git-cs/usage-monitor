@@ -13,6 +13,7 @@ import io.github.sbgitcs.usagemonitor.AppState
 import io.github.sbgitcs.usagemonitor.BuildConfig
 import io.github.sbgitcs.usagemonitor.alerts.Notifications
 import io.github.sbgitcs.usagemonitor.data.Settings
+import io.github.sbgitcs.usagemonitor.net.BoundedHttp
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -20,6 +21,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.locks.ReentrantLock
 
 /**
  * Installs new releases from GitHub, the way the desktop app does: each release carries
@@ -39,17 +41,32 @@ object Updater {
         data class Failed(val message: String) : Result()
     }
 
+    private val running = ReentrantLock()
+    @Volatile private var lastResult: Result? = null
+
     /** Blocking; call it from a worker or an IO coroutine. */
     fun check(context: Context, settings: Settings, interactive: Boolean): Result {
-        settings.lastUpdateCheck = System.currentTimeMillis()
-        val result = runCatching { run(context, settings, interactive) }.getOrElse { Result.Failed(it.message ?: it.toString()) }
-        settings.updateStatus = when (result) {
-            Result.UpToDate -> "Up to date"
-            is Result.Installing -> "Installing ${result.version}"
-            Result.NeedsPermission -> "Allow Usage Monitor to install updates"
-            is Result.Failed -> "Update failed: ${result.message}"
+        // One check at a time: two would download into the same file and could start two installs.
+        // A second caller waits for the check already running and shares its result.
+        if (!running.tryLock()) {
+            running.lock()
+            running.unlock()
+            return lastResult ?: Result.Failed("Another update check did not finish.")
         }
-        return result
+        try {
+            settings.lastUpdateCheck = System.currentTimeMillis()
+            val result = runCatching { run(context, settings, interactive) }.getOrElse { Result.Failed(it.message ?: it.toString()) }
+            settings.updateStatus = when (result) {
+                Result.UpToDate -> "Up to date"
+                is Result.Installing -> "Installing ${result.version}"
+                Result.NeedsPermission -> "Allow Usage Monitor to install updates"
+                is Result.Failed -> "Update failed: ${result.message}"
+            }
+            lastResult = result
+            return result
+        } finally {
+            running.unlock()
+        }
     }
 
     private fun run(context: Context, settings: Settings, interactive: Boolean): Result {
@@ -97,52 +114,43 @@ object Updater {
             ?.optString("browser_download_url")
             ?.takeIf { it.startsWith("https://github.com/") }
 
-    private fun open(url: String): HttpURLConnection {
+    /** Opens [url] and hands its 200 answer to [read], all within [deadlineMs]. */
+    private fun <T> fetch(url: String, deadlineMs: Long, read: (HttpURLConnection) -> T): T {
         val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 15_000
-        conn.readTimeout = 60_000
-        conn.instanceFollowRedirects = true
-        conn.setRequestProperty("User-Agent", "usage-monitor-android/${BuildConfig.VERSION_NAME}")
-        conn.setRequestProperty("Accept", if (url.startsWith(API)) "application/vnd.github+json" else "application/octet-stream")
-        if (conn.responseCode != 200) {
-            val status = conn.responseCode
-            conn.disconnect()
-            throw IOException("GitHub answered HTTP $status.")
-        }
-        return conn
-    }
-
-    private fun download(url: String, limit: Long): ByteArray {
-        val conn = open(url)
         try {
-            val bytes = conn.inputStream.use { it.readBytes() }
-            if (bytes.size > limit) throw IOException("Unexpectedly large answer from GitHub.")
-            return bytes
+            return BoundedHttp.withDeadline(conn, deadlineMs) {
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 60_000
+                conn.instanceFollowRedirects = true
+                conn.setRequestProperty("User-Agent", "usage-monitor-android/${BuildConfig.VERSION_NAME}")
+                conn.setRequestProperty("Accept", if (url.startsWith(API)) "application/vnd.github+json" else "application/octet-stream")
+                val status = conn.responseCode
+                if (status != 200) throw IOException("GitHub answered HTTP $status.")
+                read(conn)
+            }
         } finally {
             conn.disconnect()
         }
     }
 
-    private fun downloadTo(url: String, target: File, expected: Long) {
-        val conn = open(url)
-        try {
-            var total = 0L
-            conn.inputStream.use { input ->
-                target.outputStream().use { out ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        total += n
-                        if (total > MAX_APK || total > expected) throw IOException("The download is larger than announced.")
-                        out.write(buf, 0, n)
-                    }
+    private fun download(url: String, limit: Long): ByteArray =
+        fetch(url, 2 * 60_000L) { conn -> conn.inputStream.use { BoundedHttp.read(it, limit) } }
+
+    private fun downloadTo(url: String, target: File, expected: Long) = fetch(url, 10 * 60_000L) { conn ->
+        var total = 0L
+        conn.inputStream.use { input ->
+            target.outputStream().use { out ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > MAX_APK || total > expected) throw IOException("The download is larger than announced.")
+                    out.write(buf, 0, n)
                 }
             }
-            if (total != expected) throw IOException("The download stopped early.")
-        } finally {
-            conn.disconnect()
         }
+        if (total != expected) throw IOException("The download stopped early.")
     }
 
     /** Null when the APK is this app, newer, and signed with the same key; otherwise why not. */

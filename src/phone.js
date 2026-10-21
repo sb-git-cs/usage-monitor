@@ -7,6 +7,7 @@
 //   open that tool's sign-in; POST /v1/account/<tool>/<id> selects a saved sign-in.
 //   POST /v1/link asks to read usage directly (confirmed here), POST /v1/unlink stops it, and
 //   GET /v1/tokens then returns current access tokens; refresh tokens never leave this computer.
+//   POST /v1/rekey replaces the code-derived key with a random one, used from the next request.
 //   Responses: AES-256-GCM, with the request time as additional data, so a recorded answer
 //   cannot be replayed later and nobody else on the network can read the meters.
 const crypto = require("crypto");
@@ -106,6 +107,7 @@ class PhoneLink {
     this.error = null;
     this.pending = null; // { code, id, key, expires }
     this.failures = new Map();
+    this.seen = new Map(); // signed POST requests already acted on -> when they stop being accepted
   }
 
   get cfg() {
@@ -234,20 +236,41 @@ class PhoneLink {
     if (this.failures.size > 1000) this.failures.clear();
   }
 
-  // Returns { device, key, time } for a correctly signed request, else null.
+  // A signed request stays valid for MAX_SKEW_MS, so a copy recorded on the network could ask
+  // again. Requests that change something are accepted once; the phone signs each one afresh.
+  replayed(auth, method, pathname) {
+    const now = this.now();
+    for (const [key, until] of this.seen) if (until < now) this.seen.delete(key);
+    const key = `${auth.device.id}|${method}|${pathname}|${auth.time}`;
+    if (this.seen.has(key)) return true;
+    if (this.seen.size >= 1000) this.seen.delete(this.seen.keys().next().value);
+    this.seen.set(key, auth.time + MAX_SKEW_MS);
+    return false;
+  }
+
+  // Returns { device, key, time } for a correctly signed request, { skewed: true } for a correct
+  // signature from a phone whose clock is more than MAX_SKEW_MS off, else null.
   authenticate(req, pathname) {
     const id = String(req.headers["x-um-id"] || "");
     const time = Number(req.headers["x-um-time"]);
     const sig = String(req.headers["x-um-sig"] || "");
-    if (!/^[0-9a-f]{16}$/.test(id) || !Number.isFinite(time) || Math.abs(this.now() - time) > MAX_SKEW_MS) return null;
+    if (!/^[0-9a-f]{16}$/.test(id) || !Number.isFinite(time)) return null;
     let device = this.cfg.devices.find((d) => d.id === id);
-    let key = device ? Buffer.from(device.key, "base64url") : null;
     const pending = this.pending && this.pending.id === id && this.now() <= this.pending.expires ? this.pending : null;
-    if (!key && pending) key = pending.key;
-    if (!key) return null;
-    const expected = Buffer.from(sign(key, req.method, pathname, time), "utf8");
+    // A rotated key (/v1/rekey) replaces the current one at its first use; until then both work.
+    const keys = device ? [device.key, device.next_key].filter(Boolean).map((k) => Buffer.from(k, "base64url")) : pending ? [pending.key] : [];
     const given = Buffer.from(sig, "utf8");
-    if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
+    const key = keys.find((k) => {
+      const expected = Buffer.from(sign(k, req.method, pathname, time), "utf8");
+      return expected.length === given.length && crypto.timingSafeEqual(expected, given);
+    });
+    if (!key) return null;
+    if (Math.abs(this.now() - time) > MAX_SKEW_MS) return { skewed: true };
+    if (device && device.next_key && key.toString("base64url") === device.next_key) {
+      device.key = device.next_key;
+      delete device.next_key;
+      this.saveConfig();
+    }
     if (!device) {
       // First signed request from the phone completes the pairing.
       let decoded;
@@ -275,20 +298,31 @@ class PhoneLink {
     const reading = req.method === "GET" && ["/v1/ping", "/v1/snapshot", "/v1/tokens"].includes(url.pathname);
     const switching = req.method === "POST" && accountRoute;
     const linking = req.method === "POST" && ["/v1/link", "/v1/unlink"].includes(url.pathname);
-    if (!reading && !switching && !linking) return reply(404, { error: "not found" });
+    const rekeying = req.method === "POST" && url.pathname === "/v1/rekey";
+    if (!reading && !switching && !linking && !rekeying) return reply(404, { error: "not found" });
     if (this.tooManyFailures(ip)) return reply(429, { error: "too many attempts" });
     const auth = this.authenticate(req, url.pathname);
     if (!auth) {
       this.fail(ip);
       return reply(401, { error: "not paired" });
     }
+    // Still paired; "pair again" would not help when the phone's clock is wrong.
+    if (auth.skewed) return reply(400, { error: "clock" });
     req.resume();
+    if ((switching || linking || rekeying) && this.replayed(auth, req.method, url.pathname)) return reply(409, { error: "repeated request" });
     const wasSeen = auth.device.last_seen;
     auth.device.last_seen = this.now();
     // Save right away for a new pairing; otherwise at most every 10 minutes.
     if (!wasSeen || this.now() - wasSeen > 10 * 60_000) {
       this.saveConfig();
       this.onChange();
+    }
+    if (rekeying) {
+      // The pairing code was on screen and its key derives from it, so the phone swaps it for a
+      // random key that was never shown. A lost reply leaves the current key working.
+      auth.device.next_key = crypto.randomBytes(32).toString("base64url");
+      this.saveConfig();
+      return reply(200, encrypt(auth.key, auth.time, { ok: true, key: auth.device.next_key }));
     }
     if (switching) {
       const provider = accountRoute[1];

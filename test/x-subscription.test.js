@@ -107,24 +107,39 @@ test("cached Additional Usage stays visibly stale when the weekly pool expires",
 });
 
 function polling() {
-  let snapshot, token = "token-a", fail = false;
+  let snapshot, signedIn = "user-a", fail = false;
   const ids = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
   const mocks = { "./cache": { loadSnapshot: () => snapshot, saveSnapshot: (s) => { snapshot = s; } } };
-  for (const id of ids) mocks[`./adapters/${id}`] = { displayName: id, linkToken: () => ({ access_token: token }), fetchUsage: async () => ({ ...provider(id), status: { state: fail ? "fetch_failed" : "ok" }, windows: fail ? [] : provider(id).windows }) };
-  return { mocks, poller: load("src/poller.js", mocks), fail: () => { fail = true; }, token: (v) => { token = v; } };
+  for (const id of ids) mocks[`./adapters/${id}`] = { displayName: id, accountRef: () => signedIn, fetchUsage: async () => ({ ...provider(id), status: { state: fail ? "fetch_failed" : "ok" }, windows: fail ? [] : provider(id).windows }) };
+  return { mocks, poller: load("src/poller.js", mocks), fail: () => { fail = true; }, signIn: (v) => { signedIn = v; } };
 }
 
-test("poll caches cannot cross a regime, account selection or credential change", async () => {
-  for (const change of ["regime", "account", "token"]) {
+test("poll caches cannot cross a regime, account selection or signed-in account", async () => {
+  for (const change of ["regime", "account", "sign-in"]) {
     const p = polling();
     await p.poller.pollOnce({ subscription_regime: "legacy" }); p.fail();
     assert.equal((await p.poller.pollOnce({})).providers[0].status.state, "stale");
     const cfg = change === "regime" ? { subscription_regime: "combined" } : change === "account" ? { accounts: { claude: "account-b" } } : {};
-    if (change === "token") p.token("token-b");
+    if (change === "sign-in") p.signIn("user-b");
     const snap = await p.poller.pollOnce(cfg);
     assert.equal(snap.providers[0].status.state, "fetch_failed", change);
     assert.equal(snap.providers[0].windows.length, 0);
   }
+});
+
+test("a refreshed token keeps its account's cache scope; tokens never key the cache", async () => {
+  const p = polling();
+  const first = await p.poller.pollOnce({});
+  p.mocks["./adapters/claude"].linkToken = () => ({ access_token: "rotated" });
+  p.fail();
+  const next = await p.poller.pollOnce({});
+  assert.equal(next.providers[0].cache_scope, first.providers[0].cache_scope);
+  assert.equal(next.providers[0].status.state, "stale", "the last reading survives a token refresh");
+  p.mocks["./adapters/claude"].accountRef = () => new Promise(() => {});
+  const started = Date.now();
+  const slow = await p.poller.pollOnce({});
+  assert.ok(Date.now() - started < 8000, "an account lookup that never answers cannot hold the poll");
+  assert.equal(slow.providers.length, 6);
 });
 
 test("switching during refresh discards the old selection and immediately refreshes the new one", async (t) => {

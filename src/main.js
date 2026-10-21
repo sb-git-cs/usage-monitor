@@ -538,7 +538,7 @@ function showClickAway() {
       fullscreenable: false,
       backgroundColor: "#00000000",
       webPreferences: {
-        preload: path.join(__dirname, "preload.js"),
+        preload: path.join(__dirname, "clickaway-preload.js"),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -1017,11 +1017,17 @@ function pairingActive() {
 function withQr(status) {
   if (status.pairing) {
     if (qrCache.link !== status.pairing.link) {
-      const qr = require("qrcode-generator")(0, "M");
-      qr.addData(status.pairing.link);
-      qr.make();
-      const svg = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
-      qrCache = { link: status.pairing.link, url: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}` };
+      // Without a QR code the typed code still pairs, so a failure here must not break Settings.
+      try {
+        const qr = require("qrcode-generator")(0, "M");
+        qr.addData(status.pairing.link);
+        qr.make();
+        const svg = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+        qrCache = { link: status.pairing.link, url: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}` };
+      } catch (err) {
+        log.error("pairing QR code failed", err.message);
+        qrCache = { link: status.pairing.link, url: null };
+      }
     }
     status.pairing.qr = qrCache.url;
   }
@@ -1346,6 +1352,8 @@ function createChips() {
 }
 
 function wireIpc() {
+  // Changes with effects beyond the widgets (network port, updates, typing into terminals) come only from the flyout.
+  const fromFlyout = (e) => !!(flyout && !flyout.isDestroyed() && e.sender === flyout.webContents);
   ipcMain.on("usage://refresh", () => poll && poll.refresh());
   ipcMain.on("usage://drag-begin", (e, sx, sy) => {
     if (!Number.isFinite(sx) || !Number.isFinite(sy)) return;
@@ -1415,7 +1423,7 @@ function wireIpc() {
     auto_resume: cfg.auto_resume === true, can_resume: process.platform === "win32", sessions: [],
   });
   ipcMain.on("usage://set-auto-resume", (e, enabled) => {
-    if (flyout && !flyout.isDestroyed() && e.sender === flyout.webContents) setAutoResume(enabled);
+    if (fromFlyout(e)) setAutoResume(enabled);
   });
   ipcMain.handle("usage://get-update", () => updater.getState());
   ipcMain.handle("usage://get-prefs", () => prefs());
@@ -1426,12 +1434,14 @@ function wireIpc() {
     showFlyout();
     if (flyout && !flyout.isDestroyed()) flyout.webContents.send("usage://focus-battery");
   });
-  ipcMain.handle("usage://pair-phone", () => beginPairing());
-  ipcMain.handle("usage://pair-cancel", () => {
+  // Pairing opens a port on the network, so only the flyout's own button can start it.
+  ipcMain.handle("usage://pair-phone", (e) => (fromFlyout(e) ? beginPairing() : null));
+  ipcMain.handle("usage://pair-cancel", (e) => {
+    if (!fromFlyout(e)) return null;
     if (phone) phone.cancelPairing();
     return phone ? withQr(phone.status()) : null;
   });
-  ipcMain.handle("usage://get-pairing", () => (phone ? withQr(phone.status()) : null));
+  ipcMain.handle("usage://get-pairing", (e) => (fromFlyout(e) && phone ? withQr(phone.status()) : null));
   const fromSettings = (e) => !!(settingsWin && !settingsWin.isDestroyed() && e.sender === settingsWin.webContents);
   ipcMain.handle("settings:get", (e) => (fromSettings(e) ? settingsView() : null));
   ipcMain.handle("settings:set", (e, patch) => (fromSettings(e) ? applySettings(patch) : null));
@@ -1456,7 +1466,8 @@ function wireIpc() {
   ipcMain.on("settings:open-logs", (e) => {
     if (fromSettings(e)) shell.openPath(path.dirname(log.logFile())).catch(() => {});
   });
-  ipcMain.on("usage://update-action", () => {
+  ipcMain.on("usage://update-action", (e) => {
+    if (!fromFlyout(e)) return;
     ignoreFlyoutBlur = true;
     updater.action();
     setTimeout(() => {
@@ -1538,7 +1549,8 @@ if (!gotLock) {
       sessions: () => latestSessions,
       save: () => { const saved = config.save(cfg); broadcastPrefs(); if (latest) broadcast(latest); return saved; },
       refresh: () => poll && poll.refresh(), openNetwork: () => netUsage.openWindow(), openSettings,
-      login: (id) => beginAccountSwitch(id) });
+      // The combined X Subscription signs in through whichever tool reads its shared pool.
+      login: (id) => beginAccountSwitch(id === "x_subscription" ? (latest?.providers.find((p) => p.id === id)?.pool_reader || "grok") : id) });
     nativeTheme.on("updated", () => broadcastPrefs());
     try {
       netUsage.init({
@@ -1583,9 +1595,10 @@ if (!gotLock) {
     });
     phone.apply();
 
+    // Handlers first: a renderer that loads (or reloads after a crash) quickly must not invoke one that is not there yet.
+    wireIpc();
     createWindows();
     createTray();
-    wireIpc();
     startUpdater();
     batteryPoll = batteryUsage.start(batteryHistory, () => {
       for (const win of [chips, flyout]) if (win && !win.isDestroyed()) win.webContents.send("usage://battery", batteryView());
@@ -1672,7 +1685,7 @@ if (!gotLock) {
     setInterval(broadcastNet, 1000);
     watchActivity();
     setInterval(() => {
-      if (dragState) return;
+      if (dragState || screenLocked) return;
       if (chips && !cfg.chips_hidden && !chips.isDestroyed() && cfg.chips_docked) {
         placeChipsDocked();
       }
@@ -1713,6 +1726,7 @@ app.on("before-quit", () => {
   if (phone) phone.stop();
   updater.stop();
   if (batteryPoll) batteryPoll.stop();
+  if (batteryHistory) batteryHistory.flush();
   if (systemPoll) systemPoll.stop();
   netUsage.shutdown();
   if (taskbarLayout.stopTaskbarWatch) taskbarLayout.stopTaskbarWatch();

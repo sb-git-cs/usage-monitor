@@ -36,6 +36,11 @@ function windowOf({ kind, label, usedPct, resetsAt }) {
   };
 }
 
+// Providers repeat a window's reset time with up to a second of jitter; a new window moves it by hours.
+function sameReset(a, b) {
+  return a === b || Math.abs(Date.parse(a) - Date.parse(b)) < 5 * 60_000;
+}
+
 function emptyProvider(id, displayName, status) {
   return {
     id,
@@ -100,6 +105,7 @@ const UsageModels = {
   PROVIDERS,
   OPTIONAL_PROVIDERS,
   windowOf,
+  sameReset,
   remainingPct,
   percentage,
   emptyProvider,

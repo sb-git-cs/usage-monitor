@@ -290,9 +290,13 @@ class UsageApi(private val http: Http = UrlHttp) {
             }
             for (extra in body.list("additional_rate_limits")) {
                 if (extra !is JSONObject) continue
-                val w = extra.obj("primary_window") ?: continue
-                val used = w.v("used_percent") ?: continue
-                windows.add(codexWindow(w, used, extra.first("name", "id").ifEmpty { "extra" }, now))
+                val name = extra.first("limit_name", "name", "id").ifEmpty { "extra" }
+                // Current replies nest a model's windows under rate_limit; earlier ones put them on the entry.
+                val limits = extra.obj("rate_limit") ?: extra
+                for (w in listOfNotNull(limits.obj("primary_window"), limits.obj("secondary_window"))) {
+                    val used = w.v("used_percent") ?: continue
+                    windows.add(codexWindow(w, used, name, now))
+                }
             }
             val count = num(body.obj("rate_limit_reset_credits")?.v("available_count"))
             if (count != null && count > 0) windows.add(labelWindow("credits", "Reset credits ×${count.toLong()}"))
