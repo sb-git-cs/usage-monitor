@@ -302,7 +302,19 @@ async function fetchUsage(cfg) {
       message: `HTTP ${res.status}`,
     });
   }
-  return mapUsage(res.json, creds.oauth);
+  const mapped = mapUsage(res.json, creds.oauth);
+  if (!mapped.windows.length) {
+    // Without its usage fields the body is a changed or error response, and the last good reading
+    // is kept. With them but no window, the plan simply has no active window yet.
+    if (!res.json || typeof res.json !== "object" || !("five_hour" in res.json || "seven_day" in res.json)) {
+      return emptyProvider("claude", "Claude Code", {
+        state: "fetch_failed",
+        message: "Usage response not recognized",
+      });
+    }
+    mapped.status = { ...mapped.status, hint: "No active usage window" };
+  }
+  return mapped;
 }
 
 // The current access token for a phone that reads usage directly. Never refreshed here, and the

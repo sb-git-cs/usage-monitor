@@ -5,61 +5,76 @@
   <title>Usage Monitor</title>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src data:" />
   <link rel="stylesheet" href="shared.css" />
+  <link rel="stylesheet" href="flyout.css" />
   <script src="../battery-model.js"></script>
   <script src="battery-chart.js"></script>
 </head>
 <body>
   <div class="hud flyout" id="root">
-    <div class="head">
-      <span>Usage Monitor</span>
-      <div class="chrome-actions">
-        <button class="pair-btn" id="insights" type="button">Insights</button>
-        <select class="interval" id="interval" title="Auto-refresh" aria-label="Auto-refresh interval">
-          <option value="5">5s</option>
-          <option value="15">15s</option>
-          <option value="30">30s</option>
-          <option value="60">60s</option>
-        </select>
-        <button class="icon-btn" id="network" title="Network usage" aria-label="Network usage">⇅</button>
-        <button class="icon-btn" id="dock" title="Keep panel open" aria-label="Keep panel open when focus leaves">▤</button>
-        <button class="icon-btn" id="refresh" title="Refresh now" aria-label="Refresh now">↻</button>
-        <button class="pair-btn" id="pair" type="button" title="Pair a phone">Pair</button>
-        <button class="icon-btn" id="settings" title="Settings" aria-label="Settings">⚙</button>
+    <header class="head">
+      <div class="brand">
+        <span class="brand-title">Usage Monitor</span>
+        <span class="brand-sub" id="updated" role="status">Waiting for readings…</span>
       </div>
-    </div>
-    <section class="pair-card" id="pairCard" hidden>
+      <div class="chrome-actions" role="toolbar" aria-label="Panel actions">
+        <button class="icon-btn" id="refresh" type="button" title="Refresh now" aria-label="Refresh now">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+        </button>
+        <button class="icon-btn" id="insights" type="button" title="Insights and reports" aria-label="Insights and reports">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>
+        </button>
+        <button class="icon-btn" id="network" type="button" title="Network usage" aria-label="Network usage">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16"/><path d="m3 8 4-4 4 4"/><path d="M17 20V4"/><path d="m13 16 4 4 4-4"/></svg>
+        </button>
+        <button class="icon-btn" id="pair" type="button" title="Pair a phone" aria-label="Pair a phone">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M11 18h2"/></svg>
+        </button>
+        <button class="icon-btn" id="dock" type="button" title="Keep panel open" aria-label="Keep panel open when focus leaves" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l-1 6 4 4H6l4-4z"/><path d="M12 13v8"/></svg>
+        </button>
+        <button class="icon-btn" id="settings" type="button" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+        <button class="icon-btn" id="close" type="button" title="Close (Esc)" aria-label="Close panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>
+        </button>
+      </div>
+    </header>
+    <section class="pair-card" id="pairCard" hidden aria-label="Pair a phone">
       <div class="pair-copy">
-        <p>Scan this in the Android app, or type the code.</p>
+        <h2 class="card-title">Pair a phone</h2>
+        <p>In the Android app tap <strong>Pair</strong> and scan this code, or type the address and code.</p>
         <div class="pair-code" id="pairCode"></div>
         <div class="pair-address" id="pairAddress"></div>
         <p class="hint" id="pairState"></p>
         <p class="hint" id="pairExpires"></p>
-        <button class="link-btn" id="pairCancel" type="button">Cancel</button>
+        <button class="text-btn" id="pairCancel" type="button">Cancel pairing</button>
       </div>
     </section>
     <section class="overview" id="overview" aria-label="Plan overview">
-      <div><span class="overview-label">Reporting</span><strong id="overviewReporting">Waiting</strong></div>
-      <div><span class="overview-label">Attention</span><strong id="overviewAttention">Waiting</strong></div>
-      <div><span class="overview-label">Next reset</span><strong id="overviewReset">Waiting</strong></div>
+      <div class="tile"><span class="tile-label">Plans reporting</span><strong id="overviewReporting">Waiting</strong><span class="tile-sub" id="overviewReportingSub"></span></div>
+      <div class="tile"><span class="tile-label">Needs attention</span><strong id="overviewAttention">Waiting</strong><span class="tile-sub" id="overviewAttentionSub"></span></div>
+      <div class="tile"><span class="tile-label">Next reset</span><strong id="overviewReset">Waiting</strong><span class="tile-sub" id="overviewResetSub"></span></div>
     </section>
-    <div class="section-caption"><span>Plan usage <span class="caption-detail">Used / limit · time to reset</span></span><span id="overviewCoverage"></span></div>
+    <div class="section-caption">
+      <h2 class="section-title">Plan usage <span class="caption-detail">% used · time until reset</span></h2>
+      <span class="caption-side" id="overviewCoverage"></span>
+    </div>
     <div id="body"></div>
-    <section class="session-card" id="sessions" hidden aria-label="Coding sessions">
+    <section class="session-card card" id="sessions" hidden aria-label="Coding sessions">
       <div class="p-head">
-        <span class="p-name"><span class="net-glyph" aria-hidden="true">›_</span><span>Sessions</span><span class="session-count" id="sessionCount"></span></span>
+        <h2 class="p-name"><span class="glyph" aria-hidden="true">›_</span><span>Sessions</span><span class="session-count" id="sessionCount"></span></h2>
         <label class="session-auto" id="autoResumeRow"><input type="checkbox" id="autoResume" /> Resume after limit</label>
       </div>
       <div id="sessionRows"></div>
     </section>
-    <section class="battery-card" id="batteryCard" hidden tabindex="-1" aria-label="Battery">
-      <div class="p-head"><strong id="batteryLevel">Battery</strong><button class="link-btn" id="batteryHistory" type="button">View history ›</button></div>
-      <p id="batteryStatus" role="status"></p><p class="hint" id="batteryUpdated"></p>
-      <div id="batterySpark" class="battery-chart"></div>
-    </section>
-    <section class="net-card" id="net" hidden title="Open Network usage" role="button" tabindex="0" aria-label="Open network usage monitor">
+    <div class="section-caption" id="systemCaption">
+      <h2 class="section-title">This computer</h2>
+    </div>
+    <section class="net-card card" id="net" hidden title="Open Network usage" role="button" tabindex="0" aria-label="Open network usage monitor">
       <div class="p-head">
-        <span class="p-name"><span class="net-glyph" aria-hidden="true">⇅</span><span>Network</span></span>
-        <span class="p-plan" id="netState">Open monitor ›</span>
+        <h2 class="p-name"><span class="glyph" aria-hidden="true">⇅</span><span>Network</span></h2>
+        <span class="p-plan link-like" id="netState">Open monitor ›</span>
       </div>
       <div class="net-row">
         <div class="net-stat"><span class="net-label"><span class="net-swatch rx"></span>Download</span><span class="net-value" id="netRx">—</span></div>
@@ -68,11 +83,20 @@
       </div>
       <div class="net-top" id="netTop"></div>
     </section>
-    <div class="update-bar" id="update" hidden>
+    <section class="battery-card card" id="batteryCard" hidden tabindex="-1" aria-label="Battery">
+      <div class="p-head">
+        <h2 class="p-name"><span class="glyph battery-glyph" aria-hidden="true">▮</span><span id="batteryLevel">Battery</span></h2>
+        <button class="text-btn" id="batteryHistory" type="button">History ›</button>
+      </div>
+      <p class="battery-status" id="batteryStatus" role="status"></p>
+      <div id="batterySpark" class="battery-chart"></div>
+      <p class="hint" id="batteryUpdated"></p>
+    </section>
+    <footer class="update-bar" id="update" hidden>
       <span class="update-version" id="updateVersion"></span>
       <span class="update-status" id="updateStatus"></span>
-      <button class="link-btn" id="updateAction" type="button" hidden></button>
-    </div>
+      <button class="text-btn" id="updateAction" type="button" hidden></button>
+    </footer>
   </div>
   <script src="../models.js"></script>
   <script src="../net/format.js"></script>

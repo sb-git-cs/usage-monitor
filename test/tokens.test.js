@@ -90,8 +90,8 @@ test("scanTokens extracts Claude transcripts and calculates cache efficiency and
   assert.equal(result.summary.cache_read, 2700);
   assert.equal(result.summary.reasoning, 20);
   assert.equal(result.summary.total, 300 + 150 + 2700 + 10);
-  // (2700 / (300 + 2700)) * 100 = 90%
-  assert.equal(result.summary.cache_efficiency_pct, 90);
+  // 2700 / (300 + 2700 + 10 cache writes) = 89.7%
+  assert.equal(result.summary.cache_efficiency_pct, 89.7);
   assert.equal(result.by_model.length, 2);
   assert.equal(result.by_model[0].model, "opus-5");
 });
@@ -122,4 +122,55 @@ test("scanTokens extracts Codex session rollouts and handles time cutoff", async
   assert.equal(result.summary.output, 80);
   assert.equal(result.summary.cache_read, 2000);
   assert.equal(result.by_provider.codex.turns, 1);
+});
+
+test("a Claude message repeated in a resumed session file is counted once", async (t) => {
+  const f = fixture(t), now = new Date(2026, 9, 17, 12).getTime();
+  const row = (id, time) => JSON.stringify({ type: "assistant", requestId: `req_${id}`, timestamp: new Date(time).toISOString(),
+    message: { id, model: "claude-sonnet", usage: { input_tokens: 100, output_tokens: 50 } } });
+  const dir = path.join(f.claudeDir, "projects", "p");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "a.jsonl"), [row("msg_1", now - 5000), row("msg_2", now - 4000)].join("\n"));
+  fs.writeFileSync(path.join(dir, "b.jsonl"), [row("msg_1", now - 5000), row("msg_2", now - 4000), row("msg_3", now - 3000)].join("\n"));
+  const result = await scanTokens({ ...f, now: () => now });
+  assert.equal(result.summary.turns, 3);
+  assert.equal(result.summary.total, 450);
+});
+
+test("Claude rows with no tokens are skipped", async (t) => {
+  const f = fixture(t), now = new Date(2026, 9, 17, 12).getTime();
+  const row = (id, model, usage) => JSON.stringify({ type: "assistant", timestamp: new Date(now - 1000).toISOString(), message: { id, model, usage } });
+  const dir = path.join(f.claudeDir, "projects", "p");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "a.jsonl"), [row("a", "<synthetic>", { input_tokens: 0, output_tokens: 0 }), row("b", "claude-sonnet", { input_tokens: 5, output_tokens: 5 })].join("\n"));
+  const result = await scanTokens({ ...f, now: () => now });
+  assert.equal(result.summary.turns, 1);
+  assert.deepEqual(result.by_model.map((m) => m.model), ["sonnet"]);
+});
+
+test("cache efficiency counts cache writes as prompt tokens", async (t) => {
+  const f = fixture(t), now = new Date(2026, 9, 17, 12).getTime();
+  const dir = path.join(f.claudeDir, "projects", "p");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "a.jsonl"), JSON.stringify({ type: "assistant", timestamp: new Date(now - 1000).toISOString(),
+    message: { id: "a", model: "claude-sonnet", usage: { input_tokens: 5, output_tokens: 1, cache_creation_input_tokens: 20000, cache_read_input_tokens: 40000 } } }));
+  const result = await scanTokens({ ...f, now: () => now });
+  assert.equal(result.summary.cache_efficiency_pct, 66.7);
+});
+
+test("a 7-day period is seven full local days with empty days filled in", async (t) => {
+  const f = fixture(t), now = new Date(2026, 9, 21, 12).getTime();
+  const at = (d, h) => new Date(2026, 9, d, h).getTime();
+  const row = (id, time) => JSON.stringify({ type: "assistant", timestamp: new Date(time).toISOString(),
+    message: { id, model: "claude-sonnet", usage: { input_tokens: 10, output_tokens: 0 } } });
+  const dir = path.join(f.claudeDir, "projects", "p");
+  fs.mkdirSync(dir, { recursive: true });
+  // Oct 14 is outside a 7-day period ending Oct 21; Oct 15 at 00:30 is inside it.
+  fs.writeFileSync(path.join(dir, "a.jsonl"), [row("old", at(14, 23)), row("first", new Date(2026, 9, 15, 0, 30).getTime()), row("last", at(21, 9))].join("\n"));
+  const result = await scanTokens({ days: 7, ...f, now: () => now });
+  assert.deepEqual(result.daily.map((d) => d.date), ["2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18", "2026-10-19", "2026-10-20", "2026-10-21"]);
+  assert.equal(result.daily[1].total, 0);
+  assert.equal(result.daily[1].turns, 0);
+  assert.equal(result.summary.total, 20);
+  assert.equal(result.daily.reduce((n, d) => n + d.total, 0), result.summary.total);
 });

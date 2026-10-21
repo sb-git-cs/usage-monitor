@@ -12,7 +12,6 @@ const names = {
 };
 
 let state = null;
-let order = [];
 let picked = "auto";
 let showEvents = false;
 let activeTab = "tokens";
@@ -31,16 +30,14 @@ function value(id, next) {
   if (el && document.activeElement !== el) el.value = next;
 }
 
-function message(result) {
+function message(result, done = "Saved.") {
   const el = $("message");
   if (!el) return;
-  el.textContent = result?.error || (result?.ok ? "Saved successfully." : "");
-  if (result?.error) {
-    el.className = "msg-error";
-  } else if (result?.ok) {
-    el.className = "msg-success";
-    setTimeout(() => { if (el.textContent === "Saved successfully.") el.textContent = ""; }, 4000);
-  }
+  const text = result?.error || (result?.ok ? done : "");
+  el.textContent = text;
+  el.className = result?.error ? "msg-error" : result?.ok ? "msg-success" : "";
+  clearTimeout(message.timer);
+  if (result?.ok) message.timer = setTimeout(() => { if (el.textContent === text) { el.textContent = ""; el.className = ""; } }, 4000);
 }
 
 function formatTokens(n) {
@@ -52,6 +49,8 @@ function formatTokens(n) {
 }
 
 const bytes = (n) => `${((Number(n) || 0) / 1e9).toFixed(2)} GB`;
+// As on the panel and chips: never 100% before the limit is reached.
+const shown = (used) => (used < 100 ? Math.min(99, Math.round(used)) : Math.round(used));
 
 function formatBurn(burn) {
   const b = Number(burn) || 0;
@@ -83,8 +82,17 @@ function dayLabel(key) {
 
 function byDay(points) {
   const map = new Map();
-  for (const p of points) map.set(dayKey(p.t), p);
+  for (const p of points) {
+    const key = dayKey(p.t);
+    if (!map.has(key) || p.used >= map.get(key).used) map.set(key, p);
+  }
   return [...map.values()];
+}
+
+// Readings since the window's last reset; earlier cycles would turn each reset into a drop.
+function currentCycle(points) {
+  const cycle = points?.at(-1)?.cycle;
+  return (points || []).filter((p) => p.cycle === cycle);
 }
 
 // The "warn at" level from Settings, so Insights colours match the flyout and chips.
@@ -98,7 +106,14 @@ function heat(used) {
 }
 
 function latestUsed(series) {
-  return series.points?.at(-1)?.used ?? -1;
+  const last = series.points?.at(-1);
+  if (!last) return -1;
+  return Date.parse(last.reset) <= Date.now() ? 0 : last.used;
+}
+
+// Fullest current window first; equal readings keep a stable order by name.
+function rankSeries(list = []) {
+  return [...list].sort((a, b) => latestUsed(b) - latestUsed(a) || seriesName(a, list).localeCompare(seriesName(b, list)));
 }
 
 function plotted(series) {
@@ -132,15 +147,16 @@ function countdownLabel(t) {
 }
 
 function paceOf(series) {
-  const pts = series.points;
+  const pts = currentCycle(series.points);
   if (!pts || pts.length < 2) return null;
   const hours = (pts.at(-1).t - pts[0].t) / 3600000;
   if (hours < 0.25) return null;
   return (pts.at(-1).used - pts[0].used) / hours;
 }
 
-function deltaText(points) {
-  if (!points || points.length < 2) return "";
+function deltaText(all) {
+  const points = currentCycle(all);
+  if (points.length < 2) return "";
   const delta = points.at(-1).used - points[0].used;
   const hours = (points.at(-1).t - points[0].t) / 3600000;
   if (hours >= 0.25 && delta < -0.5) return `down ${Math.abs(Math.round(delta))} pts`;
@@ -148,8 +164,9 @@ function deltaText(points) {
   return `${delta > 0 ? "+" : ""}${Math.round(delta)} pts`;
 }
 
-function untilFull(points) {
-  if (!points || points.length < 2) return "";
+function untilFull(all) {
+  const points = currentCycle(all);
+  if (points.length < 2) return "";
   const last = points.at(-1);
   const hours = (last.t - points[0].t) / 3600000;
   if (hours < 0.25 || last.used >= 100) return "";
@@ -346,12 +363,13 @@ function setupTabs() {
 function renderHealthHero(health) {
   const score = health?.score ?? 100;
   const grade = health?.grade || "A";
-  const label = health?.label || "Optimal";
+  const label = health?.label || "Good";
 
   const badge = $("globalHealthBadge");
   if (badge) {
     badge.className = `health-pill grade-${grade.toLowerCase()}`;
-    $("healthScoreText").textContent = `${label} · ${score}/100`;
+    badge.querySelector(".status-dot").className = `status-dot${score < 50 ? " critical" : score < 75 ? " warning" : ""}`;
+    $("healthScoreText").textContent = `Quota health: ${label} · ${score}`;
   }
 
   if ($("heroHealthGrade")) {
@@ -375,47 +393,45 @@ function renderHealthHero(health) {
     recsContainer.replaceChildren();
     for (const rec of health?.recommendations || []) {
       const item = node("div", null, `rec-item ${rec.type}`);
-      const icon = rec.type === "danger" ? "🚨" : rec.type === "warning" ? "⚠️" : rec.type === "info" ? "💡" : "✅";
-      item.append(node("span", icon, "rec-icon"), node("strong", rec.title, "rec-title"), node("p", rec.body, "rec-body"));
+      const text = node("div", null, "rec-text");
+      text.append(node("strong", rec.title, "rec-title"), node("p", rec.body, "rec-body"));
+      item.append(node("span", null, "rec-dot"), text);
       recsContainer.append(item);
     }
   }
 }
 
 function renderSummary(s) {
-  const ranked = [...(s.series || [])].sort((a, b) => latestUsed(b) - latestUsed(a));
+  const ranked = rankSeries(s.series);
   const top = ranked[0];
-  const burns = ranked.map((series) => ({ series, burn: paceOf(series) })).filter((r) => r.burn != null).sort((a, b) => b.burn - a.burn);
+  const burns = [...(s.burn || [])].sort((a, b) => b.burn_rate - a.burn_rate);
   const resets = ranked.map((series) => resetAt(series.points?.at(-1))).filter(Boolean).sort((a, b) => a - b);
 
-  let paceText = "Steady pace";
-  let paceSub = "Consumption within limits";
-  if (burns[0]?.burn > 0.5) {
-    const who = seriesName(burns[0].series, ranked);
-    paceText = `${who} · ${formatBurn(burns[0].burn)}`;
-    paceSub = "Fastest rising window";
-  } else if (burns.at(-1)?.burn < -0.5) {
-    const row = burns.at(-1);
-    paceText = `${seriesName(row.series, ranked)} · ${formatBurn(row.burn)}`;
-    paceSub = "Cooling down";
+  let paceText = "Steady";
+  let paceSub = "No window is rising";
+  if (burns[0]?.burn_rate > 0.5) {
+    paceText = formatBurn(burns[0].burn_rate);
+    paceSub = `Fastest: ${names[burns[0].provider] || burns[0].provider} · ${burns[0].label}`;
   }
+  const days = Number($("period")?.value || 7);
+  const periodEvents = (s.events || []).filter((e) => Date.now() - e.at <= days * 86400000);
 
   const tokenSummary = s.tokens?.summary;
   const tokenFormatted = tokenSummary?.total ? formatTokens(tokenSummary.total) : "No data";
   const tokenSub = tokenSummary?.cache_efficiency_pct ? `${tokenSummary.cache_efficiency_pct}% cache hit rate` : "Token readings";
 
-  const nextResetText = resets.length ? resetLabel(resets[0]) : "None scheduled";
-  const nextResetSub = resets.length ? countdownLabel(resets[0]) : "Safe runway";
+  const nextResetText = resets.length ? resetLabel(resets[0]) : "None reported";
+  const nextResetSub = resets.length ? countdownLabel(resets[0]) : "";
 
   const summaryEl = $("summary");
   if (summaryEl) {
     summaryEl.replaceChildren(
-      fact("Fullest Window", top ? `${Math.round(latestUsed(top))}%` : "No readings", top ? seriesName(top, ranked) : "All idle"),
-      fact("Burn Pace", paceText, paceSub),
-      fact("Next Reset", nextResetText, nextResetSub),
-      fact("Token Volume", tokenFormatted, tokenSub),
-      fact("Network Traffic", bytes(s.budget?.used || 0), s.budget?.limit ? `Limit: ${bytes(s.budget.limit)}` : "No limit set"),
-      fact("Audit Events", s.events?.length ? `${s.events.length} logged` : "None", s.snooze_until > Date.now() ? "Alerts snoozed" : "Alerts active")
+      fact("Fullest window", top ? `${shown(latestUsed(top))}%` : "No readings", top ? seriesName(top, ranked) : "Nothing recorded yet"),
+      fact("Fastest pace", paceText, paceSub),
+      fact("Next reset", nextResetText, nextResetSub),
+      fact("Tokens", tokenFormatted, tokenSub),
+      fact("Network this cycle", bytes(s.budget?.used || 0), s.budget?.limit ? `of ${bytes(s.budget.limit)} allowance` : "No allowance set"),
+      fact("Alerts", periodEvents.length ? String(periodEvents.length) : "None", s.snooze_until > Date.now() ? "Notifications snoozed" : "In this period")
     );
   }
 }
@@ -426,7 +442,7 @@ function renderQuotaMatrix(s) {
   matrix.replaceChildren();
 
   const burnMap = new Map((s.burn || []).map((w) => [w.id, w]));
-  const list = [...(s.series || [])].sort((a, b) => latestUsed(b) - latestUsed(a));
+  const list = rankSeries(s.series);
 
   if (!list.length) {
     matrix.append(node("p", "No active quota series recorded yet. Start using a CLI tool to see live readings.", "empty-state"));
@@ -436,7 +452,8 @@ function renderQuotaMatrix(s) {
   for (const series of list) {
     const w = burnMap.get(series.id);
     const last = series.points?.at(-1);
-    const used = last ? Math.round(last.used) : 0;
+    const passed = Date.parse(last?.reset) <= Date.now();
+    const used = last && !passed ? shown(last.used) : 0;
     const card = node("div", null, `quota-card ${heat(used)}`);
 
     const header = node("div", null, "quota-card-head");
@@ -452,9 +469,9 @@ function renderQuotaMatrix(s) {
 
     const footer = node("div", null, "quota-card-foot");
     const burnLabel = w ? `${formatBurn(w.burn_rate)}` : deltaText(series.points);
-    const resetInfo = resetAt(last) ? countdownLabel(resetAt(last)) : "No reset scheduled";
+    const resetInfo = passed ? `Reset · last read ${shown(last.used)}%` : resetAt(last) ? `Resets ${countdownLabel(resetAt(last))}` : "Reset time not reported";
     footer.append(
-      node("span", `Burn: ${burnLabel}`, "quota-foot-item"),
+      node("span", passed ? "Not read since the reset" : `Pace: ${burnLabel || "flat"}`, "quota-foot-item"),
       node("span", resetInfo, "quota-foot-item")
     );
 
@@ -464,7 +481,7 @@ function renderQuotaMatrix(s) {
 }
 
 function renderHistory(s) {
-  const ranked = [...(s.series || [])].sort((a, b) => latestUsed(b) - latestUsed(a) || seriesName(a, s.series).localeCompare(seriesName(b, s.series)));
+  const ranked = rankSeries(s.series);
   if (picked !== "auto" && !ranked.some((series) => series.id === picked)) picked = "auto";
 
   const model = $("model");
@@ -481,10 +498,10 @@ function renderHistory(s) {
   const points = focus ? plotted(focus) : [];
   const daily = $("viewMode")?.value === "daily";
 
-  if ($("trendTitle")) $("trendTitle").textContent = focus ? seriesName(focus, ranked) : "Usage Trajectory";
+  if ($("trendTitle")) $("trendTitle").textContent = focus ? seriesName(focus, ranked) : "Usage";
   const meta = [
-    daily ? "Daily Maximums" : "Sample Readings",
-    points.length ? `${Math.round(points.at(-1).used)}% current` : "",
+    daily ? "Highest reading each day" : "Every reading",
+    points.length ? `${shown(points.at(-1).used)}% current` : "",
     deltaText(points),
     untilFull(points),
     resetAt(points.at(-1)) ? `resets ${resetLabel(resetAt(points.at(-1)))}` : "",
@@ -493,7 +510,7 @@ function renderHistory(s) {
 
   const canvas = $("trend");
   if (canvas) {
-    canvas.setAttribute("aria-label", points.length ? `${$("trendTitle")?.textContent}: ${Math.round(points[0].used)}% to ${Math.round(points.at(-1).used)}%` : "No usage history in this period");
+    canvas.setAttribute("aria-label", points.length ? `${$("trendTitle")?.textContent}: ${shown(points[0].used)}% to ${shown(points.at(-1).used)}%` : "No usage history in this period");
     chart(canvas, points);
   }
 
@@ -519,7 +536,7 @@ function renderHistory(s) {
       };
 
       const last = series.points?.at(-1);
-      const usedPct = last ? Math.round(last.used) : 0;
+      const usedPct = last ? shown(last.used) : 0;
       const who = node("span", seriesName(series, ranked), "who");
       const pill = node("span", `${usedPct}%`, `heat ${heat(usedPct)}`);
       const info = [deltaText(series.points), resetAt(last) ? `resets ${resetLabel(resetAt(last))}` : ""].filter(Boolean).join(" · ");
@@ -528,7 +545,7 @@ function renderHistory(s) {
       const strip = node("span", null, "strip");
       for (const p of byDay(series.points).slice(-7)) {
         const cell = node("i", "", heat(p.used));
-        cell.title = `${dayLabel(dayKey(p.t))}: ${Math.round(p.used)}%`;
+        cell.title = `${dayLabel(dayKey(p.t))}: ${shown(p.used)}%`;
         strip.append(cell);
       }
 
@@ -536,7 +553,7 @@ function renderHistory(s) {
       history.append(row);
       if (series.id === focusedId) row.focus({ preventScroll: true });
     }
-    if ($("historyNote")) $("historyNote").textContent = "Each bar in the strip is the last reading that day. Select a row to chart its trajectory.";
+    if ($("historyNote")) $("historyNote").textContent = "Each square in the strip is that day's highest reading. Select a row to chart it.";
   }
 
   // Peak Hours Chart
@@ -574,14 +591,16 @@ function renderBurnAnalysis(s) {
   if (paceCards) {
     paceCards.replaceChildren();
     const highestBurn = [...burnList].sort((a, b) => b.burn_rate - a.burn_rate)[0];
-    const atRiskCount = burnList.filter((w) => w.status === "critical" || w.status === "exhausted").length;
-    const shortest = burnList.filter((w) => Number.isFinite(w.runway_hours)).sort((x, y) => x.runway_hours - y.runway_hours)[0];
+    const atRiskCount = burnList.filter((w) => w.will_exhaust || w.status === "exhausted").length;
+    const shortest = burnList.filter((w) => Number.isFinite(w.runway_hours) && (w.will_exhaust || w.hours_to_reset == null))
+      .sort((x, y) => x.runway_hours - y.runway_hours)[0];
+    const who = (w) => `${names[w.provider] || w.provider} · ${w.label}`;
 
     paceCards.append(
-      fact("Fastest Burn Rate", highestBurn ? `${formatBurn(highestBurn.burn_rate)}` : "0%/h", highestBurn ? `${names[highestBurn.provider] || highestBurn.provider} · ${highestBurn.label}` : "All idle"),
-      fact("At-Risk Quotas", String(atRiskCount), atRiskCount ? "Projected to exhaust before reset" : "All quotas sustainable"),
-      fact("Safe Burn Target", highestBurn?.safe_rate != null ? `${highestBurn.safe_rate}%/h` : "Unlimited", "Pace to survive until next reset"),
-      fact("Shortest Runway", shortest ? formatHours(shortest.runway_hours) : "—", shortest ? `${names[shortest.provider] || shortest.provider} · ${shortest.label} reaches 100% first at this pace` : "No window reaches 100% at this pace")
+      fact("Fastest pace", highestBurn && highestBurn.burn_rate > 0 ? formatBurn(highestBurn.burn_rate) : "Steady", highestBurn && highestBurn.burn_rate > 0 ? who(highestBurn) : "No window is rising"),
+      fact("At risk", String(atRiskCount), atRiskCount ? "Run out before they reset at this pace" : "Every window lasts until its reset"),
+      fact("Safe pace", highestBurn?.safe_rate != null ? `${highestBurn.safe_rate}%/h` : "—", highestBurn?.safe_rate != null ? `Lasts until ${who(highestBurn)} resets` : "No reset time reported"),
+      fact("Shortest runway", shortest ? formatHours(shortest.runway_hours) : "—", shortest ? `${who(shortest)} reaches 100% first` : "No window reaches 100% before its reset")
     );
   }
 
@@ -603,19 +622,22 @@ function renderBurnAnalysis(s) {
       prov.append(node("strong", `${names[w.provider] || w.provider}`), node("span", ` (${w.label})`, "fine"));
 
       const usedTd = node("td");
-      usedTd.append(node("span", `${Math.round(w.used)}%`, `heat-badge ${heat(w.used)}`));
+      usedTd.append(node("span", `${shown(w.used)}%`, `heat-badge ${heat(w.used)}`));
 
       const burnTd = node("td", formatBurn(w.burn_rate));
       if (w.burn_rate > 5) burnTd.classList.add("text-danger");
 
       const safeTd = node("td", w.safe_rate != null ? `${w.safe_rate}%/h` : "—");
-      const runwayTd = node("td", w.runway_hours != null ? formatHours(w.runway_hours) : "Sustainable");
-      if (w.will_exhaust) runwayTd.classList.add("text-danger");
+      const runway = w.used >= 100 ? "Used up" : w.runway_hours == null ? "Not rising"
+        : w.hours_to_reset != null && w.runway_hours >= w.hours_to_reset ? "Lasts until reset" : formatHours(w.runway_hours);
+      const runwayTd = node("td", runway);
+      if (w.will_exhaust || w.used >= 100) runwayTd.classList.add("text-danger");
 
-      const resetTd = node("td", w.resets_at ? `${countdownLabel(Date.parse(w.resets_at))}` : "None");
+      const resetTd = node("td", w.resets_at ? `${countdownLabel(Date.parse(w.resets_at))}` : "Not reported");
       if (w.resets_at) resetTd.title = new Date(w.resets_at).toLocaleString();
 
-      const statusBadge = node("span", w.status.toUpperCase(), `badge badge-${w.status}`);
+      const STATUS = { exhausted: "Used up", critical: "Runs out", elevated: "Watch", sustainable: "On pace", cooling: "Falling", idle: "Idle" };
+      const statusBadge = node("span", STATUS[w.status] || w.status, `badge badge-${w.status}`);
       const statusTd = node("td");
       statusTd.append(statusBadge);
 
@@ -635,9 +657,10 @@ function renderTokenIntelligence(allTokens) {
   }
   const selected = models.find((m) => m.id === tokenModel);
   const tokens = selected ? { ...allTokens, by_model: [{ ...selected, pct: 100 }], daily: selected.daily,
-    summary: { ...selected, cache_efficiency_pct: selected.input + selected.cache_read > 0 ? Math.round(selected.cache_read / (selected.input + selected.cache_read) * 1000) / 10 : 0,
+    summary: { ...selected, cache_efficiency_pct: selected.input + selected.cache_read + selected.cache_write > 0
+      ? Math.round(selected.cache_read / (selected.input + selected.cache_read + selected.cache_write) * 1000) / 10 : 0,
       avg_turn_tokens: selected.turns ? Math.round(selected.total / selected.turns) : 0 } } : allTokens;
-  if ($("modelCoverage")) $("modelCoverage").textContent = "Observed Claude Code and Codex transcript usage. Other tools' token logs are unavailable; quota percentages are shown separately under Usage Analysis."
+  if ($("modelCoverage")) $("modelCoverage").textContent = "From local Claude Code and Codex transcripts. Other tools don't keep token logs; their quota percentages are under History."
     + (allTokens?.coverage?.skipped_files || allTokens?.coverage?.truncated ? " Coverage is partial: oversized, unreadable or excess logs were excluded." : "");
   const rows = $("modelUsageRows");
   if (rows) {
@@ -655,12 +678,12 @@ function renderTokenIntelligence(allTokens) {
     kpiGrid.replaceChildren();
     const sm = tokens?.summary || { total: 0, input: 0, output: 0, cache_read: 0, cache_write: 0, reasoning: 0, turns: 0, cache_efficiency_pct: 0, avg_turn_tokens: 0 };
     kpiGrid.append(
-      fact("Total Tokens", formatTokens(sm.total), `${sm.turns.toLocaleString()} interactive turns`),
-      fact("Cache Hit Efficiency", `${sm.cache_efficiency_pct}%`, `${formatTokens(sm.cache_read)} tokens served from cache`),
-      fact("Prompt vs Completion", `${formatTokens(sm.input)} / ${formatTokens(sm.output)}`, `Input / Output ratio: ${(sm.output ? (sm.input / sm.output).toFixed(1) : 0)}:1`),
-      fact("Reasoning Tokens", formatTokens(sm.reasoning), "Reported subset of output"),
-      fact("Avg Tokens / Turn", sm.avg_turn_tokens.toLocaleString(), "Average payload density"),
-      fact("Cache Write Tokens", formatTokens(sm.cache_write), "Context checkpoint writes")
+      fact("Total tokens", formatTokens(sm.total), `${sm.turns.toLocaleString()} model responses`),
+      fact("Read from cache", `${sm.cache_efficiency_pct}%`, `${formatTokens(sm.cache_read)} of the prompt tokens`),
+      fact("Prompt / output", `${formatTokens(sm.input + sm.cache_read + sm.cache_write)} / ${formatTokens(sm.output)}`, "Prompt includes cached tokens"),
+      fact("Reasoning", formatTokens(sm.reasoning), "Counted within output"),
+      fact("Per response", sm.avg_turn_tokens.toLocaleString(), "Average tokens"),
+      fact("Written to cache", formatTokens(sm.cache_write), "Prompt tokens stored for reuse")
     );
   }
 
@@ -745,15 +768,15 @@ function renderEvents(events = []) {
   container.replaceChildren();
 
   if (!events.length) {
-    container.append(node("p", "No quota warnings or audit events logged.", "empty-state"));
+    container.append(node("p", "No alerts or events recorded yet.", "empty-state"));
     return;
   }
 
-  const list = showEvents ? events : events.slice(-6);
+  const list = showEvents ? events : events.slice(0, 6);
   const hidden = events.length - list.length;
 
   if (hidden > 0) {
-    const more = node("button", `Show ${hidden} earlier events`, "btn btn-secondary btn-sm mb-md");
+    const more = node("button", `Show ${hidden} older event${hidden === 1 ? "" : "s"}`, "btn btn-secondary btn-sm mb-md");
     more.type = "button";
     more.onclick = () => {
       showEvents = true;
@@ -761,7 +784,7 @@ function renderEvents(events = []) {
     };
     container.append(more);
   } else if (showEvents && events.length > 6) {
-    const less = node("button", "Show recent events only", "btn btn-secondary btn-sm mb-md");
+    const less = node("button", "Show the newest only", "btn btn-secondary btn-sm mb-md");
     less.type = "button";
     less.onclick = () => {
       showEvents = false;
@@ -775,7 +798,7 @@ function renderEvents(events = []) {
     const head = node("div", null, "event-head");
     head.append(
       node("strong", e.title, "event-title"),
-      node("span", `${new Date(e.at).toLocaleString()} · ${e.delivery === "requested" ? "Delivered" : e.delivery}`, "meta")
+      node("span", `${new Date(e.at).toLocaleString()} · ${{ requested: "Shown", suppressed: "Quiet hours or snoozed", unsupported: "Notifications unavailable" }[e.delivery] || e.delivery}`, "meta")
     );
     row.append(head, node("p", e.body, "event-body"));
     container.append(row);
@@ -790,9 +813,9 @@ function renderNetworkBudget(s) {
   if (stats) {
     stats.replaceChildren();
     for (const [label, amount] of [
-      ["Captured this cycle", bytes(s.budget.used)],
-      ["Configured allowance", s.budget.limit ? bytes(s.budget.limit) : "No limit set"],
-      ["Projected cycle pace", s.budget.projected == null ? "Needs 24h of traffic" : bytes(s.budget.projected)],
+      ["Recorded this cycle", bytes(s.budget.used)],
+      ["Allowance", s.budget.limit ? bytes(s.budget.limit) : "Not set"],
+      ["Projected for the cycle", s.budget.projected == null ? "Needs 24 hours of traffic" : bytes(s.budget.projected)],
     ]) {
       const item = fact(label, amount);
       stats.append(item);
@@ -805,11 +828,11 @@ function renderNetworkBudget(s) {
     const pct = Math.min(100, Math.round((s.budget.used / s.budget.limit) * 100));
     const labelRow = node("div", null, "progress-label-row");
     labelRow.append(
-      node("span", `Cycle Progress: ${pct}% used`),
+      node("span", `${pct}% of the allowance used`),
       node("span", `${bytes(s.budget.used)} of ${bytes(s.budget.limit)}`)
     );
     const bar = node("div", null, "meter-bar");
-    const fill = node("div", null, `meter-fill ${pct >= 85 ? "hot" : pct >= 65 ? "warm" : "cool"}`);
+    const fill = node("div", null, `meter-fill ${heat(pct)}`);
     fill.style.width = `${pct}%`;
     bar.append(fill);
     progressWrap.append(labelRow, bar);
@@ -828,7 +851,8 @@ function renderDiagnostics(s) {
   diagContainer.replaceChildren();
 
   const diag = s.diagnostics;
-  const sysInfo = node("p", `Storage Engine: ${diag.storage} · Network Monitor: ${diag.network.state} (${diag.network.coverage})`, "fine mb-md");
+  const human = (text) => String(text ?? "unknown").replace(/_/g, " ");
+  const sysInfo = node("p", `Storage: ${human(diag.storage)} · Network recording: ${human(diag.network.state)} (${diag.network.coverage})`, "fine mb-md");
   diagContainer.append(sysInfo);
 
   for (const p of diag.providers) {
@@ -836,47 +860,17 @@ function renderDiagnostics(s) {
     const info = node("div", null, "diag-info");
     info.append(
       node("strong", names[p.id] || p.id),
-      node("span", ` · State: ${p.state} · Last Success: ${p.last_success ? new Date(p.last_success).toLocaleString() : "None"}`, "fine")
+      node("span", ` · ${human(p.state)} · last successful reading ${p.last_success ? new Date(p.last_success).toLocaleString() : "never"}`, "fine")
     );
-    const login = node("button", "Sign-in / Reconnect", "btn btn-secondary btn-sm");
+    const login = node("button", "Sign in", "btn btn-secondary btn-sm");
     login.type = "button";
     login.onclick = async () => {
       const r = await api.action("login", p.id);
-      message(r);
+      message(r, r?.message || "Sign-in opened in your browser.");
     };
     row.append(info, login);
     diagContainer.append(row);
   }
-}
-
-function renderProviders(hidden = []) {
-  const container = $("providers");
-  if (!container) return;
-  container.replaceChildren();
-
-  order.forEach((id, index) => {
-    const row = node("div", null, "provider-row");
-    const label = node("label", null, "provider-label");
-    const check = node("input");
-    check.type = "checkbox";
-    check.dataset.id = id;
-    check.checked = !hidden.includes(id);
-
-    label.append(check, node("span", names[id] || id));
-
-    const up = node("button", "Move up", "btn btn-ghost btn-sm");
-    up.type = "button";
-    up.disabled = !index;
-    up.onclick = () => {
-      if ($("displayForm")) $("displayForm").dataset.dirty = "true";
-      const hiddenNow = [...container.querySelectorAll("input")].filter((e) => !e.checked).map((e) => e.dataset.id);
-      [order[index - 1], order[index]] = [order[index], order[index - 1]];
-      renderProviders(hiddenNow);
-    };
-
-    row.append(label, up);
-    container.append(row);
-  });
 }
 
 function render(s) {
@@ -902,15 +896,6 @@ function render(s) {
       ? `Alert notifications snoozed until ${new Date(s.snooze_until).toLocaleTimeString()}. Metrics are still actively recorded.`
       : "Alert notifications active.";
   }
-
-  const dispForm = $("displayForm");
-  if (dispForm && !dispForm.contains(document.activeElement) && !dispForm.dataset.dirty) {
-    value("theme", s.display.theme);
-    value("scale", s.display.scale);
-    if ($("compact")) $("compact").checked = !!s.display.compact;
-    order = [...(s.display.order || [])];
-    renderProviders(s.display.hidden);
-  }
 }
 
 // ---------------- CANVAS INTERACTION ----------------
@@ -921,7 +906,7 @@ function setupCanvasInteractions() {
 
   canvas.onmousemove = (e) => {
     if (!state) return;
-    const ranked = [...(state.series || [])].sort((a, b) => latestUsed(b) - latestUsed(a));
+    const ranked = rankSeries(state.series);
     const focus = (picked === "auto" ? ranked[0] : ranked.find((series) => series.id === picked)) || null;
     const points = focus ? plotted(focus) : [];
     if (!points.length) return;
@@ -951,14 +936,14 @@ function setupCanvasInteractions() {
     tooltip.hidden = false;
     tooltip.style.left = `${Math.min(rect.width - 140, Math.max(10, mouseX - 60))}px`;
     tooltip.style.top = `${Math.max(10, e.clientY - rect.top - 50)}px`;
-    tooltip.innerHTML = `<strong>${Math.round(closest.used)}%</strong> · ${new Date(closest.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}<br><span class="fine">${new Date(closest.t).toLocaleDateString([], { month: "short", day: "numeric" })}</span>`;
+    tooltip.innerHTML = `<strong>${shown(closest.used)}%</strong> · ${new Date(closest.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}<br><span class="fine">${new Date(closest.t).toLocaleDateString([], { month: "short", day: "numeric" })}</span>`;
   };
 
   canvas.onmouseleave = () => {
     hoverPoint = null;
     tooltip.hidden = true;
     if (state) {
-      const ranked = [...(state.series || [])].sort((a, b) => latestUsed(b) - latestUsed(a));
+      const ranked = rankSeries(state.series);
       const focus = (picked === "auto" ? ranked[0] : ranked.find((series) => series.id === picked)) || null;
       chart(canvas, focus ? plotted(focus) : []);
     }
@@ -981,11 +966,10 @@ setupCanvasInteractions();
 if ($("period")) $("period").onchange = load;
 if ($("model")) $("model").onchange = () => { picked = $("model").value; if (state) renderHistory(state); };
 if ($("viewMode")) $("viewMode").onchange = () => { if (state) renderHistory(state); };
-if ($("displayForm")) $("displayForm").onchange = () => { $("displayForm").dataset.dirty = "true"; };
 
 if ($("snooze")) {
   $("snooze").onchange = async () => {
-    message(await api.action("snooze", Number($("snooze").value)));
+    message(await api.action("snooze", Number($("snooze").value)), Number($("snooze").value) ? "Notifications snoozed." : "Notifications are on.");
     await load();
   };
 }
@@ -996,35 +980,19 @@ if ($("budgetForm")) {
     message(await api.action("budget", {
       limit: Number($("limit").value) * 1e9,
       day: Number($("day").value),
-    }));
+    }), "Allowance saved.");
     await load();
   };
 }
 
-if ($("displayForm")) {
-  $("displayForm").onsubmit = async (e) => {
-    e.preventDefault();
-    const hidden = [...$("providers").querySelectorAll("input")].filter((el) => !el.checked).map((el) => el.dataset.id);
-    const result = await api.action("display", {
-      theme: $("theme").value,
-      scale: Number($("scale").value),
-      compact: $("compact").checked,
-      order,
-      hidden,
-    });
-    message(result);
-    if (result?.ok && $("displayForm")) delete $("displayForm").dataset.dirty;
-    await load();
-  };
-}
-
-if ($("refresh")) $("refresh").onclick = () => api.action("retry");
+if ($("refresh")) $("refresh").onclick = async () => { message(await api.action("retry"), "Reading every plan meter…"); setTimeout(load, 4000); };
 if ($("network")) $("network").onclick = () => api.action("network");
+if ($("openSettings")) $("openSettings").onclick = () => api.action("settings");
 
-if ($("csv")) $("csv").onclick = async () => message(await api.export("csv", Number($("period")?.value || 7)));
-if ($("json")) $("json").onclick = async () => message(await api.export("json", Number($("period")?.value || 7)));
-if ($("reportExport")) $("reportExport").onclick = async () => message(await api.export("report", Number($("period")?.value || 7)));
-if ($("support")) $("support").onclick = async () => message(await api.export("diagnostics", Number($("period")?.value || 7)));
+if ($("csv")) $("csv").onclick = async () => message(await api.export("csv", Number($("period")?.value || 7)), "CSV saved.");
+if ($("json")) $("json").onclick = async () => message(await api.export("json", Number($("period")?.value || 7)), "JSON saved.");
+if ($("reportExport")) $("reportExport").onclick = async () => message(await api.export("report", Number($("period")?.value || 7)), "Report saved.");
+if ($("support")) $("support").onclick = async () => message(await api.export("diagnostics", Number($("period")?.value || 7)), "Support report saved.");
 
 load();
 setInterval(() => {
@@ -1041,10 +1009,10 @@ function renderBattery(view) {
   if (!view?.sessions?.length) list.append(node("p", "No charge or discharge sessions observed yet.", "fine"));
   for (const s of view?.sessions || []) list.append(node("p", `${s.state === "charging" ? "Charging" : "Discharging"} · ${new Date(s.start).toLocaleString()} · ${new Date(s.end).toLocaleString()} · ${Math.round(s.from)}% · ${Math.round(s.to)}% · ${s.delta > 0 ? "+" : ""}${Math.round(s.delta)} pp · ${Math.round(s.duration / 60000)}m observed${s.partial ? " · Partial" : ""}`, "battery-session"));
 }
-$("batteryCsv").onclick = async () => message(await api.export("battery-csv", Number($("period").value)));
+$("batteryCsv").onclick = async () => message(await api.export("battery-csv", Number($("period").value)), "Battery CSV saved.");
 $("batteryClear").onclick = async () => {
   if (!window.confirm("Clear battery history on this computer?")) return;
-  message(await api.action("clear-battery")); await load();
+  message(await api.action("clear-battery"), "Battery history cleared."); await load();
 };
 const selectBattery = (tab) => { if (tab === "battery") document.querySelector('[data-tab="battery"]')?.click(); };
 api.onTab(selectBattery);
@@ -1065,5 +1033,5 @@ function renderSessionUsage(s) {
 }
 $("tokenModel").onchange = () => { tokenModel = $("tokenModel").value; if (state) renderTokenIntelligence(state.tokens); };
 for (const [id, format] of [["modelsCsv", "models-csv"], ["modelsDailyCsv", "models-daily-csv"], ["modelsJson", "models-json"]]) {
-  $(id).onclick = async () => message(await api.export(format, Number($("period").value), tokenModel));
+  $(id).onclick = async () => message(await api.export(format, Number($("period").value), tokenModel), "Export saved.");
 }

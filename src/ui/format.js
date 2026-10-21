@@ -71,10 +71,26 @@ function alerting(win) {
   return Number.isFinite(win.used_pct) && win.used_pct >= alertThreshold;
 }
 
-function formatUsedTotal(win, compact) {
-  if (win == null || !Number.isFinite(win.used_pct)) return compact ? "—" : "—/100%";
-  const used = Math.round(win.used_pct);
-  return compact ? `${used}/100` : `${used}/100%`;
+function formatUsed(win) {
+  if (win == null || !Number.isFinite(win.used_pct)) return "—";
+  return `${UsageModels.shownPct(win.used_pct)}%`;
+}
+
+// Exact local time for tooltips, e.g. "Tue, Oct 21, 6:39 PM".
+function formatWhen(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  return new Date(t).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function formatAgo(ms) {
+  if (!Number.isFinite(ms)) return "";
+  const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (secs < 45) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return hours < 24 ? `${hours}h ${pad(mins % 60)}m ago` : `${Math.floor(hours / 24)}d ago`;
 }
 
 const MARKS = {
@@ -114,25 +130,12 @@ function letter(id) {
   return "G";
 }
 
-function bindIntervalSelect(el) {
-  if (!el || !window.usage) return;
-  window.usage.getInterval().then((secs) => {
-    el.value = String(secs || 5);
-  });
-  window.usage.onInterval((secs) => {
-    el.value = String(secs);
-  });
-  el.addEventListener("change", (e) => {
-    e.stopPropagation();
-    window.usage.setIntervalSecs(Number(el.value));
-  });
-}
-
 function statusText(p) {
   const s = p.status || {};
   if (s.state === "logged_out") return s.hint || "Sign in";
   if (s.state === "not_installed") return s.hint || "Not installed";
   if (s.state === "fetch_failed") return s.message || "Error";
   if (s.state === "unknown") return s.hint || s.message || "n/a";
+  if (s.state === "ok" && !(p.windows || []).length) return s.hint || "No usage reported";
   return null;
 }

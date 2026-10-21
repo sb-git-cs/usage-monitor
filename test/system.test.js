@@ -208,3 +208,20 @@ test("paused sampling stops reading until it resumes", async (t) => {
   assert.ok(reads > before, "sampling restarts at once");
   poll.stop();
 });
+
+test("off Windows the GPU list is re-read every 10 minutes unless it reports utilization", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"] });
+  let reads = 0;
+  let live = false;
+  const api = load("src/system.js", { systeminformation: {
+    graphics: async () => { reads++; return { controllers: [{ model: "GPU", utilizationGpu: live ? 30 : null }] }; },
+    fsStats: async () => ({ rx_sec: 1, wx_sec: 2 }),
+  } });
+  for (let i = 0; i < 4; i++) assert.equal((await api.hardwareSample(false, "darwin")).gpuPresent, true);
+  assert.equal(reads, 1, "system_profiler is not started every 5 seconds");
+  t.mock.timers.tick(600001);
+  live = true;
+  assert.equal((await api.hardwareSample(false, "linux")).gpu, 30);
+  await api.hardwareSample(false, "linux");
+  assert.equal(reads, 3, "a GPU that reports utilization is read every sample");
+});

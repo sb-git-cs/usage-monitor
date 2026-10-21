@@ -451,7 +451,9 @@ function combineWindows(previous, current) {
     ? previous.filter((w) => w.kind !== "five_hour") : previous || [];
   for (const w of [...prior, ...(current || [])]) {
     // The later successful endpoint is authoritative, including a legitimate decrease/reset.
-    const key = ["weekly", "five_hour"].includes(w.kind) ? w.kind : `${w.kind}|${w.label}`;
+    // Several Gemini groups carry their group name in the label and stay separate windows.
+    const plain = !w.label || w.label === "Weekly" || w.label === "5h";
+    const key = ["weekly", "five_hour"].includes(w.kind) && plain ? w.kind : `${w.kind}|${w.label}`;
     windows.set(key, w);
   }
   return [...windows.values()].sort((a, b) => (["weekly", "five_hour"].indexOf(a.kind) < 0 ? 2 : ["weekly", "five_hour"].indexOf(a.kind))

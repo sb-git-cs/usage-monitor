@@ -8,91 +8,136 @@
   <link rel="stylesheet" href="settings.css" />
 </head>
 <body>
-  <div class="page">
-    <header class="page-head">
-      <h1>Settings</h1>
-      <span class="version" id="version"></span>
-    </header>
+  <div class="shell">
+    <nav class="side" id="nav" aria-label="Settings sections">
+      <header class="side-head">
+        <h1>Settings</h1>
+        <span class="version" id="version"></span>
+      </header>
+      <a class="nav-link" href="#sec-general">General</a>
+      <a class="nav-link" href="#sec-appearance">Appearance</a>
+      <a class="nav-link" href="#sec-chips">Taskbar chips</a>
+      <a class="nav-link" href="#sec-alerts">Alerts</a>
+      <a class="nav-link" href="#sec-sessions">Coding sessions</a>
+      <a class="nav-link" href="#sec-accounts">Accounts</a>
+      <a class="nav-link" href="#sec-phone">Phone</a>
+      <a class="nav-link" href="#sec-updates">Updates</a>
+      <a class="nav-link" href="#sec-network">Network usage</a>
+    </nav>
 
     <main class="settings" id="settings">
-      <section>
-        <h3>General</h3>
-        <label class="switch"><input type="checkbox" id="combinedSubscription" /><span>Use combined X Subscription</span></label>
-        <p class="hint">Shows one shared weekly pool for Grok and Cursor. Additional Usage stays separate. Use this after switching your accounts to the X Subscription.</p>
-        <label class="switch"><input type="checkbox" id="autostart" /><span id="autostartLabel">Start at login</span></label>
-        <label class="switch"><input type="checkbox" id="chipsVisible" /><span>Show the chips</span></label>
-        <label class="switch" id="dockRow"><input type="checkbox" id="chipsDocked" /><span>Snap the chips to the taskbar</span></label>
-        <div class="field inline-field">
-          <label for="interval">Refresh plan meters every</label>
+      <section class="panel" id="sec-general" aria-labelledby="h-general">
+        <h2 id="h-general">General</h2>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name" id="autostartLabel">Start at login</span><span class="setting-desc">Starts hidden in the notification area.</span></span>
+          <input type="checkbox" class="toggle" id="autostart" />
+        </label>
+        <div class="setting">
+          <span class="setting-text"><label class="setting-name" for="interval">Refresh plan meters every</label><span class="setting-desc">How often each signed-in tool's usage is read.</span></span>
           <select id="interval"></select>
         </div>
       </section>
 
-      <section>
-        <h3>Alerts</h3>
-        <div class="field inline-field">
-          <label for="threshold">Warn when a plan window reaches</label>
+      <section class="panel" id="sec-appearance" aria-labelledby="h-appearance">
+        <h2 id="h-appearance">Appearance</h2>
+        <div class="setting">
+          <span class="setting-text"><label class="setting-name" for="theme">Theme</label><span class="setting-desc">Applies to the panel, the chips and every Usage Monitor window.</span></span>
+          <select id="theme">
+            <option value="system">Match Windows</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </div>
+        <div class="setting">
+          <span class="setting-text"><label class="setting-name" for="scale">Panel text size</label><span class="setting-desc">Larger text also widens the panel.</span></span>
+          <select id="scale">
+            <option value="100">100%</option>
+            <option value="115">115%</option>
+            <option value="130">130%</option>
+          </select>
+        </div>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Compact plan cards</span><span class="setting-desc">Tighter spacing; account names are hidden.</span></span>
+          <input type="checkbox" class="toggle" id="compact" />
+        </label>
+        <div class="setting stacked">
+          <span class="setting-text"><span class="setting-name">Plans to show</span><span class="setting-desc">Order and visibility in the panel and on the chips. A hidden plan is still read, so its history and alerts continue.</span></span>
+          <ul class="order-list" id="displayProviders"></ul>
+        </div>
+      </section>
+
+      <section class="panel" id="sec-chips" aria-labelledby="h-chips">
+        <h2 id="h-chips">Taskbar chips</h2>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Show the chips</span><span class="setting-desc">The compact strip with plan percentages, network speed and system load.</span></span>
+          <input type="checkbox" class="toggle" id="chipsVisible" />
+        </label>
+        <label class="setting" id="dockRow">
+          <span class="setting-text"><span class="setting-name">Snap the chips to the taskbar</span><span class="setting-desc">Sits in a free gap on the taskbar; pops out above it when there is no room.</span></span>
+          <input type="checkbox" class="toggle" id="chipsDocked" />
+        </label>
+        <div class="setting stacked">
+          <span class="setting-text"><span class="setting-name">On the strip</span><span class="setting-desc">Plans hidden under Appearance are never shown.</span></span>
+          <div class="checks" id="chipChecks"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="sec-alerts" aria-labelledby="h-alerts">
+        <h2 id="h-alerts">Alerts</h2>
+        <div class="setting">
+          <span class="setting-text"><label class="setting-name" for="threshold">Warn when a plan window reaches</label><span class="setting-desc">Bars and chips turn red from this level, and a notification is shown once per window.</span></span>
           <select id="threshold"></select>
         </div>
-        <label class="switch"><input type="checkbox" id="notifyLimit" /><span>Notify when a limit is reached</span></label>
-        <label class="switch"><input type="checkbox" id="forecast" /><span>Warn when a window is on course to run out before it resets</span></label>
-        <p class="hint">Once a window is half used, the recent pace is used to project when it reaches 100%. The flyout shows the projection either way.</p>
-        <label class="switch"><input type="checkbox" id="quiet" /><span>Quiet hours</span></label>
-        <div class="field inline-field indent">
-          <label for="quietStart">From</label>
-          <input type="time" id="quietStart" />
-          <label for="quietEnd">to</label>
-          <input type="time" id="quietEnd" />
-        </div>
-        <p class="hint">During quiet hours plan, forecast and update notifications are not shown. Data cap notifications still are.</p>
-      </section>
-
-      <section>
-        <h3>Coding sessions</h3>
-        <label class="switch"><input type="checkbox" id="autoResume" /><span>Resume sessions automatically when a usage limit resets</span></label>
-        <p class="hint" id="autoResumeHint">Claude Code, Codex, Grok Build, Antigravity, Gemini CLI, Cursor Agent and Copilot CLI sessions running in a terminal are listed on the flyout and the chips. When a usage limit stops one, Usage Monitor types "continue" into the same terminal a minute after that limit resets. A 5-hour limit resumes when its 5-hour window resets, even if a weekly window is still full. Nothing is typed if the terminal was closed or no longer shows the limit message, while the session is busy, or while the meters still show that same limit as used up.</p>
-        <p class="hint" id="folderMenuHint">In File Explorer, right-click empty space in a folder and choose Open in terminal (godmode). It starts Claude Code, Codex, Grok Build, Gemini or Cursor there with that CLI's own skip-permissions flag. On Windows 11 it is on the main right-click menu. The first launch asks once for administrator approval so Windows can trust the menu.</p>
-      </section>
-
-      <section>
-        <h3>Chips</h3>
-        <p class="hint">Choose what the taskbar strip shows.</p>
-        <div class="checks" id="chipChecks"></div>
-      </section>
-
-      <section>
-        <h3>Updates</h3>
-        <label class="switch"><input type="checkbox" id="autoUpdate" /><span>Install updates automatically</span></label>
-        <div class="field inline-field">
-          <span class="label-inline">Channel</span>
-          <label class="radio"><input type="radio" name="channel" value="stable" /> Stable</label>
-          <label class="radio"><input type="radio" name="channel" value="beta" /> Beta (pre-releases too)</label>
-        </div>
-        <p class="hint" id="channelHint"></p>
-        <p class="status-line" id="updateStatus"></p>
-        <div class="row-actions wrap">
-          <button class="btn" type="button" id="checkUpdates">Check now</button>
-          <button class="btn" type="button" id="openLogs">Open logs folder</button>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Notify when a limit is reached</span></span>
+          <input type="checkbox" class="toggle" id="notifyLimit" />
+        </label>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Warn before a window runs out</span><span class="setting-desc">Once a window is half used, its recent pace projects when it reaches 100%. The panel shows the projection either way.</span></span>
+          <input type="checkbox" class="toggle" id="forecast" />
+        </label>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Quiet hours</span><span class="setting-desc">No plan, forecast or update notifications. Data cap notifications are still shown.</span></span>
+          <input type="checkbox" class="toggle" id="quiet" />
+        </label>
+        <div class="setting sub">
+          <span class="setting-text"><span class="setting-name">From</span><span class="setting-desc" id="quietHint"></span></span>
+          <span class="time-range"><input type="time" id="quietStart" aria-label="Quiet hours start" /><span>to</span><input type="time" id="quietEnd" aria-label="Quiet hours end" /></span>
         </div>
       </section>
 
-      <section>
-        <h3>Signed-in accounts</h3>
-        <p class="hint">Switch account opens the provider's sign-in page in your browser. The meters read the tool's saved login on this computer; to change them, sign in through that tool as well. When more than one sign-in is saved, pick the account the meters should follow.</p>
+      <section class="panel" id="sec-sessions" aria-labelledby="h-sessions">
+        <h2 id="h-sessions">Coding sessions</h2>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Resume sessions after a usage limit resets</span><span class="setting-desc" id="autoResumeHint">Types "continue" into the terminal where a limit stopped Claude Code, Codex, Grok Build, Antigravity, Gemini CLI, Cursor Agent or Copilot CLI, a minute after that limit resets. A 5-hour limit resumes when its 5-hour window resets, even if a weekly window is still full. Nothing is typed if the terminal was closed or no longer shows the limit message, while the session is busy, or while the meters still show that limit used up.</span></span>
+          <input type="checkbox" class="toggle" id="autoResume" />
+        </label>
+        <p class="note" id="folderMenuHint">In File Explorer, right-click empty space in a folder and choose <strong>Open in terminal (godmode)</strong> to start Claude Code, Codex, Grok Build, Gemini or Cursor there with that CLI's own skip-permissions flag. On Windows 11 it is on the main right-click menu; the first launch asks once for administrator approval so Windows can trust it.</p>
+      </section>
+
+      <section class="panel" id="sec-accounts" aria-labelledby="h-accounts">
+        <h2 id="h-accounts">Accounts</h2>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Use combined X Subscription</span><span class="setting-desc">One shared weekly pool for Grok and Cursor; Additional Usage stays separate. Turn on after moving your accounts to the X Subscription.</span></span>
+          <input type="checkbox" class="toggle" id="combinedSubscription" />
+        </label>
+        <p class="note">The meters read each tool's saved login on this computer. <strong>Switch account</strong> opens the provider's sign-in page in your browser; to change what a meter reads, also sign in through that tool. When several sign-ins are saved, pick the one to follow.</p>
         <div id="accounts"></div>
       </section>
 
-      <section>
-        <h3>Phone</h3>
-        <label class="switch"><input type="checkbox" id="phoneEnabled" /><span>Share plan meters with my phone over this network</span></label>
-        <p class="hint">Pair a phone turns sharing on and shows a QR code and a code to type, here and on the flyout. The code works for 10 minutes for one phone, and it stays available if this window closes. Cancel withdraws it. Your logins stay on this computer unless you allow a phone to read usage directly; it then gets current access tokens only, never refresh tokens. The phone can ask to switch an account or read directly; you confirm both here. Everything it receives is encrypted.</p>
+      <section class="panel" id="sec-phone" aria-labelledby="h-phone">
+        <h2 id="h-phone">Phone</h2>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Share plan meters with my phone over this network</span><span class="setting-desc">Everything the phone receives is encrypted. Your logins stay here unless you allow a phone to read usage directly; it then gets current access tokens only, never refresh tokens. You confirm account switches and direct reading on this computer.</span></span>
+          <input type="checkbox" class="toggle" id="phoneEnabled" />
+        </label>
         <div class="row-actions wrap">
           <button class="btn primary" type="button" id="pair">Pair a phone…</button>
         </div>
         <div id="phoneBody">
           <p class="status-line" id="phoneStatus"></p>
-          <div class="field inline-field">
-            <label for="phonePort">Port</label>
+          <div class="setting">
+            <span class="setting-text"><label class="setting-name" for="phonePort">Port</label><span class="setting-desc">Change it only if another app uses this port.</span></span>
             <input type="number" id="phonePort" min="1024" max="65535" />
           </div>
           <div class="pairing" id="pairing" hidden>
@@ -107,14 +152,36 @@
           </div>
           <div class="list-title">Paired phones</div>
           <ul class="app-list" id="devices"></ul>
-          <p class="hint">The first time, your firewall may ask whether Usage Monitor can accept connections. Allow it on private networks. To reach this computer away from home, use a VPN such as Tailscale; its address is offered too.</p>
+          <p class="note">The first time, your firewall may ask whether Usage Monitor can accept connections; allow it on private networks. To reach this computer away from home, use a VPN such as Tailscale; its address is offered too.</p>
         </div>
       </section>
 
-      <section>
-        <h3>Network usage</h3>
-        <p class="hint">Recording, history, data caps and blocking are set in the Network usage window.</p>
-        <button class="btn" type="button" id="openNetwork">Open Network usage…</button>
+      <section class="panel" id="sec-updates" aria-labelledby="h-updates">
+        <h2 id="h-updates">Updates</h2>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Install updates automatically</span><span class="setting-desc">Checks at launch, after the computer wakes and every six hours.</span></span>
+          <input type="checkbox" class="toggle" id="autoUpdate" />
+        </label>
+        <div class="setting">
+          <span class="setting-text"><span class="setting-name">Channel</span><span class="setting-desc" id="channelHint"></span></span>
+          <span class="segmented" role="radiogroup" aria-label="Update channel">
+            <label class="radio"><input type="radio" name="channel" value="stable" /> Stable</label>
+            <label class="radio"><input type="radio" name="channel" value="beta" /> Beta</label>
+          </span>
+        </div>
+        <p class="status-line" id="updateStatus"></p>
+        <div class="row-actions wrap">
+          <button class="btn" type="button" id="checkUpdates">Check now</button>
+          <button class="btn" type="button" id="openLogs">Open logs folder</button>
+        </div>
+      </section>
+
+      <section class="panel" id="sec-network" aria-labelledby="h-network">
+        <h2 id="h-network">Network usage</h2>
+        <div class="setting">
+          <span class="setting-text"><span class="setting-name">Recording, history, data caps and blocking</span><span class="setting-desc">Set in the Network usage window.</span></span>
+          <button class="btn" type="button" id="openNetwork">Open Network usage…</button>
+        </div>
       </section>
     </main>
   </div>

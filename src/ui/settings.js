@@ -31,6 +31,9 @@ const UPDATE_TEXT = {
   error: "Couldn't check for updates.",
 };
 
+const PLAN_IDS = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+const PLAN_NAMES = Object.fromEntries(CHIP_LABELS.filter(([key]) => PLAN_IDS.includes(key)));
+
 let view = null;
 let pairTimer = null;
 
@@ -54,6 +57,7 @@ function toast(text) {
 async function save(patch) {
   const next = await api.set(patch);
   if (next) render(next);
+  if (next && next.error) toast(next.error);
 }
 
 // Leaves a control alone while it has focus, so typing is never overwritten.
@@ -182,10 +186,12 @@ function render(next) {
     $("autoResumeHint").textContent = "Claude Code sessions running in a terminal are listed on the flyout and the chips. Listing the other CLIs and resuming sessions automatically needs Windows; here a session stopped by a usage limit waits for you.";
     $("folderMenuHint").textContent = "The folder menu that starts a CLI in the right-clicked folder is registered on Windows.";
   }
+  renderDisplay(next.display);
   setValue($("quiet"), s.quiet_hours.enabled);
   setValue($("quietStart"), s.quiet_hours.start);
   setValue($("quietEnd"), s.quiet_hours.end);
   $("quietStart").disabled = $("quietEnd").disabled = !s.quiet_hours.enabled;
+  $("quietHint").textContent = s.quiet_hours.enabled && s.quiet_hours.start === s.quiet_hours.end ? "The same start and end time keeps notifications quiet all day." : "";
 
   const checks = $("chipChecks");
   if (!checks.children.length) {
@@ -213,14 +219,58 @@ function render(next) {
   const status = $("updateStatus");
   if (u) {
     let text = UPDATE_TEXT[u.status] || "";
+    if (u.status === "idle" && !["installer", "git"].includes(u.kind)) text = "Checks for updates automatically; this copy can't install them itself.";
+    if (u.status === "ready" && !u.auto) text = "An update is ready and installs when Usage Monitor quits.";
     if (u.status === "available" && u.latest) text = `Version ${u.latest} is available; this copy can't update itself.`;
     if ((u.status === "skipped" || u.status === "error") && u.message) text += ` ${u.message}`;
     if (u.checked_at) text += ` Last checked ${relative(u.checked_at)}.`;
     status.textContent = text;
     status.className = `status-line${u.status === "error" ? " error" : ""}`;
+    $("checkUpdates").disabled = ["checking", "downloading", "installing"].includes(u.status);
   }
   renderPhone(next.phone);
   renderAccounts(next.accounts);
+}
+
+// Theme, text size, compact cards and the order and visibility of the plans.
+function renderDisplay(display) {
+  if (!display) return;
+  setValue($("theme"), display.theme);
+  setValue($("scale"), display.scale);
+  setValue($("compact"), display.compact);
+  const order = [...(display.order || []).filter((id) => PLAN_IDS.includes(id)), ...PLAN_IDS.filter((id) => !(display.order || []).includes(id))];
+  const hidden = display.hidden || [];
+  const list = $("displayProviders");
+  const focused = document.activeElement && list.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
+  list.replaceChildren(...order.map((id, i) => {
+    const li = el("li", hidden.includes(id) ? "off" : "");
+    const box = el("input");
+    box.type = "checkbox";
+    box.checked = !hidden.includes(id);
+    box.dataset.focus = `show-${id}`;
+    box.setAttribute("aria-label", `Show ${PLAN_NAMES[id]}`);
+    box.addEventListener("change", () => save({ display: { hidden: box.checked ? hidden.filter((h) => h !== id) : [...hidden, id] } }));
+    const move = (delta, label) => {
+      const button = el("button", "order-btn", delta < 0 ? "↑" : "↓");
+      button.type = "button";
+      button.disabled = i + delta < 0 || i + delta >= order.length;
+      button.dataset.focus = `${delta < 0 ? "up" : "down"}-${id}`;
+      button.setAttribute("aria-label", `${label} ${PLAN_NAMES[id]}`);
+      button.addEventListener("click", () => {
+        const next = [...order];
+        [next[i], next[i + delta]] = [next[i + delta], next[i]];
+        save({ display: { order: next } });
+      });
+      return button;
+    };
+    li.append(box, el("span", "order-name", PLAN_NAMES[id]), move(-1, "Move up"), move(1, "Move down"));
+    return li;
+  }));
+  // Reordering rebuilds the list; keep the keyboard on the control that was used.
+  if (focused) {
+    const again = list.querySelector(`[data-focus="${focused}"]`);
+    if (again && !again.disabled) again.focus();
+  }
 }
 
 let accountsSeen = "";
@@ -240,7 +290,7 @@ function renderAccounts(rows) {
     const head = el("div", "account-head");
     head.append(
       el("span", "account-name", row.label),
-      el("span", "account-who", row.signed_in ? (row.account || "Signed in") : "Not signed in"),
+      el("span", `account-who${row.signed_in ? " signed-in" : ""}`, row.signed_in ? (row.account || "Signed in") : "Not signed in"),
     );
     block.append(head);
     if (row.detail) block.append(el("p", "hint", row.detail));
@@ -305,6 +355,44 @@ function bind() {
   $("pair").addEventListener("click", async () => render(await api.phone("pair")));
   $("cancelPair").addEventListener("click", async () => render(await api.phone("cancel")));
   $("openNetwork").addEventListener("click", () => api.openNetwork());
+  $("theme").addEventListener("change", (e) => save({ display: { theme: e.target.value } }));
+  $("scale").addEventListener("change", (e) => save({ display: { scale: Number(e.target.value) } }));
+  $("compact").addEventListener("change", (e) => save({ display: { compact: e.target.checked } }));
+  bindNav();
+}
+
+// Section links scroll the settings; the link for the section in view is marked.
+function bindNav() {
+  const links = [...document.querySelectorAll(".nav-link")];
+  const main = $("settings");
+  for (const link of links) {
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      const target = document.querySelector(link.getAttribute("href"));
+      if (target) target.scrollIntoView({ block: "start" });
+      mark(link);
+    });
+  }
+  function mark(active) {
+    for (const link of links) {
+      link.classList.toggle("active", link === active);
+      if (link === active) link.setAttribute("aria-current", "true");
+      else link.removeAttribute("aria-current");
+    }
+  }
+  function spy() {
+    const top = main.getBoundingClientRect().top;
+    let current = links[0];
+    for (const link of links) {
+      const section = document.querySelector(link.getAttribute("href"));
+      if (section && section.getBoundingClientRect().top - top <= 40) current = link;
+    }
+    // At the very bottom the last sections may never reach the top.
+    if (main.scrollTop + main.clientHeight >= main.scrollHeight - 2) current = links.at(-1);
+    mark(current);
+  }
+  main.addEventListener("scroll", spy, { passive: true });
+  spy();
 }
 
 bind();

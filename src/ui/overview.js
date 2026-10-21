@@ -5,6 +5,7 @@
     let attention = 0;
     let unavailable = 0;
     let nextReset = null;
+    const atRisk = [];
     for (const p of providers) {
       const windows = (p.windows || []).filter((w) => Number.isFinite(w.used_pct));
       if (p.status?.state !== "ok" || !windows.length) {
@@ -13,7 +14,10 @@
       }
       reporting++;
       if (windows.some((w) => w.used_pct >= threshold ||
-        (Date.parse(w.forecast_at) > now && Date.parse(w.forecast_at) < Date.parse(w.resets_at)))) attention++;
+        (Date.parse(w.forecast_at) > now && Date.parse(w.forecast_at) < Date.parse(w.resets_at)))) {
+        attention++;
+        atRisk.push(p.display_name);
+      }
       for (const w of windows) {
         const reset = Date.parse(w.resets_at);
         if (reset > now && (!nextReset || reset < nextReset.at)) {
@@ -21,7 +25,7 @@
         }
       }
     }
-    return { reporting, attention, unavailable, nextReset };
+    return { reporting, attention, unavailable, nextReset, atRisk };
   }
   const api = { summarize };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

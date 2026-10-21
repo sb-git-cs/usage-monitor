@@ -91,3 +91,54 @@ test("analyzeBurn leaves out windows that have reset since, or are no longer bei
   assert.deepEqual(analysis.map((w) => w.id), ["current"]);
   assert.equal(computeHealth(analysis, []).score, 70, "only the live exhausted window costs health");
 });
+
+test("analyzeBurn reads the pace of the current reset cycle only", () => {
+  const now = 50 * 3600000;
+  const reset = (h) => new Date(now + h * 3600000).toISOString();
+  const old = [80, 88, 96].map((used, i) => ({ t: now - (50 - i * 10) * 60000, used, reset: reset(-0.4), cycle: "a" }));
+  const fresh = [2, 15, 28, 40].map((used, i) => ({ t: now - (18 - i * 6) * 60000, used, reset: reset(4.6), cycle: "b" }));
+  const [w] = analyzeBurn([{ id: "s", provider: "claude", label: "5h", kind: "five_hour", points: [...old, ...fresh] }], () => now);
+  assert.ok(w.burn_rate > 100, `rising fast since the reset, got ${w.burn_rate}`);
+  assert.equal(w.status, "critical");
+  assert.equal(w.will_exhaust, true);
+});
+
+test("a window that resets before it runs out is not critical, and a sustainable 5-hour pace is not elevated", () => {
+  const now = 50 * 3600000;
+  const reset = new Date(now + 3600000).toISOString();
+  const near = [86, 87, 88].map((used, i) => ({ t: now - (40 - i * 20) * 60000, used, reset }));
+  const steady = [10, 13, 16].map((used, i) => ({ t: now - (40 - i * 20) * 60000, used, reset: new Date(now + 4 * 3600000).toISOString() }));
+  const list = analyzeBurn([
+    { id: "near", provider: "codex", label: "5h", kind: "five_hour", points: near },
+    { id: "steady", provider: "claude", label: "5h", kind: "five_hour", points: steady },
+  ], () => now);
+  const byId = Object.fromEntries(list.map((w) => [w.id, w]));
+  assert.equal(byId.near.will_exhaust, false);
+  assert.equal(byId.near.status, "elevated", "88% but resets first");
+  assert.equal(byId.steady.status, "sustainable", "9%/h with 21%/h safe");
+});
+
+test("recommendations use plan names and never contradict their numbers", () => {
+  const health = computeHealth([
+    { provider: "claude", label: "5h", status: "critical", used: 92, burn_rate: 25, runway_hours: 0.3, hours_to_reset: 2, safe_rate: 4, will_exhaust: true },
+    { provider: "codex", label: "Weekly", status: "critical", used: 90, burn_rate: 3, runway_hours: 3.3, hours_to_reset: null, safe_rate: null, will_exhaust: false },
+    { provider: "gemini", label: "5h", status: "elevated", used: 75, burn_rate: -6, runway_hours: null, hours_to_reset: 1, safe_rate: 25, will_exhaust: false },
+  ], []);
+  const text = health.recommendations.map((r) => `${r.title} ${r.body}`).join(" | ");
+  assert.match(text, /Claude Code 5h runs out before it resets/);
+  assert.match(text, /Codex Weekly is close to its limit/);
+  assert.doesNotMatch(text, /null|undefined|\+-|NaN/);
+  assert.match(text, /reset time is not reported/);
+});
+
+test("health counts plan warnings, not other notifications", () => {
+  const now = 10 * 86400000;
+  const events = [
+    { at: now - 1000, title: "Session resumed", body: "x" },
+    { at: now - 2000, title: "Data cap reached", body: "x" },
+    { at: now - 3000, title: "Network budget warning", body: "x" },
+  ];
+  assert.equal(computeHealth([], events, () => now).score, 100);
+  assert.equal(computeHealth([], [{ at: now - 1000, title: "Usage Monitor — Codex", body: "5h window: 80% used" }], () => now).score, 95);
+  assert.equal(computeHealth([], [], () => now).recommendations[0].title, "No current readings");
+});

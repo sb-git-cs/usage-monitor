@@ -43,6 +43,8 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 ## What you see
 
+**New in 1.11.0:** a redesigned panel, Settings and Insights. The panel has a toolbar with labelled icons (refresh, Insights, network, pair a phone, keep open, settings, close), a summary that names the plans at risk and the next reset, cards that show **% used** with the exact reset time on hover, and the network and battery cards grouped under **This computer**. Settings has a section list and a new **Appearance** section with the theme, text size, compact cards and which plans to show, in which order; the chips now follow that order too. The theme applies to every window. Insights uses plain names (Models, Overview, History, Pace & runway, …). Pace, runway, health and recommendations read only the current reset cycle, so a window rising fast just after its reset is no longer reported as cooling.
+
 **New in 1.7.4:** Executive Insights Suite (Token Intelligence across Claude Code & Codex, Burn Rate & Runway analysis, Safe Pace estimation, Quota Health scoring, interactive trajectory charts, and Markdown report export). Fixed Gemini 0% usage glitch by merging weekly and active 5h model pools, and added Antigravity CLI terminal rate-limit detection.
 
 **New in 1.7.3:** Gemini shows one 5-hour meter. The quota summary no longer includes the Gemini group, so the chip was two identical Flash rows; the allowance those models share is the 5-hour window. A weekly window appears when the summary still reports it.
@@ -65,7 +67,7 @@ The meter requires an explicit total, a weekly period/reset, and reported Cursor
 
 | Surface | What it does |
 | --- | --- |
-| **Flyout** | Two-by-two provider cards (5-hour / weekly, `used/total %`), plus a **Network** card with live download and upload speed, the data used in the last hour, and the apps using the network right now. Click the Network card (or the ⇅ button) to open the full Network usage window. The footer shows the version and the [automatic update](#automatic-updates) status (**Up to date**, **Downloading 1.2.0… 42%**, …) with **Check now**. It rests flush on top of the taskbar. **Open flyout** / **Hide flyout**. Click outside the panel to close it. On Windows, **Snap flyout to taskbar** / **Unsnap flyout from taskbar** parks the panel just above the taskbar. |
+| **Panel** | Opens at the right edge of the screen, full height. The header says when the meters were last read and holds **Refresh**, **Insights**, **Network usage**, **Pair a phone**, **Keep panel open** (Windows), **Settings** and **Close**. A summary names the plans that need attention and the next reset. Plan cards show each window's **% used** and time until it resets (hover for the exact time); click a card for that product's usage page. Below them are coding **Sessions**, then **This computer**: a **Network** card with live download and upload speed, the last hour's data and the apps using the network now (click it for the full window), and a **Battery** card. The footer shows the version and the [automatic update](#automatic-updates) status (**Up to date**, **Downloading 1.2.0… 42%**, …) with **Check now**. Press **Esc**, click **Close** or click outside the panel to close it, unless it is kept open. |
 | **Chips** | Compact two-row strip with provider marks and percentages, stacked network speeds (click to open Network usage), and live system readings. On Windows, **Snap chips to taskbar** keeps the strip in an empty gap; if there is no room, it pops out above the taskbar. The strip hides when the taskbar hides, so a screen share that leaves the taskbar out does not show the strip on its own. On macOS/Linux it floats and can be dragged anywhere. Click a provider to open the flyout; right-click for the menu. |
 | **Network usage window** | Live download and upload speed for every app, history for the chosen time range, per-minute charts, data caps, blocking and connection logs. Open it from the tray menu (**Network usage…**) or start the app with `--network`. |
 | **Tray icon** | A Usage Monitor icon in the notification area / menu bar; its tooltip shows the live network speed. **Click** it to show the chips again. **Right-click** for the menu (on Linux the menu opens on click). **Double-click** opens the flyout. |
@@ -127,17 +129,18 @@ See exactly which apps are using your internet, live and over time.
 
 ## Settings
 
-Open **Settings…** from the right-click menu, or the ⚙ button in the flyout.
+Open **Settings…** from the right-click menu, or the gear button on the panel. The section list on the left jumps to each section.
 
-| Setting | What it does |
+| Section | What it does |
 | --- | --- |
-| Start at login, refresh interval | Same as the menu items. |
-| Warn at | The percentage (50–95%) at which chips and bars turn amber and the plan notification fires. |
-| Notifications | Limit warnings, forecast warnings, and quiet hours (for example 22:00 to 07:00) when nothing is shown. |
-| Coding sessions | **Resume sessions automatically when a usage limit resets** (Windows; off by default). Also on the flyout's Sessions card. In File Explorer, right-click empty folder space and choose **Open in terminal (godmode)** to start Claude Code, Codex, Grok Build, Gemini or Cursor in that folder. On Windows 11 it is on the main right-click menu. The first launch asks once for administrator approval so Windows can trust the menu. |
-| Chips | Which providers, sessions and system readings the chips strip shows, and whether network speed is on it. |
-| Updates | Install updates automatically, the **Stable** or **Beta** channel, and **Check now**. |
+| General | Start at login and how often the plan meters are read. |
+| Appearance | Theme (match Windows, light or dark) for every Usage Monitor window, panel text size, compact plan cards, and **Plans to show**: tick a plan to show it and use the arrows to order the panel and the chips. A hidden plan is still read, so its history and alerts continue. |
+| Taskbar chips | Show the chips, snap them to the taskbar (Windows), and which plans, sessions, network speed, battery and system readings sit on the strip. |
+| Alerts | The warning level (50–95%) at which bars and chips turn red and the plan notification fires, limit and forecast notifications, and quiet hours (for example 22:00 to 07:00). |
+| Coding sessions | **Resume sessions after a usage limit resets** (Windows; off by default). Also on the panel's Sessions card. In File Explorer, right-click empty folder space and choose **Open in terminal (godmode)** to start Claude Code, Codex, Grok Build, Gemini or Cursor in that folder. On Windows 11 it is on the main right-click menu. The first launch asks once for administrator approval so Windows can trust the menu. |
+| Accounts | The combined X Subscription, and the account each meter reads, with **Switch account** or **Sign in**. |
 | Phone | Share this computer's plan meters with the Android app. **Pair a phone** shows a QR code and a code immediately. See and remove paired phones. |
+| Updates | Install updates automatically, the **Stable** or **Beta** channel, and **Check now**. |
 
 ## Android app
 
@@ -272,7 +275,7 @@ With **Install updates automatically** on (the default), Usage Monitor checks Gi
 
 ## Use
 
-- **Left-click** chips → flyout. Click anywhere outside the flyout to close it (unless the flyout is snapped to the taskbar).
+- **Left-click** chips → panel. Click anywhere outside the panel, press **Esc** or click **Close** to close it (unless it is kept open).
 - **Tray icon** → show chips if they vanished. Right-click that icon for the menu. Double-click for the flyout.
 - **Right-click** flyout, chips, or the tray icon → menu
   - **Network usage…** — open the network window
@@ -288,13 +291,13 @@ With **Install updates automatically** on (the default), Usage Monitor checks Gi
   - **Check for updates now**, followed by the current version and update status
   - Windows only: **Snap flyout to taskbar** / **Unsnap flyout from taskbar**, **Snap chips to taskbar** / **Unsnap chips from taskbar**
   - Quit
-- Drag flyout or chips **from the title bar / dotted grip** to move them anywhere. Positions are saved.
+- Drag floating chips **from the dotted grip** to move them anywhere. Their position is saved.
 - Click a provider card to open that product’s official usage page (Claude, Codex, [Antigravity](https://antigravity.google), Grok)
 - In **Network usage**: click an app for its chart, cap, block and record controls; right-click for the full menu; **Ctrl+F** / **Cmd+F** jumps to search; arrow keys move between apps.
 
-Meters show **used/total %** (for example `82/100%`), not remaining. A full 5-hour window reads `100/100%` in red.
+Meters show **% used** (for example `82%`), not remaining. A window short of its limit shows at most `99%`, so `100%` means the limit is reached.
 
-Chips show the current short window: 5-hour usage first, then daily usage when available. If neither is reported, they show another available quota such as weekly. Hover over a chip to see which window it shows. Warnings begin at 80%, or the level you choose in [Settings](#settings). Cached readings are marked stale (dashed chip borders); after a reported reset time passes, usage becomes unknown until the provider confirms the new reading. The app never assumes a reset means zero usage or invents the next reset date.
+Chips show the current short window: 5-hour usage first, then daily usage when available. If neither is reported, they show another available quota such as weekly. Hover over a chip to see which window it shows. Warnings begin at 80%, or the level you choose in [Settings](#settings); a chip turns red when any of that plan's windows reaches it, and its tooltip names that window. Cached readings are marked stale (dashed chip borders); after a reported reset time passes, usage becomes unknown until the provider confirms the new reading. The app never assumes a reset means zero usage or invents the next reset date.
 
 ## Development checks
 

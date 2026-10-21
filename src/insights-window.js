@@ -5,7 +5,7 @@ const { displayPrefs } = require("./insights");
 const { modelExport } = require("./tokens");
 let scanTokens = () => null;
 let analyzeBurn = () => [];
-let computeHealth = () => ({ score: 100, label: "Optimal", grade: "A", recommendations: [] });
+let computeHealth = () => ({ score: 100, label: "Good", grade: "A", recommendations: [] });
 
 try {
   const tokensModule = require(path.join(__dirname, "tokens"));
@@ -55,51 +55,52 @@ function diagnostic() {
 function generateReport(v) {
   const md = (value) => String(value ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))
     .replace(/[\\`*_{}\[\]()|]/g, "\\$&").replace(/[\r\n]/g, " ");
+  const NAMES = { claude: "Claude Code", codex: "Codex", gemini: "Gemini", grok: "Grok Build", cursor: "Cursor", copilot: "Copilot", x_subscription: "X Subscription" };
+  const STATUS = { exhausted: "Used up", critical: "Runs out", elevated: "Watch", sustainable: "On pace", cooling: "Falling", idle: "Idle" };
+  const gb = (n) => `${((Number(n) || 0) / 1e9).toFixed(2)} GB`;
   const lines = [
-    "# Usage Monitor · Executive Insights & Intelligence Report",
+    "# Usage Monitor report",
     `Generated: ${new Date().toLocaleString()}`,
-    `Reporting Window: ${v.tokens?.days || 7} days | System Health: ${v.health?.label || "Optimal"} (${v.health?.score ?? 100}/100 Grade ${v.health?.grade || "A"})`,
+    `Period: ${v.days || 7} ${v.days === 1 ? "day" : "days"} | Quota health: ${v.health?.label || "Good"} (${v.health?.score ?? 100}/100)`,
     "",
-    "## 1. Executive Summary",
-    `- **Health Score**: ${v.health?.score ?? 100}/100 (${v.health?.label || "Optimal"})`,
-    `- **Active Series Observed**: ${v.series?.length || 0}`,
-    `- **Total Tokens Processed**: ${v.tokens?.summary?.total ? v.tokens.summary.total.toLocaleString() : "0"} (${v.tokens?.summary?.cache_efficiency_pct || 0}% cache efficiency)`,
-    `- **Network Captured**: ${(v.budget?.used ? (v.budget.used / 1e9).toFixed(2) : "0")} GB / ${(v.budget?.limit ? (v.budget.limit / 1e9).toFixed(2) : "No limit set")} GB`,
+    "## Summary",
+    `- **Quota health**: ${v.health?.score ?? 100}/100 (${v.health?.label || "Good"})`,
+    `- **Windows recorded**: ${v.series?.length || 0}`,
+    `- **Tokens**: ${v.tokens?.summary?.total ? v.tokens.summary.total.toLocaleString() : "0"} (${v.tokens?.summary?.cache_efficiency_pct || 0}% of prompt tokens read from cache)`,
+    `- **Network this cycle**: ${v.budget?.used ? gb(v.budget.used) : "0 GB"} / ${v.budget?.limit ? gb(v.budget.limit) : "No limit set"}`,
     "",
-    "## 2. Key Insights & Actionable Recommendations",
+    "## Recommendations",
   ];
   for (const rec of v.health?.recommendations || []) {
-    lines.push(`- **[${md(rec.type.toUpperCase())}] ${md(rec.title)}**: ${md(rec.body)}`);
+    lines.push(`- **${md(rec.title)}**: ${md(rec.body)}`);
   }
-  lines.push("", "## 3. Quota & Burn Rate Analysis", "| Provider / Window | Current Used | Burn Rate | Safe Pace | Hours to Reset | Status |", "|---|---|---|---|---|---|");
+  lines.push("", "## Pace and runway", "| Plan and window | Used | Current pace | Safe pace | Resets in | Status |", "|---|---|---|---|---|---|");
   for (const w of v.burn || []) {
-    lines.push(`| ${md(w.provider)} (${md(w.label)}) | ${Math.round(w.used)}% | ${w.burn_rate}%/h | ${w.safe_rate != null ? `${w.safe_rate}%/h` : "—"} | ${w.hours_to_reset != null ? `${w.hours_to_reset}h` : "—"} | ${md(w.status)} |`);
+    lines.push(`| ${md(NAMES[w.provider] || w.provider)} (${md(w.label)}) | ${Math.round(w.used)}% | ${w.burn_rate}%/h | ${w.safe_rate != null ? `${w.safe_rate}%/h` : "—"} | ${w.hours_to_reset != null ? `${w.hours_to_reset}h` : "—"} | ${md(STATUS[w.status] || w.status)} |`);
   }
   if (v.tokens?.summary?.total) {
+    const sm = v.tokens.summary;
     lines.push(
       "",
-      "## 4. Token Consumption & Efficiency",
-      `- **Total Tokens**: ${v.tokens.summary.total.toLocaleString()}`,
-      `- **Input / Prompt Tokens**: ${v.tokens.summary.input.toLocaleString()}`,
-      `- **Output / Completion Tokens**: ${v.tokens.summary.output.toLocaleString()}`,
-      `- **Cache Read Tokens**: ${v.tokens.summary.cache_read.toLocaleString()}`,
-      `- **Reasoning / Thinking Tokens**: ${v.tokens.summary.reasoning.toLocaleString()}`,
-      `- **Cache Efficiency**: ${v.tokens.summary.cache_efficiency_pct}%`,
-      `- **Total Turns**: ${v.tokens.summary.turns.toLocaleString()}`,
-      `- **Average Tokens / Turn**: ${v.tokens.summary.avg_turn_tokens.toLocaleString()}`
+      "## Tokens",
+      `- **Total**: ${sm.total.toLocaleString()}`,
+      `- **Uncached input**: ${sm.input.toLocaleString()}`,
+      `- **Read from cache**: ${sm.cache_read.toLocaleString()} (${sm.cache_efficiency_pct}% of prompt tokens)`,
+      `- **Written to cache**: ${sm.cache_write.toLocaleString()}`,
+      `- **Output**: ${sm.output.toLocaleString()} (reasoning ${sm.reasoning.toLocaleString()})`,
+      `- **Model responses**: ${sm.turns.toLocaleString()} (${sm.avg_turn_tokens.toLocaleString()} tokens each on average)`
     );
   }
   lines.push(
     "",
-    "## 5. Network Traffic & Budget",
-    `- **Captured Cycle Traffic**: ${(v.budget?.used ? (v.budget.used / 1e9).toFixed(2) : "0")} GB`,
-    `- **Cycle Start**: ${v.budget?.start ? new Date(v.budget.start).toLocaleDateString() : "—"}`,
-    `- **Cycle End**: ${v.budget?.end ? new Date(v.budget.end).toLocaleDateString() : "—"}`
+    "## Network budget",
+    `- **Recorded this cycle**: ${v.budget?.used ? gb(v.budget.used) : "0 GB"}`,
+    `- **Cycle**: ${v.budget?.start ? new Date(v.budget.start).toLocaleDateString() : "—"} to ${v.budget?.end ? new Date(v.budget.end).toLocaleDateString() : "—"}`
   );
   lines.push("", "## Model usage", "Observed Claude Code and Codex transcript tokens. Reasoning is included in output; totals count cached input once.",
     "| Provider / model | Total | Uncached input | Cache read | Cache write | Output | Reasoning subset |", "|---|---:|---:|---:|---:|---:|---:|");
   for (const m of v.tokens?.by_model || []) {
-    lines.push(`| ${md(m.provider)} / ${md(m.model)} | ${m.total} | ${m.input} | ${m.cache_read} | ${m.cache_write} | ${m.output} | ${m.reasoning} |`);
+    lines.push(`| ${md(NAMES[m.provider] || m.provider)} / ${md(m.model)} | ${m.total} | ${m.input} | ${m.cache_read} | ${m.cache_write} | ${m.output} | ${m.reasoning} |`);
   }
   for (const m of v.tokens?.by_model || []) lines.push("", `Daily trend for ${md(m.model)}:`, ...(m.daily || []).map((d) => `- ${md(d.date)}: ${d.total} recorded tokens`), "");
   if (v.battery) {
@@ -147,6 +148,7 @@ async function view(days) {
   }
 
   return {
+    days: [1, 7, 14, 30].includes(days) ? days : 7,
     series,
     battery: ctx.battery?.view(days) || null,
     events,

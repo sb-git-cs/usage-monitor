@@ -1,6 +1,7 @@
 const body = document.getElementById("body");
 const root = document.getElementById("root");
 const dockBtn = document.getElementById("dock");
+const updated = document.getElementById("updated");
 document.getElementById("insights").addEventListener("click", () => window.usage.openInsights());
 let display = { order: [], hidden: [] };
 function applyDisplay(prefs) {
@@ -15,23 +16,30 @@ document.getElementById("settings").addEventListener("click", (e) => {
 });
 document.getElementById("refresh").addEventListener("click", (e) => {
   e.stopPropagation();
+  refreshingSince = Date.now();
+  renderUpdated();
   window.usage.refresh();
 });
 document.getElementById("network").addEventListener("click", (e) => {
   e.stopPropagation();
   window.usage.openNetwork();
 });
+document.getElementById("close").addEventListener("click", (e) => {
+  e.stopPropagation();
+  window.usage.hideFlyout();
+});
 dockBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   window.usage.toggleFlyoutDock();
 });
-bindIntervalSelect(document.getElementById("interval"));
 
 function applyFlyoutState(state) {
   if (!state) return;
   // Taskbar snapping only exists on Windows.
   dockBtn.hidden = state.canDock === false;
   dockBtn.classList.toggle("active", !!state.docked);
+  dockBtn.setAttribute("aria-pressed", state.docked ? "true" : "false");
+  dockBtn.title = state.docked ? "Keep panel open: on (click to hide it when focus leaves)" : "Keep panel open";
   root.classList.toggle("docked", !!state.docked);
 }
 
@@ -52,6 +60,31 @@ function fitFlyout() {
 }
 window.addEventListener("resize", fitFlyout);
 
+// Newest successful reading among the shown providers, for the header.
+let freshest = null;
+let refreshingSince = 0;
+function renderUpdated() {
+  updated.classList.remove("warn");
+  // Until the next snapshot arrives, at most 15 s.
+  if (refreshingSince && Date.now() - refreshingSince < 15000) {
+    updated.textContent = "Refreshing…";
+    return;
+  }
+  if (!freshest) {
+    updated.textContent = window.__last ? "No current readings" : "Waiting for readings…";
+    return;
+  }
+  const age = Date.now() - freshest;
+  updated.textContent = `Updated ${formatAgo(freshest)}`;
+  updated.title = new Date(freshest).toLocaleString();
+  updated.classList.toggle("warn", age > 30 * 60000);
+}
+
+function names(list) {
+  const shown = list.slice(0, 2).join(", ");
+  return list.length > 2 ? `${shown} +${list.length - 2}` : shown;
+}
+
 function render(snapshot) {
   const focused = document.activeElement?.dataset.id;
   // Hidden providers have no card, so they are left out of the overview too.
@@ -60,26 +93,45 @@ function render(snapshot) {
     .sort((a, b) => (display.order || []).indexOf(a.id === "x_subscription" ? "grok" : a.id) - (display.order || []).indexOf(b.id === "x_subscription" ? "grok" : b.id));
   const overview = UsageOverview.summarize(visible, alertThreshold);
   document.getElementById("overviewReporting").textContent = `${overview.reporting} of ${visible.length}`;
+  document.getElementById("overviewReportingSub").textContent = !visible.length ? "No plans shown"
+    : overview.unavailable ? `${overview.unavailable} not current` : "All current";
   const attention = document.getElementById("overviewAttention");
-  attention.textContent = overview.attention ? `${overview.attention} at risk` : overview.reporting ? "Within limits" : "No current data";
+  attention.textContent = overview.attention ? `${overview.attention} at risk` : overview.reporting ? "None" : "No current data";
   attention.classList.toggle("at-risk", overview.attention > 0);
-  document.getElementById("overviewCoverage").textContent = overview.unavailable ? `${overview.unavailable} unavailable / cached` : "Current readings";
+  attention.classList.toggle("calm", !overview.attention && overview.reporting > 0);
+  document.getElementById("overviewAttentionSub").textContent = overview.attention ? names(overview.atRisk)
+    : overview.reporting ? `All below ${alertThreshold}%` : "";
+  const coverage = document.getElementById("overviewCoverage");
+  coverage.textContent = overview.unavailable ? `${overview.unavailable} unavailable or cached` : visible.length ? "All readings current" : "";
+  coverage.classList.toggle("warn", overview.unavailable > 0);
   const reset = document.getElementById("overviewReset");
   reset.dataset.reset = overview.nextReset ? new Date(overview.nextReset.at).toISOString() : "";
   reset.textContent = overview.nextReset ? formatEta(reset.dataset.reset) : "Not reported";
-  reset.title = overview.nextReset ? `${overview.nextReset.provider} · ${overview.nextReset.label} · ${new Date(overview.nextReset.at).toLocaleString()}` : "No current reset time reported";
+  reset.title = overview.nextReset ? formatWhen(reset.dataset.reset) : "No current reset time reported";
+  document.getElementById("overviewResetSub").textContent = overview.nextReset ? `${overview.nextReset.provider} · ${overview.nextReset.label}` : "";
+  freshest = visible.reduce((best, p) => {
+    const t = p.status?.state === "ok" ? Date.parse(p.fetched_at) : NaN;
+    return Number.isFinite(t) && (!best || t > best) ? t : best;
+  }, null) || (overview.reporting ? lastSnapshotAt : null);
+  refreshingSince = 0;
+  renderUpdated();
   const parts = [];
-  if (!visible.length && (snapshot.providers || []).length) {
-    parts.push(`<div class="hint">All providers are hidden. Choose which to show in Insights → Diagnostics &amp; Display.</div>`);
+  if (!visible.length) {
+    parts.push((snapshot.providers || []).length
+      ? `<div class="empty-card">All plans are hidden. Choose which to show in Settings → Appearance.</div>`
+      : `<div class="empty-card">No plan meters yet. Sign in to Claude Code, Codex, Gemini, Grok, Cursor or GitHub Copilot on this computer and they appear here.</div>`);
   }
   for (const p of visible) {
     const hint = statusText(p);
-    parts.push(`<section class="provider accent-${escapeHtml(p.id)}" data-id="${escapeHtml(p.id)}" role="button" tabindex="0" aria-label="Open ${escapeHtml(p.display_name)} usage">
-      <div class="p-head"><span class="p-name">${mark(p.id)}<span>${escapeHtml(p.display_name)}</span></span><span class="p-plan">${escapeHtml(p.plan || "")}${p.status && p.status.state === "stale" ? '<span class="badge">stale</span>' : ""}</span></div>`);
+    const state = p.status?.state;
+    const stale = state === "stale";
+    const age = stale && Number.isFinite(p.status.age_secs) ? ` · saved ${formatAgo(Date.now() - p.status.age_secs * 1000)}` : "";
+    parts.push(`<section class="provider accent-${escapeHtml(p.id)}" data-id="${escapeHtml(p.id)}" role="button" tabindex="0" aria-label="Open ${escapeHtml(p.display_name)} usage page" title="Open the ${escapeHtml(p.display_name)} usage page">
+      <div class="p-head"><span class="p-name">${mark(p.id)}<span>${escapeHtml(p.display_name)}</span></span><span class="p-meta"><span class="p-plan">${escapeHtml(p.plan || "")}</span>${stale ? `<span class="pill warn" title="The last reading failed; showing saved readings${escapeHtml(age)}">stale</span>` : ""}</span></div>`);
     if (p.account) parts.push(`<div class="p-account">${escapeHtml(p.account)}</div>`);
-    if (hint && p.windows && p.windows.length) parts.push(`<div class="hint">${escapeHtml(hint)}${p.status?.state === "stale" ? " · showing saved readings" : ""}</div>`);
     if (hint && !(p.windows && p.windows.length)) {
-      parts.push(`<div class="hint">${escapeHtml(hint)}</div>`);
+      const tone = state === "fetch_failed" ? "bad" : state === "logged_out" || state === "not_installed" ? "warn" : "";
+      parts.push(`<div class="status-line ${tone}">${escapeHtml(hint)}</div>`);
     } else {
       const extras = [];
       parts.push(`<div class="metrics">`);
@@ -89,21 +141,23 @@ function render(snapshot) {
           continue;
         }
         const alert = alerting(w) ? " alert" : "";
-        const pct = formatUsedTotal(w);
+        const pct = formatUsed(w);
         const width = Number.isFinite(w.used_pct) ? Math.max(0, Math.min(100, w.used_pct)) : 0;
         const color = alerting(w) ? "red" : "green";
+        const when = formatWhen(w.resets_at);
         parts.push(`<div class="row${alert}">
           <span class="row-label" title="${escapeHtml(flyoutLabel(w))}">${escapeHtml(flyoutLabel(w))}</span>
-          <div class="meter" role="progressbar" aria-label="${escapeHtml(flyoutLabel(w))} usage" aria-valuemin="0" aria-valuemax="100" ${Number.isFinite(w.used_pct) ? `aria-valuenow="${width}" aria-valuetext="${escapeHtml(formatUsedTotal(w))} used"` : 'aria-valuetext="Usage unavailable"'}><div class="fill ${color}" data-width="${width}"></div></div>
+          <div class="meter" role="progressbar" aria-label="${escapeHtml(flyoutLabel(w))} usage" aria-valuemin="0" aria-valuemax="100" ${Number.isFinite(w.used_pct) ? `aria-valuenow="${width}" aria-valuetext="${escapeHtml(pct)} used"` : 'aria-valuetext="Usage unavailable"'}><div class="fill ${color}" data-width="${width}"></div></div>
           <span class="pct">${pct}</span>
-          <span class="eta" data-reset="${escapeHtml(w.resets_at || "")}">${formatEta(w.resets_at)}</span>
+          <span class="eta" data-reset="${escapeHtml(w.resets_at || "")}"${when ? ` title="Resets ${escapeHtml(when)}"` : ""}>${formatEta(w.resets_at)}</span>
         </div>`);
-        if (p.status?.state === "ok" && Date.parse(w.forecast_at) > Date.now() && Number.isFinite(w.used_pct)) {
+        if (state === "ok" && Date.parse(w.forecast_at) > Date.now() && Number.isFinite(w.used_pct)) {
           const pace = Number.isFinite(w.burn_per_hour) ? ` (+${w.burn_per_hour}%/h)` : "";
-          extras.push(`<div class="forecast" title="Projected from the recent pace; the window resets ${escapeHtml(formatEta(w.resets_at) || "later")}">${escapeHtml(flyoutLabel(w))} reaches 100% around ${escapeHtml(formatClock(w.forecast_at))} at this pace${escapeHtml(pace)}</div>`);
+          extras.push(`<div class="forecast" title="Projected from the recent pace; the window resets ${escapeHtml(when || "later")}">${escapeHtml(flyoutLabel(w))} reaches 100% around ${escapeHtml(formatClock(w.forecast_at))} at this pace${escapeHtml(pace)}</div>`);
         }
       }
       parts.push(`</div>`);
+      if (hint) extras.unshift(`<div class="hint">${escapeHtml(hint)}${stale ? " · showing saved readings" : ""}</div>`);
       extras.forEach((html) => parts.push(html));
     }
     parts.push("</section>");
@@ -123,6 +177,11 @@ function render(snapshot) {
     if (el.dataset.id === focused) el.focus({ preventScroll: true });
   });
   requestAnimationFrame(fitFlyout);
+}
+
+// "This computer" heads the network and battery cards while either is shown.
+function syncSystemCaption() {
+  document.getElementById("systemCaption").hidden = netCard.hidden && document.getElementById("batteryCard").hidden;
 }
 
 // ---- network card ---------------------------------------------------------------
@@ -146,15 +205,17 @@ function renderNet(summary) {
   if (!summary) {
     if (!wasHidden) {
       netCard.hidden = true;
+      syncSystemCaption();
       requestAnimationFrame(fitFlyout);
     }
     return;
   }
   netCard.hidden = false;
+  syncSystemCaption();
   const running = summary.state === "running";
   setNetText("netRx", running ? NetFormat.formatRate(summary.rx_rate) : "—");
   setNetText("netTx", running ? NetFormat.formatRate(summary.tx_rate) : "—");
-  setNetText("netHour", summary.hour ? `↓ ${NetFormat.formatBytes(summary.hour.rx)}\u2003↑ ${NetFormat.formatBytes(summary.hour.tx)}` : "—");
+  setNetText("netHour", summary.hour ? `↓ ${NetFormat.formatBytes(summary.hour.rx)} ↑ ${NetFormat.formatBytes(summary.hour.tx)}` : "—");
   setNetText("netState", running ? "Open monitor ›" : `${NET_IDLE[summary.state] || "Not recording"} · Open ›`);
   let top;
   if (!running) top = summary.message || "Open the monitor to start recording network usage.";
@@ -242,17 +303,20 @@ const updateBtn = document.getElementById("updateAction");
 // [text, tone, action button]
 function updateLine(u) {
   const v = u.latest || "the update";
+  // Installer and Git copies install updates; the others can only offer the download.
+  const installs = u.kind === "installer" || u.kind === "git";
+  const automatic = !u.auto ? "" : installs ? " · updates install automatically" : " · checks for updates automatically";
   switch (u.status) {
     case "checking": return ["Checking for updates…", "busy", null];
-    case "up-to-date": return [u.auto ? "Up to date · updates install automatically" : "Up to date", "good", "Check now"];
+    case "up-to-date": return [`Up to date${automatic}`, "good", "Check now"];
     case "downloading": return [`Downloading ${v}… ${Number(u.progress) || 0}%`, "busy", null];
-    case "ready": return [`${v} is ready · installs and restarts shortly`, "busy", null];
+    case "ready": return [u.auto ? `${v} is ready · installs and restarts shortly` : `${v} is ready · installs when Usage Monitor quits`, "busy", u.auto ? null : "Install now"];
     case "installing": return [`Installing ${v} · restarting…`, "busy", null];
     case "available": return [`${v} is available · this copy can't update itself`, "warn", "Download"];
     case "skipped": return [u.message || "Not updated", "warn", "Check now"];
     case "error": return ["Couldn't check for updates", "warn", "Retry"];
     case "off": return ["Automatic updates are off", "", "Check now"];
-    default: return [u.auto ? "Updates install automatically" : "Automatic updates are off", u.auto ? "good" : "", "Check now"];
+    default: return [!u.auto ? "Automatic updates are off" : installs ? "Updates install automatically" : "Checks for updates automatically", u.auto ? "good" : "", "Check now"];
   }
 }
 
@@ -301,6 +365,7 @@ let pairTimer = null;
 function renderPairing(phone) {
   const pairing = phone && phone.pairing;
   pairBtn.classList.toggle("active", !!pairing);
+  pairBtn.setAttribute("aria-pressed", pairing ? "true" : "false");
   if (!pairing) {
     clearInterval(pairTimer);
     const img = document.getElementById("pairQr");
@@ -318,8 +383,8 @@ function renderPairing(phone) {
     img = document.createElement("img");
     img.id = "pairQr";
     img.alt = "Pairing QR code";
-    img.width = 188;
-    img.height = 188;
+    img.width = 176;
+    img.height = 176;
     pairCard.insertBefore(img, pairCard.firstChild);
   }
   if (img.dataset.link !== pairing.link) {
@@ -344,12 +409,16 @@ function renderPairing(phone) {
   clearInterval(pairTimer);
   tick();
   pairTimer = setInterval(tick, 5000);
-  if (wasHidden) requestAnimationFrame(fitFlyout);
+  if (wasHidden) {
+    requestAnimationFrame(fitFlyout);
+    pairCard.scrollIntoView({ block: "nearest" });
+  }
 }
 
 pairBtn.addEventListener("click", async (e) => {
   e.stopPropagation();
-  renderPairing(await window.usage.pairPhone());
+  // A second click withdraws the code, like Cancel.
+  renderPairing(await (pairBtn.classList.contains("active") ? window.usage.cancelPair() : window.usage.pairPhone()));
 });
 document.getElementById("pairCancel").addEventListener("click", async (e) => {
   e.stopPropagation();
@@ -369,8 +438,10 @@ window.usage.getPrefs().then((prefs) => {
   applyDisplay(prefs);
   if (window.__last) render(window.__last);
 }, () => {});
+let lastSnapshotAt = null;
 window.usage.onSnapshot((s) => {
   window.__last = s;
+  lastSnapshotAt = Date.now();
   render(s);
 });
 setInterval(() => {
@@ -384,15 +455,17 @@ setInterval(() => {
   document.querySelectorAll("[data-reset]").forEach((el) => {
     el.textContent = formatEta(el.dataset.reset) || (el.id === "overviewReset" ? "Not reported" : "");
   });
+  renderUpdated();
 }, 1000);
 
 function renderBattery(view = {}) {
   const r = view.latest;
   const card = document.getElementById("batteryCard");
   card.hidden = r?.present === false;
-  document.getElementById("batteryLevel").textContent = `Battery · ${r?.percent != null ? Math.round(r.percent) + "%" : "—"}`;
+  syncSystemCaption();
+  document.getElementById("batteryLevel").textContent = `Battery${r?.percent != null ? ` · ${Math.round(r.percent)}%` : ""}`;
   document.getElementById("batteryStatus").textContent = BatteryModel.label(r);
-  document.getElementById("batteryUpdated").textContent = r ? `Updated ${new Date(r.t).toLocaleTimeString()} · this computer` : "Waiting for this computer's battery";
+  document.getElementById("batteryUpdated").textContent = r ? `Last reading ${new Date(r.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Waiting for this computer's battery";
   card.classList.toggle("low", r?.state === "discharging" && r.percent <= 20);
   card.classList.toggle("critical", r?.state === "discharging" && r.percent <= 10);
   drawBatteryChart(document.getElementById("batterySpark"), view.points, null, true);

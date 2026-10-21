@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
-  <title>Usage Monitor · Executive Insights</title>
+  <title>Insights - Usage Monitor</title>
   <link rel="stylesheet" href="insights.css">
   <script src="../battery-model.js"></script>
   <script src="battery-chart.js"></script>
@@ -12,20 +12,19 @@
 <body>
   <header class="app-header">
     <div class="header-brand">
-      <div class="brand-badge">PRO</div>
       <div>
-        <p class="eyebrow">USAGE MONITOR · INTELLIGENCE SUITE</p>
-        <h1>Insights & Analytics</h1>
+        <p class="eyebrow">Usage Monitor</p>
+        <h1>Insights</h1>
       </div>
     </div>
     <div class="header-controls">
-      <div id="globalHealthBadge" class="health-pill" title="Quota health status">
+      <div id="globalHealthBadge" class="health-pill" title="Quota health: how close current windows are to their limits">
         <span class="status-dot"></span>
-        <strong id="healthScoreText">Optimal · 100/100</strong>
+        <strong id="healthScoreText">Quota health</strong>
       </div>
       <label class="period-control">
         <span class="sr-only">Period</span>
-        <select id="period" class="select-pill" title="Analysis timeframe">
+        <select id="period" class="select-pill" title="Reporting period">
           <option value="1">24 hours</option>
           <option value="7" selected>7 days</option>
           <option value="14">14 days</option>
@@ -33,30 +32,30 @@
         </select>
       </label>
       <div class="btn-group">
-        <button id="refresh" class="btn btn-secondary" title="Refresh all provider meters">Refresh</button>
-        <button id="reportExport" class="btn btn-primary" title="Export comprehensive Markdown executive summary">Report</button>
-        <button id="csv" class="btn btn-ghost" title="Export CSV dataset">CSV</button>
-        <button id="json" class="btn btn-ghost" title="Export JSON dataset">JSON</button>
+        <button id="refresh" class="btn btn-secondary" title="Read every plan meter now">Refresh</button>
+        <button id="reportExport" class="btn btn-primary" title="Save a Markdown summary of this period">Export report</button>
+        <button id="csv" class="btn btn-ghost" title="Save quota history for this period as CSV">CSV</button>
+        <button id="json" class="btn btn-ghost" title="Save quota history and battery data for this period as JSON">JSON</button>
       </div>
     </div>
   </header>
 
   <nav class="nav-tabs" role="tablist" aria-label="Insights sections">
-    <button class="nav-tab active" data-tab="tokens" role="tab" aria-selected="true">Models &amp; reports</button>
+    <button class="nav-tab active" data-tab="tokens" role="tab" aria-selected="true">Models</button>
     <button class="nav-tab" data-tab="overview" role="tab" aria-selected="false">Overview</button>
-    <button class="nav-tab" data-tab="usage" role="tab" aria-selected="false">Usage Analysis</button>
-    <button class="nav-tab" data-tab="burn" role="tab" aria-selected="false">Burn Rate & Runway</button>
+    <button class="nav-tab" data-tab="usage" role="tab" aria-selected="false">History</button>
+    <button class="nav-tab" data-tab="burn" role="tab" aria-selected="false">Pace &amp; runway</button>
     <button class="nav-tab" data-tab="sessions" role="tab" aria-selected="false">Sessions</button>
     <button class="nav-tab" data-tab="battery" role="tab" aria-selected="false">Battery</button>
-    <button class="nav-tab" data-tab="network" role="tab" aria-selected="false">Network & Budget</button>
-    <button class="nav-tab" data-tab="alerts" role="tab" aria-selected="false">Audit & Alerts</button>
-    <button class="nav-tab" data-tab="diagnostics" role="tab" aria-selected="false">Diagnostics & Display</button>
+    <button class="nav-tab" data-tab="network" role="tab" aria-selected="false">Network budget</button>
+    <button class="nav-tab" data-tab="alerts" role="tab" aria-selected="false">Alerts</button>
+    <button class="nav-tab" data-tab="diagnostics" role="tab" aria-selected="false">Diagnostics</button>
   </nav>
 
   <main>
     <div id="message" role="status"></div>
 
-    <!-- TAB 1: EXECUTIVE OVERVIEW -->
+    <!-- OVERVIEW -->
     <div id="tab-overview" class="tab-panel" role="tabpanel">
       <section class="hero-grid">
         <div class="hero-card health-hero">
@@ -72,7 +71,7 @@
         </div>
         <div class="hero-card recs-hero">
           <div class="hero-head">
-            <span class="card-tag">SMART RECOMMENDATIONS & ADVICE</span>
+            <span class="card-tag">RECOMMENDATIONS</span>
           </div>
           <div id="recommendationsList" class="recs-list"></div>
         </div>
@@ -81,8 +80,8 @@
       <section class="section-card">
         <div class="section-head">
           <div>
-            <h2>Executive Metrics Summary</h2>
-            <p class="fine">High-level view across quotas, burning velocity, reset cycles, and tokens.</p>
+            <h2>Summary</h2>
+            <p class="fine">Quotas, pace, resets, tokens and network traffic for this period.</p>
           </div>
         </div>
         <div id="summary" class="summary"></div>
@@ -91,8 +90,8 @@
       <section class="section-card">
         <div class="section-head">
           <div>
-            <h2>Active Quotas & Headroom Matrix</h2>
-            <p class="fine">Live quota saturation levels, burn velocity, and scheduled reset times.</p>
+            <h2>Current windows</h2>
+            <p class="fine">How full each plan window is, how fast it is rising, and when it resets.</p>
           </div>
         </div>
         <div id="quotaMatrix" class="quota-matrix"></div>
@@ -108,24 +107,24 @@
       </section>
       <section class="section-card"><h2>Observed charge / discharge sessions</h2><p class="fine">Percentage-point changes and durations cover observed readings only. Interrupted sessions are partial.</p><div id="batterySessions"></div></section>
     </div>
-    <!-- TAB 2: USAGE ANALYSIS -->
+    <!-- HISTORY -->
     <div id="tab-usage" class="tab-panel" role="tabpanel">
       <section class="section-card">
         <div class="section-head">
           <div>
-            <h2>Usage Analysis & Trajectory</h2>
-            <p class="fine">Historical utilization curve, reset segments, and saturation trends.</p>
+            <h2>Usage history</h2>
+            <p class="fine">Recorded readings for one window, split at each reset.</p>
           </div>
           <div class="actions">
-            <label>Model / Window
+            <label>Window
               <select id="model">
                 <option value="auto">Fullest window</option>
               </select>
             </label>
             <label>Trend
               <select id="viewMode">
-                <option value="samples">High-res Samples</option>
-                <option value="daily">Daily Highs</option>
+                <option value="samples">Every reading</option>
+                <option value="daily">Daily highs</option>
               </select>
             </label>
           </div>
@@ -143,27 +142,27 @@
         </article>
 
         <div class="sub-head">
-          <h3>Monitored Quota Windows</h3>
-          <p class="fine">Select any window to plot its historical trend curve above.</p>
+          <h3>Recorded windows</h3>
+          <p class="fine">Select a window to plot it above.</p>
         </div>
         <div id="history"></div>
         <p id="historyNote" class="fine"></p>
 
         <div class="sub-head mt-lg">
-          <h3>Peak Coding Activity by Hour</h3>
-          <p class="fine">Hourly distribution of turns and quota consumption across the day (0:00 to 23:00).</p>
+          <h3>Activity by hour</h3>
+          <p class="fine">Turns recorded in each hour of the day, local time.</p>
         </div>
         <div id="peakHoursChart" class="bar-chart-strip"></div>
       </section>
     </div>
 
-    <!-- TAB 3: BURN RATE & RUNWAY -->
+    <!-- PACE AND RUNWAY -->
     <div id="tab-burn" class="tab-panel" role="tabpanel">
       <section class="section-card">
         <div class="section-head">
           <div>
-            <h2>Burn Rate & Runway Analysis</h2>
-            <p class="fine">Dynamic quota velocity, safe pace estimation, and depletion forecast before reset.</p>
+            <h2>Pace and runway</h2>
+            <p class="fine">Each window's current pace, the pace that lasts until its reset, and the time left at the current pace.</p>
           </div>
         </div>
 
@@ -173,13 +172,13 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th>Provider & Window</th>
-                <th>Current Used</th>
-                <th>Current Burn Rate</th>
-                <th>Safe Target Pace</th>
-                <th>Runway Remaining</th>
-                <th>Reset Scheduled</th>
-                <th>Pace Status</th>
+                <th>Plan and window</th>
+                <th>Used</th>
+                <th>Current pace</th>
+                <th>Safe pace</th>
+                <th>Runway</th>
+                <th>Resets</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody id="burnTableBody"></tbody>
@@ -187,22 +186,22 @@
         </div>
 
         <div class="callout-card mt-lg">
-          <h4>Understanding Safe Target Pace</h4>
+          <h4>About safe pace</h4>
           <p class="fine">
-            <strong>Safe Target Pace</strong> calculates the maximum % per hour you can consume and still survive until the window resets.
-            If your <strong>Current Burn Rate</strong> is higher than your Safe Pace, you are projected to hit the limit before the reset window arrives.
+            <strong>Safe pace</strong> is the highest % per hour that still lasts until the window resets.
+            When the <strong>current pace</strong> is higher, the window is projected to reach its limit before it resets.
           </p>
         </div>
       </section>
     </div>
 
-    <!-- TAB 4: TOKEN INTELLIGENCE -->
+    <!-- MODELS -->
     <div id="tab-tokens" class="tab-panel active" role="tabpanel">
       <section class="section-card">
         <div class="section-head">
           <div>
-            <h2>Model usage &amp; trends</h2>
-            <p class="fine">Comprehensive token volume, prompt vs completion ratio, prompt caching efficiency, and reasoning tokens.</p>
+            <h2>Model usage</h2>
+            <p class="fine">Tokens per model from local transcripts: input, cache, output and reasoning.</p>
           </div>
         </div>
 
@@ -218,20 +217,20 @@
 
         <div class="two-col-grid mt-lg">
           <div class="panel-box">
-            <h3>Token Distribution by Model</h3>
-            <p class="fine">Share of token volume consumed across specific AI models.</p>
+            <h3>Tokens by model</h3>
+            <p class="fine">Each model's share of this period's tokens.</p>
             <div id="modelDistributionList" class="model-distribution"></div>
           </div>
           <div class="panel-box">
-            <h3>Token Type Composition</h3>
-            <p class="fine">Breakdown between Input, Output, Cache Read, and Reasoning tokens.</p>
+            <h3>Token types</h3>
+            <p class="fine">Input, output, cache and reasoning tokens.</p>
             <div id="tokenComposition" class="token-composition"></div>
           </div>
         </div>
 
         <div class="sub-head mt-lg">
-          <h3>Daily Token Volume Trend</h3>
-          <p class="fine">Volume of tokens processed per calendar day in this reporting period.</p>
+          <h3>Tokens per day</h3>
+          <p class="fine">Local calendar days in this period.</p>
         </div>
         <div id="dailyTokenBars" class="daily-token-bars"></div>
       </section>
@@ -243,26 +242,26 @@
         <div class="table-container"><table class="data-table"><thead><tr><th>Session</th><th>Models</th><th>First / last observation</th><th>Total tokens</th></tr></thead><tbody id="sessionUsageRows"></tbody></table></div>
       </section>
     </div>
-    <!-- TAB 5: NETWORK & BUDGET -->
+    <!-- NETWORK BUDGET -->
     <div id="tab-network" class="tab-panel" role="tabpanel">
       <section class="section-card">
         <div class="section-head">
           <div>
-            <h2>Network Bandwidth & Billing Budget</h2>
-            <p class="fine">Monitor per-app network traffic against your ISP or mobile data allowance.</p>
+            <h2>Network budget</h2>
+            <p class="fine">Recorded traffic against a monthly data allowance from your provider.</p>
           </div>
-          <button id="network" class="btn btn-secondary">Open Network Monitor</button>
+          <button id="network" class="btn btn-secondary">Open Network usage</button>
         </div>
 
         <form id="budgetForm" class="actions-form">
           <div class="form-row">
-            <label>Monthly Allowance GB
+            <label>Monthly allowance (GB)
               <input id="limit" type="number" min="0" max="1000000" step="0.1" required>
             </label>
-            <label>Billing Cycle Resets on Day
+            <label>Billing cycle starts on day
               <input id="day" type="number" min="1" max="31" step="1" required>
             </label>
-            <button class="btn btn-primary">Save Allowance</button>
+            <button class="btn btn-primary">Save allowance</button>
           </div>
         </form>
 
@@ -272,18 +271,18 @@
       </section>
     </div>
 
-    <!-- TAB 6: AUDIT & ALERTS -->
+    <!-- ALERTS -->
     <div id="tab-alerts" class="tab-panel" role="tabpanel">
       <section class="section-card">
         <div class="section-head">
           <div>
-            <h2>Quota Warnings & Audit Trail</h2>
-            <p class="fine">Historical record of rate limit warnings, quota thresholds reached, and auto-resume triggers.</p>
+            <h2>Alerts and events</h2>
+            <p class="fine">Plan warnings, limits reached, data caps and updates, newest first.</p>
           </div>
           <div class="actions">
-            <label>Notification Snooze
+            <label>Snooze notifications
               <select id="snooze">
-                <option value="0">Alerts Active</option>
+                <option value="0">Off</option>
                 <option value="15">15 minutes</option>
                 <option value="60">1 hour</option>
                 <option value="240">4 hours</option>
@@ -296,15 +295,15 @@
       </section>
     </div>
 
-    <!-- TAB 7: DIAGNOSTICS & DISPLAY -->
+    <!-- DIAGNOSTICS -->
     <div id="tab-diagnostics" class="tab-panel" role="tabpanel">
       <section class="section-card">
         <div class="section-head">
           <div>
-            <h2>System Diagnostics</h2>
-            <p class="fine">Version, platform, provider status and timestamps. No credentials or secrets.</p>
+            <h2>Diagnostics</h2>
+            <p class="fine">Provider status and last successful reading. The support report has no credentials or secrets.</p>
           </div>
-          <button id="support" class="btn btn-secondary">Support Report</button>
+          <button id="support" class="btn btn-secondary">Save support report</button>
         </div>
         <div id="diagnostics"></div>
       </section>
@@ -312,41 +311,11 @@
       <section class="section-card mt-lg">
         <div class="section-head">
           <div>
-            <h2>Display & Interface Preferences</h2>
-            <p class="fine">Theme colors, typography scale, flyout compactness, and provider ordering.</p>
+            <h2>Display</h2>
+            <p class="fine">Theme, text size and which plans are shown are in Settings → Appearance.</p>
           </div>
+          <button id="openSettings" class="btn btn-secondary" type="button">Open Settings</button>
         </div>
-        <form id="displayForm">
-          <div class="actions-form">
-            <div class="form-row">
-              <label>Theme
-                <select id="theme">
-                  <option value="system">System Default</option>
-                  <option value="light">Light Mode</option>
-                  <option value="dark">Dark Mode</option>
-                </select>
-              </label>
-              <label>Interface Scaling
-                <select id="scale">
-                  <option value="100">100% (Standard)</option>
-                  <option value="115">115% (Comfortable)</option>
-                  <option value="130">130% (Large)</option>
-                </select>
-              </label>
-              <label class="checkbox-label">
-                <input id="compact" type="checkbox"> Compact taskbar flyout
-              </label>
-            </div>
-          </div>
-          <div class="sub-head mt-md">
-            <h3>Provider Visibility & Order</h3>
-            <p class="fine">Rearrange which providers appear in the taskbar chips and flyout.</p>
-          </div>
-          <div id="providers" class="providers-list"></div>
-          <div class="mt-md">
-            <button class="btn btn-primary">Save Preferences</button>
-          </div>
-        </form>
       </section>
     </div>
   </main>

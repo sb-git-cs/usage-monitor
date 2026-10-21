@@ -41,6 +41,42 @@ test("chips show five-hour usage before a higher weekly reading", () => {
   assert.equal(models.currentWindow({ windows: [{ used_pct: NaN }] }), null);
 });
 
+test("a reading taken after a reset that it still repeats stays current", () => {
+  const past = new Date(Date.now() - 20000).toISOString();
+  const week = new Date(Date.now() + 3 * 86400000).toISOString();
+  const reading = (fetched) => ({ providers: [{ id: "codex", status: { state: "ok" }, fetched_at: fetched, windows: [
+    { kind: "five_hour", label: "5h", used_pct: 30, resets_at: past },
+    { kind: "weekly", label: "Weekly", used_pct: 92, resets_at: week },
+  ] }] });
+  const fresh = models.applyLocalResets(reading(new Date().toISOString())).snapshot.providers[0];
+  assert.equal(fresh.status.state, "ok");
+  assert.equal(fresh.windows[0].used_pct, null, "the passed window is still cleared");
+  assert.equal(fresh.windows[1].used_pct, 92);
+  const older = models.applyLocalResets(reading(new Date(Date.now() - 60000).toISOString())).snapshot.providers[0];
+  assert.equal(older.status.state, "stale", "read before the reset");
+});
+
+test("a model's own 5h limit does not take over the chip from the plan's 5h window", () => {
+  const plan = { kind: "five_hour", label: "5h", used_pct: 5 };
+  const spark = { kind: "five_hour", label: "GPT-5.3-Codex-Spark 5h", used_pct: 90 };
+  assert.equal(models.currentWindow({ id: "codex", windows: [plan, spark] }), plan);
+  assert.equal(models.currentWindow({ id: "codex", windows: [{ ...plan, used_pct: null }, spark] }), spark);
+  const pro = { kind: "five_hour", label: "Gemini Pro 5h", used_pct: 80 };
+  assert.equal(models.currentWindow({ id: "gemini", windows: [{ kind: "five_hour", label: "Gemini Flash 5h", used_pct: 5 }, pro] }), pro);
+});
+
+test("shown percentages reach 100 only at the limit, and an empty current reading says why", () => {
+  const context = vm.createContext({});
+  vm.runInContext(fs.readFileSync(require.resolve("../src/models"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(require.resolve("../src/ui/format"), "utf8"), context);
+  for (const [used, shown] of [[99.6, "99%"], [99.4, "99%"], [100, "100%"], [100.4, "100%"], [0.4, "0%"], [62.5, "63%"]]) {
+    assert.equal(context.formatUsed({ used_pct: used }), shown);
+  }
+  assert.equal(context.statusText({ status: { state: "ok", hint: "No metered limits" }, windows: [] }), "No metered limits");
+  assert.equal(context.statusText({ status: { state: "ok" }, windows: [] }), "No usage reported");
+  assert.equal(context.statusText({ status: { state: "ok" }, windows: [{ kind: "weekly", used_pct: 5 }] }), null);
+});
+
 test("daily usage is the fallback before weekly when no five-hour window exists", () => {
   const daily = { kind: "daily", used_pct: 20 };
   const weekly = { kind: "weekly", used_pct: 80 };
@@ -54,7 +90,8 @@ test("browser formatting shares reset logic, escapes HTML and warns at exactly 8
   vm.runInContext(fs.readFileSync(require.resolve("../src/ui/format"), "utf8"), context);
   assert.equal(context.alerting({ used_pct: 80, remaining_pct: 20 }), true);
   assert.equal(context.alerting({ used_pct: 79.99 }), false);
-  assert.equal(context.formatUsedTotal({ used_pct: NaN }, true), "—");
+  assert.equal(context.formatUsed({ used_pct: NaN }), "—");
+  assert.equal(context.formatUsed({ used_pct: 24.6 }), "25%");
   assert.equal(context.formatEta("bad"), "");
   assert.equal(context.escapeHtml('<img title="x">&'), "&lt;img title=&quot;x&quot;&gt;&amp;");
   assert.equal(context.flyoutLabel({ kind: "daily", label: "Pro" }), "Pro");

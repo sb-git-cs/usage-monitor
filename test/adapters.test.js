@@ -47,6 +47,18 @@ test("Gemini collects all explicitly identified Gemini quota groups", () => {
   assert.equal(windows.length, 2);
 });
 
+test("Gemini keeps each group's weekly and 5h windows when the summary has several groups", () => {
+  const adapter = load("src/adapters/gemini.js", {}, ["mapSummary", "combineWindows"]);
+  const reset = (h) => new Date(Date.now() + h * 3600000).toISOString();
+  const group = (displayName, weekly, fiveHour) => ({ displayName, buckets: [
+    { bucketId: "weekly", window: "weekly", remainingFraction: weekly, resetTime: reset(72) },
+    { bucketId: "5h", window: "5h", remainingFraction: fiveHour, resetTime: reset(3) },
+  ] });
+  const windows = adapter.combineWindows([], adapter.mapSummary({ groups: [group("Gemini Pro", 0.1, 0.2), group("Gemini Flash", 0.9, 0.95)] }));
+  assert.deepEqual(windows.map((w) => [w.label, Math.round(w.used_pct)]),
+    [["Gemini Pro Weekly", 90], ["Gemini Flash Weekly", 10], ["Gemini Pro 5h", 80], ["Gemini Flash 5h", 5]]);
+});
+
 test("Gemini reads its own buckets when the group is no longer named Gemini", () => {
   const windows = gemini.mapSummary({ groups: [{
     displayName: "Models",
@@ -197,6 +209,53 @@ test("Claude does not manufacture zero utilization from a reset timestamp", () =
   const adapter = load("src/adapters/claude.js", {}, ["mapUsage"]);
   const result = adapter.mapUsage({ five_hour: { resets_at: "2030-01-01T00:00:00Z" } }, {});
   assert.equal(result.windows[0].used_pct, null);
+});
+
+test("a usage response with no recognisable window is a failed read, so the last reading is kept", async () => {
+  const claude = load("src/adapters/claude.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify({ claudeAiOauth: { accessToken: "fake" } }) },
+    "../paths": { ...noPaths, claudeCredentials: () => "fake", fileExists: () => true },
+    "../http": { getJson: async () => ({ status: 200, json: { error: { type: "schema_changed" } } }) },
+  });
+  const codex = load("src/adapters/codex.js", {
+    fs: { readFileSync: () => JSON.stringify({ tokens: { access_token: "fake", account_id: "acct" } }) },
+    "../paths": { ...noPaths, codexAuth: () => "auth.json", fileExists: () => true },
+    "../http": { getJson: async () => ({ status: 200, json: { detail: "unexpected" } }) },
+  });
+  for (const result of [await claude.fetchUsage({}), await codex.fetchUsage()]) {
+    assert.deepEqual(result.status, { state: "fetch_failed", message: "Usage response not recognized" });
+  }
+  const poller = load("src/poller.js", {}, ["mergeWithCache"]);
+  const cached = { id: "codex", status: { state: "ok" }, windows: [{ kind: "five_hour", label: "5h", used_pct: 40 }], fetched_at: new Date().toISOString() };
+  assert.equal(poller.mergeWithCache(await codex.fetchUsage(), cached).status.state, "stale");
+});
+
+test("a usage response with its fields but no active window is a real, empty reading", async () => {
+  const claude = load("src/adapters/claude.js", {
+    fs: { statSync: () => ({ mtimeMs: 1 }), readFileSync: () => JSON.stringify({ claudeAiOauth: { accessToken: "fake" } }) },
+    "../paths": { ...noPaths, claudeCredentials: () => "fake", fileExists: () => true },
+    "../http": { getJson: async () => ({ status: 200, json: { five_hour: null, seven_day: null } }) },
+  });
+  const codex = load("src/adapters/codex.js", {
+    fs: { readFileSync: () => JSON.stringify({ tokens: { access_token: "fake", account_id: "acct" } }) },
+    "../paths": { ...noPaths, codexAuth: () => "auth.json", fileExists: () => true },
+    "../http": { getJson: async () => ({ status: 200, json: { plan_type: "free", rate_limit: null } }) },
+  });
+  for (const result of [await claude.fetchUsage({}), await codex.fetchUsage()]) {
+    assert.equal(result.status.state, "ok");
+    assert.ok(result.status.hint, "the card says why there is nothing to show");
+    assert.deepEqual(result.windows, []);
+  }
+});
+
+test("Codex names windows of other lengths by their length, not as 5h or Weekly", () => {
+  const adapter = load("src/adapters/codex.js", {}, ["mapWham"]);
+  const win = (used, seconds) => ({ used_percent: used, limit_window_seconds: seconds, reset_at: 2000000000 });
+  const month = adapter.mapWham({ rate_limit: { primary_window: win(40, 2592000), secondary_window: win(60, 2592000) } });
+  assert.deepEqual(month.windows.map((w) => [w.kind, w.label]), [["weekly_scoped", "30d"], ["weekly_scoped", "30d"]]);
+  const usual = adapter.mapWham({ rate_limit: { primary_window: win(5, 18000), secondary_window: win(20, 604800) } });
+  assert.deepEqual(usual.windows.map((w) => [w.kind, w.label]), [["five_hour", "5h"], ["weekly", "Weekly"]]);
+  assert.equal(adapter.mapWham({ rate_limit: { primary_window: { used_percent: 5, reset_at: 2000000000 } } }).windows[0].label, "5h", "no length: the primary fallback");
 });
 
 test("Claude preserves rate limit response after token refresh", async () => {

@@ -19,6 +19,11 @@ function percentage(value) {
   return Number.isFinite(n) ? Math.max(0, n) : null;
 }
 
+// Shown rounded, but never as 100% before the limit: 99.6% used shows as 99%.
+function shownPct(used) {
+  return used < 100 ? Math.min(99, Math.round(used)) : Math.round(used);
+}
+
 function remainingPct(used) {
   const value = percentage(used);
   return value == null ? null : Math.max(0, 100 - value);
@@ -58,7 +63,9 @@ function currentWindow(provider) {
   const numeric = (provider.windows || []).filter((w) => Number.isFinite(w.used_pct) &&
     (!["grok", "cursor"].includes(provider.id) || w.kind !== "credits"));
   if (!numeric.length) return null;
-  const windows = numeric.filter((w) => w.kind === "five_hour");
+  // A model's own 5h limit (Codex) never stands in for the plan's 5h window.
+  const plain = numeric.filter((w) => w.kind === "five_hour" && w.label === "5h");
+  const windows = plain.length ? plain : numeric.filter((w) => w.kind === "five_hour");
   if (!windows.length) windows.push(...numeric.filter((w) => w.kind === "daily"));
   return (windows.length ? windows : numeric).reduce((a, b) => (a.used_pct >= b.used_pct ? a : b));
 }
@@ -87,7 +94,8 @@ function applyLocalResets(snapshot) {
       const t = Date.parse(w.resets_at);
       if (!Number.isFinite(t) || t > now) return w;
       changed = true;
-      expired = true;
+      // A reading taken after the reset is still current; the provider has not rolled over yet.
+      if (!(Date.parse(p.fetched_at) > t)) expired = true;
       return {
         ...w,
         used_pct: null,
@@ -107,6 +115,7 @@ const UsageModels = {
   windowOf,
   sameReset,
   remainingPct,
+  shownPct,
   percentage,
   emptyProvider,
   currentWindow,

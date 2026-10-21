@@ -79,3 +79,18 @@ test("Insights IPC only accepts its own renderer and support reports omit sensit
   assert.doesNotMatch(JSON.stringify(report), /private|secret|sensitive|account|token/);
   await handles["insights:action"](own, "retry"); assert.equal(retries, 1);
 });
+
+test("the report names the requested period and omits the unit when no budget limit is set", () => {
+  const module = { exports: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../src/insights-window.js"), "utf8"), {
+    module, __dirname: path.join(__dirname, "../src"), process,
+    require: (id) => id === "electron" ? { app: {}, BrowserWindow: class {}, ipcMain: {}, dialog: {}, nativeTheme: {} } : id === "./insights" ? { displayPrefs } : id === "./tokens" ? require("../src/tokens") : require(id),
+  });
+  const { generateReport } = module.exports;
+  const day = generateReport({ days: 1, tokens: null, budget: { used: 4.2e8, limit: 0 } });
+  assert.match(day, /Period: 1 day \|/);
+  assert.match(day, /0\.42 GB \/ No limit set\n/);
+  assert.match(generateReport({ days: 14, tokens: null, budget: { used: 0, limit: 5e9 } }), /Period: 14 days \|[^\n]*\n[\s\S]*0 GB \/ 5\.00 GB/);
+  const named = generateReport({ days: 7, burn: [{ provider: "claude", label: "5h", used: 50, burn_rate: 2, safe_rate: 10, hours_to_reset: 3, status: "sustainable" }] });
+  assert.match(named, /\| Claude Code \(5h\) \| 50% \| 2%\/h \| 10%\/h \| 3h \| On pace \|/);
+});

@@ -54,7 +54,8 @@ function forecast(points, win, now = Date.now()) {
   const recent = (points || []).filter((p) => p.t >= since && p.t <= now);
   if (recent.length < MIN_POINTS || recent[recent.length - 1].t - recent[0].t < MIN_SPAN_MS) return null;
   const rate = slopePerHour(recent);
-  if (!(rate >= MIN_RATE_PER_HOUR)) return null;
+  // Weekly windows climb slowly: two points over their six-hour lookback is a real trend.
+  if (!(rate >= Math.min(MIN_RATE_PER_HOUR, 2 / (lookback(win.kind) / 3_600_000)))) return null;
   const at = now + ((100 - win.used_pct) / rate) * 3_600_000;
   const resets = win.resets_at ? Date.parse(win.resets_at) : NaN;
   if (Number.isFinite(resets) && at >= resets) return null;

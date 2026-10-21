@@ -219,3 +219,65 @@ test("live summary: totals, busiest apps first, ignored apps left out, and stale
   assert.equal(engine.view("60").rows.find((r) => r.key === chrome().key).rx_rate, 0);
   assert.equal(engine.view("60").rows.find((r) => r.key === chrome().key).rx, 3000, "totals stay");
 });
+test("average per minute for pruned apps spans only the retention window", (t) => {
+  const { engine, store, settings, clock } = setup(t);
+  const nowMin = Math.floor(clock.now / 60000);
+  settings.rules.old = { name: "Old", path: null, blocked: false, keep_forever: true, record_connections: false, cap: null };
+  store.addUsage(store.appId("old", "Old", null), nowMin - 20 * 1440, 100, 0);
+  store.addUsage(store.appId(chrome().key, "Chrome", null), nowMin - 9, 600, 0);
+  const view = engine.view("all");
+  assert.equal(view.rows.find((r) => r.key === chrome().key).avg_per_min, 600 / 60, "retention is 60 minutes");
+  assert.equal(view.rows.find((r) => r.key === "old").avg_per_min, 100 / (20 * 1440 + 1), "a kept app spans all records");
+});
+
+test("a new cap counts what the app already used this period", (t) => {
+  const { engine, store, sample, settings, events } = setup(t);
+  sample([chrome(300, 200)]);
+  engine.setCap(chrome().key, { limit_bytes: 1000, period: "daily" });
+  assert.equal(settings.rules[chrome().key].cap.used_bytes, 500);
+  sample([chrome(300, 300)]);
+  assert.equal(events.filter(([n]) => n === "cap").length, 1, "seeded usage counts towards the limit");
+  engine.setCap(chrome().key, { limit_bytes: 1000, period: "total" });
+  assert.equal(settings.rules[chrome().key].cap.used_bytes, 0, "a running total starts at zero");
+});
+
+test("a cap keeps counting while another app is focused, but ignored apps do not count", (t) => {
+  const { engine, sample, settings } = setup(t);
+  engine.setCap(chrome().key, { limit_bytes: 10_000, period: "daily" });
+  engine.setCap("b", { limit_bytes: 10_000, period: "daily" });
+  engine.focus("b");
+  sample([chrome(300, 200), { key: "b", name: "B", rx: 7, tx: 3 }]);
+  assert.equal(settings.rules[chrome().key].cap.used_bytes, 500);
+  assert.equal(engine.view("60").rows.some((r) => r.key === chrome().key), false, "not recorded while unfocused");
+  engine.ignore(chrome().key);
+  sample([chrome(300, 200)]);
+  assert.equal(settings.rules[chrome().key].cap.used_bytes, 500);
+});
+
+test("a cap whose period starts in the future rolls over after a clock correction", (t) => {
+  const { engine, settings, clock } = setup(t);
+  engine.setCap(chrome().key, { limit_bytes: 1000, period: "daily" });
+  const cap = settings.rules[chrome().key].cap;
+  cap.period_start += 86_400_000;
+  cap.used_bytes = 900;
+  engine.tick();
+  assert.equal(cap.used_bytes, 0);
+  assert.equal(cap.period_start, periodStart("daily", clock.now));
+});
+
+test("buckets of an hour or more start on local calendar boundaries", () => {
+  const { calendarBuckets } = require("../src/net/engine");
+  const day = calendarBuckets(1440), hour = calendarBuckets(120), week = calendarBuckets(10080);
+  let last = day.indexOf(new Date(2026, 0, 1, 12).getTime());
+  for (let d = 1; d <= 365; d++) {
+    const index = day.indexOf(new Date(2026, 0, 1 + d, 12).getTime());
+    assert.equal(index, last + 1);
+    const start = new Date(day.startOf(index));
+    assert.deepEqual([start.getHours(), start.getMinutes(), start.getDate()], [0, 0, new Date(2026, 0, 1 + d).getDate()]);
+    last = index;
+  }
+  const noon = new Date(2026, 2, 29, 13, 30).getTime();
+  assert.equal(new Date(hour.startOf(hour.indexOf(noon))).getHours(), 12);
+  assert.equal(new Date(hour.startOf(hour.indexOf(noon) + 1)).getHours(), 14);
+  assert.equal(new Date(week.startOf(week.indexOf(noon))).getHours(), 0);
+});

@@ -23,7 +23,20 @@ bindDrag(bar, "button, .pct-icon, .net-chip, .session-chip");
 let lastKey = "";
 
 function chipValue(win) {
-  return Number.isFinite(win?.used_pct) ? `${Math.round(win.used_pct)}%` : "—";
+  return formatUsed(win);
+}
+
+// The chip shows the current window, but any other window at the warn threshold turns it red.
+function blockingWindow(p, win) {
+  if (!win) return null;
+  if (alerting(win)) return win;
+  return (p.windows || []).filter((w) => w.kind !== "credits" && alerting(w))
+    .reduce((a, b) => (a && a.used_pct >= b.used_pct ? a : b), null);
+}
+
+// A forecast only while the reading is current and the time is still ahead.
+function chipForecast(p, win) {
+  return win && p.status?.state === "ok" && Date.parse(win.forecast_at) > Date.now() && Number.isFinite(win.used_pct) ? win.forecast_at : "";
 }
 
 function chipKey(snapshot) {
@@ -31,9 +44,11 @@ function chipKey(snapshot) {
   const parts = shownProviders(snapshot).map((p) => {
     const win = UsageModels.currentWindow(p);
     const num = chipValue(win);
-    const cls = win ? (alerting(win) ? "red" : "green") : "gray";
+    const block = blockingWindow(p, win);
+    const cls = win ? (block ? "red" : "green") : "gray";
     const state = (p.status && p.status.state) || "";
-    return `${escapeHtml(p.id)}:${win?.kind || ""}:${win?.label || ""}:${cls}:${num}:${state}`;
+    const other = block && block !== win ? `${block.label}=${chipValue(block)}` : "";
+    return `${escapeHtml(p.id)}:${win?.kind || ""}:${win?.label || ""}:${cls}:${num}:${state}:${other}:${chipForecast(p, win)}`;
   });
   return docked + "|" + parts.join("|");
 }
@@ -71,16 +86,22 @@ function showLoading() {
 }
 
 // Settings: which chips to show and the "warn at" percentage.
-let prefs = { alert_threshold: 80, chips_show: {} };
+let prefs = { alert_threshold: 80, chips_show: {}, display: {} };
 
+// The strip follows the display order and hides plans hidden there, as the flyout does.
 function shownProviders(snapshot) {
+  const hidden = prefs.display.hidden || [];
+  const order = prefs.display.order || [];
+  const rank = (p) => order.indexOf(p.id === "x_subscription" ? "grok" : p.id);
   return (snapshot.providers || []).filter((p) => p.id === "x_subscription"
-    ? prefs.chips_show.grok !== false || prefs.chips_show.cursor !== false : prefs.chips_show[p.id] !== false);
+    ? ["grok", "cursor"].some((id) => prefs.chips_show[id] !== false && !hidden.includes(id))
+    : prefs.chips_show[p.id] !== false && !hidden.includes(p.id))
+    .sort((a, b) => rank(a) - rank(b));
 }
 
 function applyPrefs(next) {
   if (!next) return;
-  prefs = { alert_threshold: next.alert_threshold, chips_show: next.chips_show || {} };
+  prefs = { alert_threshold: next.alert_threshold, chips_show: next.chips_show || {}, display: next.display || {} };
   bar.classList.toggle("light", next.display?.theme === "light" || (next.display?.theme === "system" && !next.dark));
   renderBattery(lastBattery);
   setAlertThreshold(prefs.alert_threshold);
@@ -101,15 +122,18 @@ function render(snapshot) {
   const parts = [];
   for (const p of shownProviders(snapshot)) {
     const win = UsageModels.currentWindow(p);
+    const block = blockingWindow(p, win);
     let cls = "gray";
     let num = "—";
     if (win) {
       num = chipValue(win);
-      cls = alerting(win) ? "red" : "green";
+      cls = block ? "red" : "green";
     }
     const stale = p.status?.state === "stale";
-    const pace = win && win.forecast_at && Number.isFinite(win.used_pct) ? ` - 100% around ${formatClock(win.forecast_at)} at this pace` : "";
-    parts.push(`<div class="pct-icon ${cls}${stale ? " stale" : ""}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.display_name)}${win ? ` - ${escapeHtml(win.label)}` : ""}${stale ? " (stale)" : ""}${escapeHtml(pace)}"><span class="who">${mark(p.id)}</span>${num}</div>`);
+    const other = block && block !== win ? ` - ${block.label} ${chipValue(block)}` : "";
+    const forecastAt = chipForecast(p, win);
+    const pace = forecastAt ? ` - 100% around ${formatClock(forecastAt)} at this pace` : "";
+    parts.push(`<div class="pct-icon ${cls}${stale ? " stale" : ""}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.display_name)}${win ? ` - ${escapeHtml(win.label)}` : ""}${escapeHtml(other)}${stale ? " (stale)" : ""}${escapeHtml(pace)}"><span class="who">${mark(p.id)}</span>${num}</div>`);
   }
   root.innerHTML = parts.join("");
   requestAnimationFrame(fitBar);
@@ -276,6 +300,8 @@ function renderSystem(data = {}) {
     if (key === "disk") el.title += (data.disks || []).map((d) => `\n${d.name}: ${pct(d.busy)}`).join("");
     if (key === "space") el.title += (data.volumes || []).map((v) => `\n${v.name}: ${gb(v.used)} / ${gb(v.size)}`).join("");
   }
+  // With every metric turned off, the empty group would still take up space on the strip.
+  systemRoot.hidden = [...systemRoot.children].every((el) => el.hidden);
   requestAnimationFrame(fitBar);
 }
 renderSystem();

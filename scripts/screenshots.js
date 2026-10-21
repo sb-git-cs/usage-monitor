@@ -25,6 +25,7 @@ app.on("window-all-closed", () => {});
 const now = Date.now();
 const inMin = (m) => new Date(now + m * MIN).toISOString();
 const win = (kind, label, used, resetsIn) => ({ kind, label, used_pct: used, remaining_pct: used == null ? null : 100 - used, resets_at: resetsIn ? inMin(resetsIn) : null });
+const fetched = new Date(now - 40_000).toISOString();
 const snapshot = {
   providers: [
     { id: "claude", display_name: "Claude Code", status: { state: "ok" }, plan: "Max 20x", windows: [win("five_hour", "5h", 82, 74), win("weekly", "Weekly", 41, 4 * 1440 + 120)] },
@@ -36,6 +37,10 @@ const snapshot = {
   ],
 };
 snapshot.providers.find((p) => p.id === "grok").shared_weekly = win("weekly", "Weekly", 55, 3 * 1440 + 60);
+for (const p of snapshot.providers) p.fetched_at = fetched;
+const batteryPoints = Array.from({ length: 48 }, (_, i) => ({ t: now - (47 - i) * 2.5 * MIN, present: true, percent: Math.round((84 - i * 0.55) * 10) / 10,
+  state: "discharging", seconds: 3 * 3600 + 40 * 60, source: "power", g: false }));
+const batteryView = { latest: batteryPoints.at(-1), points: batteryPoints };
 
 const netSummary = {
   state: "running",
@@ -217,6 +222,8 @@ function saveTmp(name, image) {
 }
 
 const FONT = `"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif`;
+// Tall enough for the demo's six plans, sessions, network and battery cards and the footer.
+const FLYOUT_H = 1000;
 
 function taskbar(chipsImg, width) {
   return `<div class="taskbar">
@@ -250,6 +257,7 @@ async function main() {
   ipcMain.handle("usage://get-pairing", () => null);
   ipcMain.handle("usage://get-update", () => updateState);
   ipcMain.handle("usage://get-sessions", () => sessionsView);
+  ipcMain.handle("usage://get-battery", () => batteryView);
   ipcMain.handle("net:state", () => netState);
   ipcMain.handle("net:settings", () => netState);
   ipcMain.handle("net:series", () => edgeSeries);
@@ -265,7 +273,7 @@ async function main() {
   for (const regime of ["legacy", "combined"]) {
     const demo = { ...snapshot, subscription_regime: regime, providers: require("../src/subscription").consolidate(snapshot.providers, regime) };
     for (const page of ["flyout", "chips"]) {
-      const shot = await renderPage(page, { width: 860, height: page === "flyout" ? 720 : 80, transparent: true,
+      const shot = await renderPage(page, { width: page === "flyout" ? 620 : 860, height: page === "flyout" ? FLYOUT_H : 80, transparent: true,
         crop: page === "flyout" ? "#root" : "#bar", setup: async (w) => {
           w.webContents.send("usage://snapshot", demo); w.webContents.send("usage://net", netSummary);
           w.webContents.send("usage://update", updateState);
@@ -279,12 +287,11 @@ async function main() {
   const flyout = saveTmp(
     "flyout.png",
     await renderPage("flyout", {
-      width: 700,
-      height: 520,
+      width: 620,
+      height: FLYOUT_H,
       transparent: true,
       crop: "#root",
       setup: async (w) => {
-        w.webContents.send("usage://interval", 5);
         w.webContents.send("usage://snapshot", snapshot);
         w.webContents.send("usage://net", netSummary);
         w.webContents.send("usage://update", updateState);
@@ -332,12 +339,12 @@ async function main() {
       body { background: radial-gradient(1200px 700px at 30% 20%, #1d3553 0%, #0f1b2d 55%, #0b1422 100%); }
       .badge { position: absolute; left: 22px; top: 18px; padding: 6px 10px; border: 1px solid rgba(255,255,255,0.25); border-radius: 8px; color: #e5e7eb; font-size: 13px; letter-spacing: 0.04em; background: rgba(15, 23, 42, 0.6); }
       .window { position: absolute; left: 40px; top: 66px; border-radius: 8px; box-shadow: 0 24px 60px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.08); }
-      .flyout { position: absolute; right: 16px; bottom: 48px; }
+      .flyout { position: absolute; right: 0; top: 0; height: ${H - 48}px; width: auto; box-shadow: -18px 0 40px rgba(0,0,0,0.35); }
       ${TASKBAR_CSS}
     </style></head><body>
-      <div class="badge">TASKBAR · PLAN METERS AND LIVE NETWORK SPEED · CLICK FOR THE FLYOUT OR THE FULL MONITOR</div>
-      <img class="window" src="${network.name}" width="${Math.round(network.width * 0.74)}" height="${Math.round(network.height * 0.74)}">
-      <img class="flyout" src="${flyout.name}" width="${flyout.width}" height="${flyout.height}">
+      <div class="badge">TASKBAR CHIPS · CLICK ONE FOR THE PANEL, OR OPEN THE FULL NETWORK MONITOR</div>
+      <img class="window" src="${network.name}" width="${Math.round(network.width * 0.6)}" height="${Math.round(network.height * 0.6)}">
+      <img class="flyout" src="${flyout.name}">
       ${taskbar(chips, W)}
     </body></html>`,
     W,
@@ -345,11 +352,15 @@ async function main() {
   );
   fs.writeFileSync(path.join(OUT, "tray-flyout.png"), desk.toPNG());
 
-  // Overview poster: each surface with a short explanation.
-  const NS = 0.47;
-  const row2 = 150 + 25 + flyout.height + 75;
-  // Grow with the flyout, whose height depends on the platform's fonts, so the network image is never clipped.
-  const OH = Math.max(1000, row2 + 30 + Math.round(network.height * NS) + 6);
+  // Overview poster: each surface with a short explanation. Scenes stay within 1000px high
+  // (Windows clamps offscreen windows to the work area), so the panel is scaled to fit.
+  const OH = 1000;
+  const FS = Math.min(1, (OH - 175 - 70) / flyout.height);
+  const fw = Math.round(flyout.width * FS);
+  const fh = Math.round(flyout.height * FS);
+  const RX = 48 + fw + 56;
+  const netTop = 595;
+  const NS = Math.min((W - RX - 48) / network.width, (OH - netTop - 45) / network.height);
   const overview = await renderScene(
     `<!doctype html><html><head><meta charset="utf-8"><style>
       html, body { margin: 0; width: ${W}px; height: ${OH}px; overflow: hidden; background: #0b0f17; color: #e5e7eb; font-family: ${FONT}; }
@@ -358,50 +369,40 @@ async function main() {
       h2 { margin: 0 0 12px; font-size: 13px; letter-spacing: 0.1em; color: #cbd5e1; }
       .note { color: #8b95a7; font-size: 12.5px; line-height: 1.5; margin-top: 10px; }
       .sec { position: absolute; }
-      .strip { position: relative; width: 640px; height: 48px; background: rgba(28, 31, 38, 0.97); border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); }
+      .panel img { border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); }
+      .strip { position: relative; width: ${W - RX - 48}px; height: 48px; background: rgba(28, 31, 38, 0.97); border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); }
       .strip img { position: absolute; left: 16px; top: 2px; }
-      .toast { width: 560px; background: #202020; border: 1px solid #333; border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; box-shadow: 0 12px 30px rgba(0,0,0,0.4); border-left: 4px solid #ef4444; }
+      .toast { width: 560px; background: #202020; border: 1px solid #333; border-radius: 8px; padding: 11px 16px; margin-bottom: 10px; box-shadow: 0 12px 30px rgba(0,0,0,0.4); border-left: 4px solid #ef4444; }
       .toast.cap { border-left-color: #d95926; }
       .toast small { color: #9ca3af; font-size: 11.5px; }
       .toast b { display: block; font-size: 14px; margin: 3px 0 2px; }
       .toast span { font-size: 12.5px; color: #d1d5db; }
       .net img { border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); }
-      ul { margin: 0; padding-left: 18px; color: #aab2c0; font-size: 13px; line-height: 1.75; }
       .legend { position: absolute; left: 48px; top: 106px; display: flex; gap: 28px; font-size: 13px; color: #cbd5e1; }
       .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
     </style></head><body>
       <h1>Usage Monitor</h1>
       <div class="sub">Plan meters for Claude Code, Codex, Gemini, Grok Build, Cursor and GitHub Copilot, plus per-app network usage. Windows, macOS and Linux. Numbers are % used.</div>
-      <div class="sec" style="left:48px; top:150px">
-        <h2>1. FLYOUT</h2>
-        <img src="${flyout.name}" width="${flyout.width}" height="${flyout.height}">
-        <div class="note">Two-by-two plan cards and a network card: live speed, the last hour, and the apps<br>using the network now. The footer shows the version; updates install themselves.</div>
+      <div class="legend"><span><i style="background:#22c55e"></i>Below your warning level</span><span><i style="background:#ef4444"></i>At or above it (80% by default)</span><span><i style="background:#3987e5"></i>Download</span><span><i style="background:#d95926"></i>Upload</span></div>
+      <div class="sec panel" style="left:48px; top:150px">
+        <h2>1. PANEL</h2>
+        <img src="${flyout.name}" width="${fw}" height="${fh}">
+        <div class="note" style="width:${fw}px">Opens at the right edge of the screen: summary, plan cards, coding sessions, network and battery.</div>
       </div>
-      <div class="sec" style="left:700px; top:150px">
+      <div class="sec" style="left:${RX}px; top:150px">
         <h2>2. TASKBAR CHIPS</h2>
         <div class="strip"><img src="${chips.name}" width="${chips.width}" height="${chips.height}"></div>
-        <div class="note">Two compact rows: each company's mark with % used, stacked download and upload speed, plus CPU,<br>memory, GPU, disk and storage readings. On Windows the strip fills the taskbar height.</div>
+        <div class="note">Each plan's % used, coding sessions, download and upload speed, battery, CPU, memory, GPU,<br>disk and storage. On Windows the strip fills the taskbar height. Click a chip for the panel.</div>
       </div>
-      <div class="sec" style="left:700px; top:315px">
+      <div class="sec" style="left:${RX}px; top:315px">
         <h2>3. NOTIFICATIONS</h2>
-        <div class="toast"><small>Usage Monitor</small><b>Claude Code — 5-hour 82/100% used</b><span>Silent, once per window. Clicking opens the flyout.</span></div>
+        <div class="toast"><small>Usage Monitor — Claude Code</small><b>5h window: 82% used</b><span>Silent, once per window. Clicking opens the panel.</span></div>
         <div class="toast cap"><small>Usage Monitor</small><b>Data cap reached</b><span>Microsoft Edge used its 2.00 GB cap for today. Its internet access is blocked until you reset or raise the cap.</span></div>
       </div>
-      <div class="sec net" style="left:48px; top:${row2}px">
+      <div class="sec net" style="left:${RX}px; top:${netTop}px">
         <h2>4. NETWORK USAGE</h2>
         <img src="${network.name}" width="${Math.round(network.width * NS)}" height="${Math.round(network.height * NS)}">
       </div>
-      <div class="sec" style="left:${48 + Math.round(network.width * NS) + 48}px; top:${row2 + 40}px; width:620px">
-        <ul>
-          <li>Live download and upload speed for every app, grouped by program</li>
-          <li>History from 5 minutes to all records, averages and per-minute charts</li>
-          <li>Block internet per app (Windows Firewall) and data caps per day or month</li>
-          <li>Optional connection log with domains and addresses</li>
-          <li>Focus or ignore apps, keep records forever, export CSV</li>
-          <li>Byte counts only: packet contents are never read</li>
-        </ul>
-      </div>
-      <div class="legend"><span><i style="background:#22c55e"></i>Under 80% used</span><span><i style="background:#ef4444"></i>80% used or more</span><span><i style="background:#6b7280"></i>Signed out / missing</span><span><i style="background:#3987e5"></i>Download</span><span><i style="background:#d95926"></i>Upload</span></div>
     </body></html>`,
     W,
     OH

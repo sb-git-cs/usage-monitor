@@ -25,7 +25,8 @@ function classifyWindow(usedPct, seconds, resetAt, resetAfter, fallbackLabel) {
   } else if (seconds >= 82800 && seconds <= 90000) {
     kind = "daily";
     label = "Daily";
-  } else if (!label) {
+  } else if (seconds > 0 && (!label || label === "5h" || label === "Weekly")) {
+    // Another length: the primary and secondary fallbacks would name it wrongly.
     const h = Math.round(seconds / 3600);
     label = h >= 24 ? `${Math.round(h / 24)}d` : `${h}h`;
   }
@@ -182,7 +183,19 @@ async function fetchUsage() {
       message: `HTTP ${res.status}`,
     });
   }
-  return mapWham(res.json);
+  const mapped = mapWham(res.json);
+  if (!mapped.windows.length) {
+    // Without rate_limit the body is a changed or error response, and the last good reading is
+    // kept. With it but no window, the plan reports no limits.
+    if (!res.json || typeof res.json !== "object" || !("rate_limit" in res.json)) {
+      return emptyProvider("codex", "Codex", {
+        state: "fetch_failed",
+        message: "Usage response not recognized",
+      });
+    }
+    mapped.status = { ...mapped.status, hint: "No limits reported" };
+  }
+  return mapped;
 }
 
 // The current access token for a phone that reads usage directly; the refresh token stays here.

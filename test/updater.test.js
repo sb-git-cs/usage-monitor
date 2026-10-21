@@ -271,6 +271,42 @@ test("installer builds download with electron-updater and install silently, then
   assert.ok(states.some((s) => s.status === "installing" && s.latest === "1.2.0"));
 });
 
+test("turning automatic updates off while a download waits for a quiet moment cancels the restart", async (t) => {
+  const autoUpdater = new EventEmitter();
+  const installs = [];
+  autoUpdater.checkForUpdates = async () => {
+    setImmediate(() => autoUpdater.emit("update-downloaded", { version: "1.2.0" }));
+    return { isUpdateAvailable: true, updateInfo: { version: "1.2.0" }, downloadPromise: Promise.resolve() };
+  };
+  autoUpdater.quitAndInstall = (...args) => installs.push(args);
+  let busy = true;
+  const updater = loadUpdater("src/updater.js", { electron: electronMock({ packaged: true }).electron, "electron-updater": { autoUpdater } });
+  const { ctx, cfg, states } = context({ ctx: { canRestart: () => !busy } });
+  updater.start({ ...ctx, kind: "installer" });
+  t.after(() => updater.stop());
+  await updater.automatic();
+  await until(() => states.at(-1).status === "ready");
+  cfg.auto_update = false;
+  updater.settingChanged();
+  busy = false;
+  await tick(40);
+  assert.deepEqual(installs, [], "no restart after the user turned automatic updates off");
+  assert.equal(states.at(-1).status, "ready", "the update installs when the app quits");
+  assert.equal(states.at(-1).auto, false);
+  updater.action();
+  await until(() => installs.length);
+  assert.deepEqual(installs, [[true, true]], "Install now still installs it");
+});
+
+test("copies that can't install updates don't claim they do", async (t) => {
+  const updater = loadUpdater("src/updater.js", { electron: electronMock().electron });
+  const { ctx, states } = context();
+  updater.start({ ...ctx, kind: "source" });
+  t.after(() => updater.stop());
+  assert.equal(states.at(-1).status, "skipped");
+  assert.match(states.at(-1).message, /can't update itself/);
+});
+
 test("formats that can't update themselves notify once per version with a download link", async (t) => {
   const shown = [];
   const release = {

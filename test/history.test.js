@@ -79,3 +79,11 @@ test("a reset time repeated with a second of jitter is the same window and still
   assert.equal([...h.series.values()][0].points.length, 12, "jitter does not start a new window");
   assert.ok(h.annotate(reading(51, -191)).providers[0].windows[0].forecast_at);
 });
+
+test("a weekly window climbing slowly still gets a forecast; a 5h window that slow does not", () => {
+  const now = T0 + 6 * 60 * MIN;
+  const slow = Array.from({ length: 37 }, (_, i) => ({ t: T0 + i * 10 * MIN, used: Math.round((82.3 + 0.45 * i / 6) * 10) / 10 }));
+  const weekly = { kind: "weekly", used_pct: 85, resets_at: new Date(now + 40 * 60 * MIN).toISOString() };
+  assert.ok(forecast(slow, weekly, now), "15% left at 0.45%/h runs out 7 hours before the reset");
+  assert.equal(forecast(slow, { ...weekly, kind: "five_hour" }, now), null, "noise for a short window");
+});

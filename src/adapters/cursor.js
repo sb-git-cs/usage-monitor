@@ -93,7 +93,7 @@ function provider(plan, usage) {
   return {
     id: "cursor",
     display_name: DISPLAY,
-    status: { state: "ok" },
+    status: windows.length ? { state: "ok" } : { state: "ok", hint: "No metered limits" },
     plan: planName(plan),
     windows,
     fetched_at: new Date().toISOString(),

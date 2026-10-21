@@ -101,7 +101,7 @@ test("alerts use the configured threshold and stay silent in quiet hours", () =>
   assert.equal(shown.length, 0);
   alerts.evaluate(snap(71), { threshold: 70 });
   assert.equal(shown.length, 1);
-  assert.match(shown[0].body, /5h 71\/100% used/);
+  assert.match(shown[0].body, /5h window: 71% used/);
   const quiet = alertHarness();
   quiet.alerts.evaluate(snap(90), { threshold: 70, quiet: true });
   quiet.alerts.evaluate(snap(91), { threshold: 70 });
@@ -119,6 +119,17 @@ test("a forecast warning is shown once per window, only when enabled and half us
   alerts.evaluate(snap(64, forecast), { threshold: 95, forecastAlerts: true });
   assert.equal(shown.length, 1);
   assert.match(shown[0].body, /At this pace it reaches 100% around/);
+});
+
+test("a weekly forecast warning gives the day of both times, and 99.6% is not shown as 100%", () => {
+  const { alerts, shown } = alertHarness();
+  const at = (hours) => new Date(Date.now() + hours * 3600000).toISOString();
+  const day = (iso) => new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const weekly = { kind: "weekly", label: "Weekly", used_pct: 60, resets_at: at(96), forecast_at: at(48) };
+  alerts.evaluate({ providers: [{ id: "claude", display_name: "Claude Code", status: { state: "ok" }, windows: [weekly] }] }, { threshold: 95, forecastAlerts: true });
+  assert.equal(shown[0].body, `Weekly is 60% used. At this pace it reaches 100% around ${day(weekly.forecast_at)}, before it resets at ${day(weekly.resets_at)}.`);
+  alerts.evaluate(snap(99.6), { threshold: 80, notifyOnLimit: true });
+  assert.equal(shown[1].body, "5h window: 99% used", "the limit itself is not reached yet");
 });
 
 test("the settings window can only change known settings, to allowed values", () => {

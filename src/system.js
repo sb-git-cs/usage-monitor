@@ -174,19 +174,26 @@ function windowsSample(request = "sample") {
   return worker.sample(request);
 }
 
+// Elsewhere si.graphics() starts system_profiler (macOS) or lspci (Linux) on every call. Only
+// nvidia-smi reports utilization, so without it the GPU list is re-read every 10 minutes.
+const GRAPHICS_REFRESH_MS = 600000;
+let graphicsCache = null;
+
 // withStorage: on Windows the same helper also reads the drives (systeminformation would start
 // a new PowerShell process for each storage reading).
-async function hardwareSample(withStorage = false) {
-  if (process.platform === "win32") {
+async function hardwareSample(withStorage = false, platform = process.platform) {
+  if (platform === "win32") {
     const data = await windowsSample(withStorage ? "sample storage" : "sample");
     const disks = (data.disks || []).filter((d) => percent(d.busy) !== null);
     const out = { gpuPresent: data.gpuPresent, gpu: percent(data.gpu), disk: disks.length ? Math.max(...disks.map((d) => d.busy)) : null, disks, diskRate: null };
     if (withStorage && Array.isArray(data.volumes)) Object.assign(out, storageUsage(data.volumes));
     return out;
   }
-  const [graphics, io] = await Promise.allSettled([si.graphics(), si.fsStats()]);
+  const reuse = graphicsCache && !graphicsCache.live && Date.now() - graphicsCache.at < GRAPHICS_REFRESH_MS;
+  const [graphics, io] = await Promise.allSettled([reuse ? { controllers: graphicsCache.controllers } : si.graphics(), si.fsStats()]);
   const controllers = graphics.status === "fulfilled" ? graphics.value.controllers || [] : null;
   const usage = (controllers || []).map((g) => percent(g.utilizationGpu)).filter((v) => v !== null);
+  if (!reuse && controllers) graphicsCache = { at: Date.now(), controllers, live: usage.length > 0 };
   const rate = io.status === "fulfilled" && Number.isFinite(io.value.rx_sec) && io.value.rx_sec >= 0 && Number.isFinite(io.value.wx_sec) && io.value.wx_sec >= 0
     ? io.value.rx_sec + io.value.wx_sec : null;
   return { gpuPresent: controllers === null ? null : controllers.length > 0, gpu: usage.length ? Math.max(...usage) : null,
@@ -215,12 +222,14 @@ function start(onUpdate) {
       emit();
     }).finally(() => pending.delete(key));
   }
+  // macOS memory readings start three processes (one synchronously), so they are read every 10 seconds there.
+  let memoryTicks = 0;
   const tick = () => {
     const current = cpuTimes();
     latest.cpu = cpuUsage(previous, current);
     previous = current;
     emit();
-    collect("memory", async () => ({ mem: await memoryUsage() }), { mem: null });
+    if (process.platform !== "darwin" || memoryTicks++ % 5 === 0) collect("memory", async () => ({ mem: await memoryUsage() }), { mem: null });
   };
   // gpuPresent is deliberately not reset here: a stalled or failed probe must not hide the GPU chip.
   // On Windows every sixth hardware sample (30 seconds) also reads the drives.
@@ -233,6 +242,7 @@ function start(onUpdate) {
   const storage = () => collect("storage", async () => storageUsage(await si.fsSize()), { space: null, volumes: [] });
   let timers = [];
   function run() {
+    memoryTicks = 0;
     tick();
     hardwareCount = 0;
     hardware();
@@ -265,4 +275,4 @@ function start(onUpdate) {
   };
 }
 
-module.exports = { start, cpuUsage, storageUsage, percent, memoryUsage, createWorker, spawnWorker };
+module.exports = { start, cpuUsage, storageUsage, percent, memoryUsage, hardwareSample, createWorker, spawnWorker };

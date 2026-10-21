@@ -1,3 +1,4 @@
+const fs = require("fs");
 const { ghHosts, cliOnPath, fileExists } = require("../paths");
 const githubAuth = require("../github-auth");
 const accounts = require("../accounts");
@@ -83,7 +84,8 @@ function provider(json) {
   return {
     id: "copilot",
     display_name: DISPLAY,
-    status: { state: "ok" },
+    // With every bucket unlimited the reading is real but has nothing to meter.
+    status: windows.length ? { state: "ok" } : { state: "ok", hint: "No metered limits" },
     plan: planName(json),
     windows,
     fetched_at: new Date().toISOString(),
@@ -126,4 +128,18 @@ async function fetchUsage() {
   return provider(res.json);
 }
 
-module.exports = { id: "copilot", displayName: DISPLAY, fetchUsage, planName, quotaWindow };
+// The gh login from hosts.yml, which stays the same when its token is renewed. A login kept
+// only in Credential Manager stays unidentified.
+function accountRef() {
+  for (const file of ghHosts()) {
+    try {
+      const m = /^\s+user:\s*([A-Za-z0-9-]{1,39})\s*$/m.exec(fs.readFileSync(file, "utf8"));
+      if (m) return m[1];
+    } catch {
+      /* the next file may exist */
+    }
+  }
+  return null;
+}
+
+module.exports = { id: "copilot", displayName: DISPLAY, fetchUsage, planName, quotaWindow, accountRef };

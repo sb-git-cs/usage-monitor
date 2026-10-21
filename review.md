@@ -1,3 +1,45 @@
+# 1.11.0 review: UI/UX and correctness (2026-10-21)
+
+Scope: the desktop app (panel, chips, Settings, Insights, Network usage) and every module behind it. Three independent reviews covered the meter pipeline (adapters to what is shown), analytics (Insights, tokens, battery, network aggregates) and the app shell (main process, windows, updater, sampler). 52 findings: 2 high, 14 medium, the rest low. Each was reproduced with a stubbed script or traced in the code. All but the deferred items below are fixed, each with a regression test that fails on 1.10.0 unless noted.
+
+## UI/UX changes
+
+- **Panel:** labelled icon toolbar with Close; the refresh-interval list moved to Settings (its IPC was removed). Last-read time in the header. Summary tiles name the at-risk plans and the plan and window that resets next. `% used` instead of `used/100%`; bars aligned per card; exact reset time on hover; forecasts wrap. Network and battery are grouped under "This computer". Status lines for signed-out and failed plans; empty and all-hidden states. Styles moved to `src/ui/flyout.css` as theme tokens; `shared.css` keeps only the chips.
+- **Settings:** two-pane layout with a section list (scroll-spy), one row per option, switches. New Appearance section (theme, text size, compact cards, plan visibility and order) moved from Insights. The theme drives `nativeTheme.themeSource`, so every window follows it.
+- **Insights:** plain tab and section names, no "PRO/Executive" labels, status dots instead of emoji, action-specific messages, and the same names in the Markdown report.
+
+## High (fixed)
+
+- **Pace mixed reset cycles** (`src/burn.js`, also `src/ui/insights.js` pace, delta and "to limit"). The first hour after every 5-hour reset (6 h for weekly) read as "cooling": a window at about 115 %/h showed −86.6 %/h. Only the current cycle is used now.
+- **Resumed Claude sessions counted twice** (`src/tokens.js`). Messages are deduplicated across files by message and request id. Plausible rather than reproduced on a real transcript; harmless when nothing repeats.
+
+## Medium (fixed)
+
+- Copilot had no account reference, so a gh account switch continued the previous account's cache, history and forecasts.
+- Several Gemini groups collapsed into the last group's windows.
+- Forecast notifications for windows longer than a day dropped the date ("reaches 100% around 11:13 pm, before it resets at 11:13 pm").
+- Audit trail showed the oldest six events; recommendations contradicted their numbers ("exhausting before reset" for a window that resets first, "null", "+-"); health dropped for resumed sessions, data caps and updates; the cache share left cache writes out of the denominator.
+- Keeping the panel open from its own button left the click-away layer up, swallowing the next desktop click.
+- Windows shutdown, restart and sign-out skipped every save (`before-quit` is not emitted); `session-end` now saves the same way.
+- A chip stayed green while another window of the same plan was at its limit.
+- A floating strip grew off the screen's right edge.
+- The macOS/Linux sampler started `system_profiler` or `lspci` every 5 s and a synchronous process every 2 s (macOS). The GPU list is cached for 10 minutes unless it reports utilization; macOS memory is read every 10 s. Not measured on macOS/Linux hardware.
+
+## Low (fixed)
+
+Alerts: duplicate toasts after an account switch, an X Subscription reader change or on a 5-minute bucket edge. Readings: a reading taken after a reset passed was marked stale; an unrecognized response overwrote the last good reading (a response with the expected fields but no window stays a real, empty reading); Codex windows of other lengths were labelled 5h/Weekly and a model's 5h limit could take over the chip; the combined X Subscription hid sign-outs; 99.5 % showed as 100 %; slow weekly climbs got no forecast; switching the X Subscription setting reset other plans' history. Insights: Daily highs plotted the last reading; a reset window counted as fullest; summary cards ignored the period; chart hover could replot another series; budget bar ignored the warning level; report text ("No limit set GB", period). Tokens: partial first day and missing empty days; zero-token rows. Network: Avg/min denominator pinned by kept records; a new cap started at zero; focus on another app stopped caps; a cap set while the clock was ahead never rolled over; day and hour buckets across DST. Shell: Settings not refreshed after tray and Network-window changes; turning off automatic updates after a download still restarted; copies that can't install claimed they do; the panel's Check now closed it behind its dialog; an expired pairing code stayed up; waking to the lock screen counted as unlocked; a paired phone got frozen CPU/memory while locked; failed saves were silent; keep-open shown where it does not persist; hidden system metrics left a gap; tray click flashed "loading…"; equal quiet-hours times and Check now during a check.
+
+## Deferred (not fixed)
+
+- The 1.10.0 deferred items stand (capture helper on shared PCs, GB units, Android 403 handling, folder-menu prompt, asar integrity fuse).
+- The "loading…" chip has no click action; autostart is offered in three places; the tray's "Show chips" items duplicate each other.
+- Android was not changed beyond the shared version number.
+
+## Verification and limits
+
+- Desktop: 291 tests, 289 pass, 0 fail, 2 platform skips (1.10.0: 254 pass). Electron UI smoke test passes for panel, chips, Network usage, Settings (now including Appearance, section list, plan order and visibility) and Insights. `git diff --check` passes. README screenshots regenerated from the real UI with demo data.
+- Not exercised: a real Windows sign-out (session-end rests on Electron's documented behaviour), macOS/Linux runtime, live provider responses for the new empty-response handling, and a real resumed Claude transcript.
+
 # 1.10.0 audit: bugs, security and monitor performance (2026-10-21)
 
 Scope: every desktop module, the Windows capture helper, the Android app, build and CI. Evidence came from the code, the installed 1.9.0's own log and cache files, live process sampling, and stubbed reproductions. Every fix has a regression test that fails on the 1.9.0 code, except where noted.

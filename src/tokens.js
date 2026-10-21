@@ -26,10 +26,12 @@ function claudeRows(lines) {
     const value = usage(u), key = j.message?.id || j.uuid || `row:${index}`;
     const prior = messages.get(key);
     if (prior) for (const field of Object.keys(value)) value[field] = Math.max(value[field], prior[field]);
+    // The same response is repeated in a resumed session's file; the id and request identify it across files.
     messages.set(key, { t: prior?.t || Date.parse(j.timestamp || j.created_at), ...value,
+      key: j.message?.id ? `${j.message.id}:${j.requestId || ""}` : null,
       model: modelName(j.message?.model || j.model, "claude-unknown").replace(/^claude-/, "") });
   }
-  return [...messages.values()];
+  return [...messages.values()].filter((m) => m.input || m.output || m.cache_read || m.cache_write);
 }
 function codexRows(lines) {
   const items = [];
@@ -107,11 +109,16 @@ function add(target, item) {
 function dayKey(t) { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 async function scanTokens({ days = 7, claudeDir = claudeConfigDir, codexDir = codexHome, now = Date.now } = {}) {
   const nowMs = typeof now === "function" ? now() : now;
-  const numDays = [1, 7, 14, 30].includes(Number(days)) ? Number(days) : 7, since = nowMs - numDays * 86400000;
+  const numDays = [1, 7, 14, 30].includes(Number(days)) ? Number(days) : 7;
+  // The period is whole local calendar days ending today, so every bar covers a full day.
+  const today = new Date(nowMs), firstDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() - numDays + 1), since = firstDay.getTime();
   const coverage = { providers: ["claude", "codex"], skipped_files: 0, truncated: false };
   const root = (value) => typeof value === "function" ? value() : value;
-  const items = [...await scan("claude", path.join(root(claudeDir), "projects"), since, nowMs, coverage),
-    ...await scan("codex", path.join(root(codexDir), "sessions"), since, nowMs, coverage)];
+  // Files are newest first, so the copy in the resumed session is the one kept.
+  const seenKeys = new Set();
+  const claude = (await scan("claude", path.join(root(claudeDir), "projects"), since, nowMs, coverage))
+    .filter((i) => !i.key || (!seenKeys.has(i.key) && seenKeys.add(i.key)));
+  const items = [...claude, ...await scan("codex", path.join(root(codexDir), "sessions"), since, nowMs, coverage)];
   const summary = empty(), byProvider = { claude: empty(), codex: empty() }, models = new Map(), sessions = new Map(), daily = new Map();
   const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, label: `${hour}:00`, tokens: 0, turns: 0 }));
   for (const item of items) {
@@ -126,7 +133,12 @@ async function scanTokens({ days = 7, claudeDir = claudeConfigDir, codexDir = co
     hourly[new Date(item.t).getHours()].tokens += item.input + item.output + item.cache_read + item.cache_write;
     hourly[new Date(item.t).getHours()].turns++;
   }
-  summary.cache_efficiency_pct = summary.input + summary.cache_read > 0 ? Math.round(summary.cache_read / (summary.input + summary.cache_read) * 1000) / 10 : 0;
+  const prompt = summary.input + summary.cache_read + summary.cache_write;
+  summary.cache_efficiency_pct = prompt > 0 ? Math.round(summary.cache_read / prompt * 1000) / 10 : 0;
+  for (let day = new Date(firstDay); day <= today; day.setDate(day.getDate() + 1)) {
+    const date = dayKey(day.getTime());
+    if (!daily.has(date)) daily.set(date, { ...empty(), date, label: day.toLocaleDateString(undefined, { month: "short", day: "numeric" }) });
+  }
   summary.avg_turn_tokens = summary.turns ? Math.round(summary.total / summary.turns) : 0;
   return { days: numDays, summary, coverage, by_provider: byProvider,
     by_model: [...models.values()].map(({ days, ...m }) => ({ ...m, cached: m.cache_read, pct: summary.total ? Math.round(m.total / summary.total * 100) : 0,

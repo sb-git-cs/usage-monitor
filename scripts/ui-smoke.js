@@ -95,7 +95,7 @@ async function check(file) {
         coverage: document.getElementById('overviewCoverage').textContent,
         meters: document.querySelectorAll('[role="progressbar"]').length,
       })`);
-      assert.deepEqual(overview, { reporting: "2 of 4", attention: "2 at risk", coverage: "2 unavailable / cached", meters: 4 });
+      assert.deepEqual(overview, { reporting: "2 of 4", attention: "2 at risk", coverage: "2 unavailable or cached", meters: 4 });
       await win.webContents.executeJavaScript(`document.querySelector('.provider').focus()`);
       win.webContents.send("usage://snapshot", snapshot);
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -128,7 +128,7 @@ async function check(file) {
       assert.match(result.text, /5h reaches 100% around (?:[A-Z][a-z]{2} )?\d{1,2}:\d\d [AP]M at this pace \(\+40%\/h\)/, "burn-rate forecast line");
       const gear = await win.webContents.executeJavaScript(`(() => { const b = document.getElementById('settings'); const r = b.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b; })()`);
       assert.equal(gear, true, "the settings button receives clicks");
-      assert.equal(await win.webContents.executeJavaScript(`document.getElementById('pair').textContent`), "Pair");
+      assert.equal(await win.webContents.executeJavaScript(`document.getElementById('pair').getAttribute('aria-label')`), "Pair a phone");
       assert.equal(await win.webContents.executeJavaScript(`document.querySelector('img')`), null, "the QR image is added only while pairing");
       assert.equal(result.update, `v1.1.0 ${hostile} Check now`, "update status renders as text with its action");
       win.webContents.send("usage://update", { current: "1.1.0", status: "downloading", latest: "1.2.0", progress: 42, auto: true });
@@ -155,7 +155,9 @@ async function check(file) {
       assert.equal(result.net, "↓1.5 MB/s↑30 KB/s");
       assert.match(result.text, /25%/);
       assert.doesNotMatch(result.text, /90%/);
-      assert.equal(result.reds, 1);
+      // Claude shows its 25% five-hour window, but its weekly window at 90% turns the chip red.
+      assert.equal(result.reds, 2);
+      assert.match(await win.webContents.executeJavaScript(`document.querySelector('.pct-icon[data-id="claude"]').title`), /Weekly 90%/);
       assert.match(result.text, /CPU42%MEM67%GPU18%DISK9%SPACE84%/);
     }
     for (const [reading, expected] of [
@@ -298,6 +300,7 @@ async function checkSettings() {
       chips_show: { claude: true, codex: true, gemini: true, grok: false, cpu: true, mem: true, gpu: true, disk: true, space: true },
       alert_threshold: 80, notify_on_limit_reached: true, forecast_alerts: true, quiet_hours: { enabled: true, start: "22:00", end: "07:00" },
       auto_update: true, update_channel: "stable" },
+    display: { theme: "system", scale: 100, compact: false, hidden: ["copilot"], order: ["codex", "claude", "gemini", "grok", "cursor", "copilot"] },
     update: { kind: "installer", status: "up-to-date", current: "1.3.0", checked_at: Date.now() - 120000, auto: true },
     accounts: [
       { id: "grok", label: "Grok Build", signed_in: true, account: hostile, login_command: "grok login",
@@ -375,13 +378,34 @@ async function checkSettings() {
     await win.webContents.executeJavaScript(`document.getElementById('combinedSubscription').click()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(patches.at(-1), { subscription_regime: "combined" });
+    const appearance = await win.webContents.executeJavaScript(`({
+      names: [...document.querySelectorAll('#displayProviders .order-name')].map((el) => el.textContent),
+      shown: [...document.querySelectorAll('#displayProviders input')].map((el) => el.checked),
+      firstUp: document.querySelector('#displayProviders .order-btn').disabled,
+      nav: document.querySelectorAll('.nav-link').length,
+      active: document.querySelectorAll('.nav-link.active').length,
+    })`);
+    assert.deepEqual(appearance.names, ["Codex", "Claude Code", "Gemini", "Grok Build", "Cursor", "Copilot"]);
+    assert.deepEqual(appearance.shown, [true, true, true, true, true, false]);
+    assert.equal(appearance.firstUp, true, "the first plan cannot move up");
+    assert.equal(appearance.nav, 9);
+    assert.equal(appearance.active, 1, "the section in view is marked");
+    await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('theme'); s.value = 'light'; s.dispatchEvent(new Event('change')); })()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(patches.at(-1), { display: { theme: "light" } });
+    await win.webContents.executeJavaScript(`document.querySelectorAll('#displayProviders .order-btn')[1].click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(patches.at(-1), { display: { order: ["claude", "codex", "gemini", "grok", "cursor", "copilot"] } });
+    await win.webContents.executeJavaScript(`document.querySelectorAll('#displayProviders input')[5].click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(patches.at(-1), { display: { hidden: [] } });
     const deadline = Date.now() + 5000;
     renderedFrame = null;
     win.webContents.invalidate();
     while (!renderedFrame && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.ok(renderedFrame && !renderedFrame.isEmpty(), "settings must produce a rendered frame");
     fs.writeFileSync(path.join(output, "settings.png"), renderedFrame.toPNG());
-    console.log("settings: rendering, CSP, escaping, account actions, QR and saving passed");
+    console.log("settings: rendering, CSP, escaping, account actions, QR, appearance and saving passed");
   } finally { win.destroy(); }
 }
 
@@ -495,9 +519,10 @@ async function checkInsights() {
     await win.webContents.executeJavaScript(`document.getElementById('snooze').value = '60'; document.getElementById('snooze').dispatchEvent(new Event('change'));`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.ok(data.isSnoozed());
-    await win.webContents.executeJavaScript(`document.getElementById('theme').value = 'light'; document.getElementById('scale').value = '130'; document.getElementById('displayForm').dispatchEvent(new Event('submit', { cancelable: true }));`);
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('theme')`), null, "display preferences live in Settings");
+    cfg.display = displayPrefs({ theme: "light", scale: 130 });
+    await win.webContents.executeJavaScript(`load()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.equal(cfg.display.theme, "light"); assert.equal(cfg.display.scale, 130);
     assert.equal(await win.webContents.executeJavaScript(`document.body.classList.contains('light')`), true);
     win.setSize(620, 780);
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -519,7 +544,7 @@ async function checkInsights() {
     assert.equal(await win.webContents.executeJavaScript(`document.getElementById('tab-battery').classList.contains('active')`), true);
     assert.equal(await win.webContents.executeJavaScript(`document.querySelectorAll('#batteryChart polyline').length`), 2);
     fs.writeFileSync(path.join(output, "battery-insights.png"), (await win.webContents.capturePage()).toPNG());
-    console.log("insights: battery history, keyboard inspection, charts, escaping, snooze, display saving and narrow/large-text layout passed");
+    console.log("insights: battery history, keyboard inspection, charts, escaping, snooze, theme and narrow/large-text layout passed");
   } finally {
     win.destroy();
     for (const channel of ["insights:get", "insights:action", "insights:export"]) ipcMain.removeHandler(channel);

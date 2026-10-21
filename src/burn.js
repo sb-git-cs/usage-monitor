@@ -1,3 +1,5 @@
+const { shownPct } = require("./models");
+
 function slopePerHour(points) {
   if (!points || points.length < 2) return 0;
   const n = points.length;
@@ -17,6 +19,8 @@ function slopePerHour(points) {
   return d > 0 ? (n * sxy - sx * sy) / d : 0;
 }
 
+const NAMES = { claude: "Claude Code", codex: "Codex", gemini: "Gemini", grok: "Grok Build", cursor: "Cursor", copilot: "Copilot", x_subscription: "X Subscription" };
+
 function lookbackMs(kind) {
   return kind === "five_hour" || kind === "daily" ? 3600000 : 21600000;
 }
@@ -27,7 +31,9 @@ function analyzeBurn(seriesList = [], now = Date.now) {
 
   for (const s of seriesList) {
     if (!s || !Array.isArray(s.points) || !s.points.length) continue;
-    const pts = s.points;
+    // Points of earlier reset cycles would turn the drop at the reset into a falling pace.
+    const cycle = s.points.at(-1).cycle;
+    const pts = s.points.filter((p) => p.cycle === cycle);
     const last = pts.at(-1);
     const used = Math.max(0, Math.min(100, last.used));
     const lookback = lookbackMs(s.kind);
@@ -52,11 +58,12 @@ function analyzeBurn(seriesList = [], now = Date.now) {
 
     const willExhaust = runwayHours != null && hoursToReset != null && runwayHours < hoursToReset;
 
+    // Critical means projected to run out before the reset; without a reset time, near the limit and rising.
     let status = "idle";
     if (used >= 100) status = "exhausted";
-    else if (willExhaust || (used >= 85 && burnRate > 1)) status = "critical";
-    else if (burnRate > 5 || used >= 70) status = "elevated";
-    else if (burnRate > 0.2 && (!safeRate || burnRate <= safeRate)) status = "sustainable";
+    else if (willExhaust || (hoursToReset == null && used >= 85 && burnRate > 1)) status = "critical";
+    else if (used >= 70 || (safeRate != null ? burnRate > 0.2 && burnRate >= safeRate * 0.8 : burnRate > 5)) status = "elevated";
+    else if (burnRate > 0.2) status = "sustainable";
     else if (burnRate < -0.2) status = "cooling";
 
     // 24h delta
@@ -111,49 +118,67 @@ function computeHealth(windows = [], events = [], now = Date.now) {
     else if (w.used >= 80) score -= 5;
   }
 
-  const recentAlerts = events.filter((e) => nowMs - e.at <= 86400000);
+  // Only plan warnings count; resumed sessions, data caps and updates say nothing about quota health.
+  const recentAlerts = events.filter((e) => nowMs - e.at <= 86400000 && String(e.title).startsWith("Usage Monitor — "));
   score -= Math.min(15, recentAlerts.length * 5);
   score = Math.max(0, Math.min(100, score));
 
-  let label = "Optimal";
+  let label = "Good";
   let grade = "A";
   if (score < 50) { label = "Critical"; grade = "D"; }
-  else if (score < 75) { label = "Attention Required"; grade = "C"; }
-  else if (score < 90) { label = "Healthy"; grade = "B"; }
+  else if (score < 75) { label = "Needs attention"; grade = "C"; }
+  else if (score < 90) { label = "Fair"; grade = "B"; }
 
   const recommendations = [];
 
   for (const w of windows) {
+    const name = `${NAMES[w.provider] || w.provider} ${w.label}`;
+    const resets = w.hours_to_reset != null ? `It resets in ${duration(w.hours_to_reset)}.` : "Its reset time is not reported.";
+    const rising = w.burn_rate > 0 ? `rising ${w.burn_rate}%/h` : "not rising";
     if (w.status === "exhausted") {
       recommendations.push({
         type: "danger",
-        title: `${w.provider} ${w.label} Quota Exhausted`,
-        body: `100% of the quota is spent. Resets in ${w.hours_to_reset ? `${w.hours_to_reset}h` : "the next cycle"}. Switch to an alternate provider or model.`,
+        title: `${name} is used up`,
+        body: `${resets} Use another plan or model until then.`,
       });
     } else if (w.status === "critical") {
       recommendations.push({
         type: "warning",
-        title: `Rapid Burn on ${w.provider} ${w.label}`,
-        body: `Burning at ${w.burn_rate}%/h. Runway is only ~${w.runway_hours}h, exhausting before reset in ${w.hours_to_reset}h. Safe pace is ${w.safe_rate}%/h.`,
+        title: w.will_exhaust ? `${name} runs out before it resets` : `${name} is close to its limit`,
+        body: w.will_exhaust
+          ? `At ${w.burn_rate}%/h it reaches 100% in about ${duration(w.runway_hours)}. ${resets} A pace of ${w.safe_rate}%/h or less lasts until then.`
+          : `${shownPct(w.used)}% used and ${rising}; about ${duration(w.runway_hours)} left at this pace. ${resets}`,
       });
     } else if (w.status === "elevated") {
       recommendations.push({
         type: "info",
-        title: `Elevated Quota Pace on ${w.provider}`,
-        body: `Usage reached ${Math.round(w.used)}% (+${w.burn_rate}%/h). Keep an eye on long agent tasks.`,
+        title: w.used >= 70 ? `${name} is filling up` : `${name} is near its safe pace`,
+        body: `${shownPct(w.used)}% used and ${rising}.${w.safe_rate != null ? ` A pace of ${w.safe_rate}%/h or less lasts until the reset.` : ""} ${resets}`,
       });
     }
   }
 
   if (!recommendations.length) {
-    recommendations.push({
+    recommendations.push(windows.length ? {
       type: "success",
-      title: "Sustainable Consumption Pace",
-      body: "All monitored windows are operating safely within scheduled reset allowances.",
+      title: "Every window is on a sustainable pace",
+      body: "No current window is projected to reach its limit before it resets.",
+    } : {
+      type: "info",
+      title: "No current readings",
+      body: "Recommendations appear once a plan meter reports usage in this period.",
     });
   }
 
   return { score, label, grade, recommendations };
+}
+
+// 0.4 -> "24m", 3.5 -> "3h 30m", 84 -> "3.5 days".
+function duration(hours) {
+  if (!Number.isFinite(hours)) return "an unknown time";
+  if (hours >= 48) return `${Math.round(hours / 2.4) / 10} days`;
+  const mins = Math.max(1, Math.round(hours * 60));
+  return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}`;
 }
 
 module.exports = {

@@ -178,10 +178,61 @@ test("alerts treat a jittered reset time as the same window and keep only entrie
   const hour = new Date(Date.now() + 3 * 3600000); hour.setUTCMinutes(0, 0, 0);
   const at = (used, ms) => ({ providers: [{ ...provider("claude", used), account_id: "a@b.co", windows: [{ kind: "five_hour", label: "5h", used_pct: used, resets_at: new Date(hour.getTime() + ms).toISOString() }] }] });
   for (const [used, ms] of [[81, 411], [82, -191], [83, 347], [84, -483]]) alerts.evaluate(at(used, ms), { threshold: 80 });
-  assert.deepEqual(shown, ["5h 81/100% used"], "one warning per window, whichever side of the minute the reset lands");
+  assert.deepEqual(shown, ["5h window: 81% used"], "one warning per window, whichever side of the minute the reset lands");
   assert.equal(Object.keys(state.fired).length, 1, "stale and never-warned entries are dropped");
   for (let i = 0; i < 20; i++) alerts.evaluate({ providers: [{ ...provider("codex", 10), windows: [{ kind: "five_hour", label: "5h", used_pct: 10, resets_at: new Date(Date.now() + 3600000 + i * 600000).toISOString() }] }] });
   assert.equal(Object.keys(state.fired).length, 1, "windows below the threshold add nothing to the saved state");
+});
+
+function alertsWith(state) {
+  const shown = [];
+  class Notification { static isSupported() { return true; } constructor(o) { this.o = o; } show() { shown.push(this.o.body); } on() {} }
+  const alerts = load("src/alerts.js", { electron: { Notification }, "./cache": { loadAlertState: () => state.current, saveAlertState: (s) => { state.current = s; } } });
+  return { alerts, shown };
+}
+
+test("a reset on a five-minute bucket edge still warns once", () => {
+  const state = { current: { fired: {} } };
+  const { alerts, shown } = alertsWith(state);
+  const edge = Math.ceil(Date.now() / 300000) * 300000 + 3 * 3600000 + 150000;
+  const at = (jitter) => ({ providers: [{ ...provider("codex", 85), account_id: "acct", windows: [{ kind: "five_hour", label: "5h", used_pct: 85, resets_at: new Date(edge + jitter).toISOString() }] }] });
+  for (const jitter of [-400, 400, -400]) alerts.evaluate(at(jitter), { threshold: 80 });
+  assert.equal(shown.length, 1);
+  assert.equal(Object.keys(state.current.fired).length, 1);
+});
+
+test("one crossing warns once when the account label catches up, the pool reader changes or the app is upgraded", () => {
+  const { digest } = require("../src/insights");
+  const { sharedWeekly, consolidate } = require("../src/subscription");
+  const reset = new Date(Date.now() + 2 * 3600000).toISOString();
+  const win = { kind: "five_hour", label: "5h", used_pct: 85, resets_at: reset };
+  const claude = (label, extra = {}) => ({ ...provider("claude", 85), cache_scope: "b".repeat(32), account_id: label, windows: [win], ...extra });
+
+  const state = { current: { fired: {} } };
+  const switched = alertsWith(state);
+  // The poller already reads account B; the label from the accounts cache still says A for a minute.
+  switched.alerts.evaluate({ providers: [claude("a@example.com")] }, { threshold: 80 });
+  switched.alerts.evaluate({ providers: [claude("b@example.com")] }, { threshold: 80 });
+  assert.equal(switched.shown.length, 1, "account switch");
+
+  const end = new Date(Date.now() + 86400000).toISOString();
+  const pool = sharedWeekly({ creditUsagePercent: 90, currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end }, productUsage: [{ product: "GrokBuild" }, { product: "Cursor" }] });
+  const reader = (id, st = "ok") => ({ ...provider(id), status: { state: st }, account_id: `${id}-user`, cache_scope: id[0].repeat(32), windows: [], shared_weekly: pool, subscription_regime: "combined" });
+  const flip = alertsWith({ current: { fired: {} } });
+  flip.alerts.evaluate({ providers: consolidate([reader("grok"), reader("cursor")], "combined") }, { threshold: 80 });
+  flip.alerts.evaluate({ providers: consolidate([reader("grok", "stale"), reader("cursor")], "combined") }, { threshold: 80 });
+  assert.equal(flip.shown.length, 1, "pool reader change");
+
+  // Entries saved before the key used the scope: the account label, and the regime on every plan.
+  const bucket = Math.round(Date.parse(reset) / 300000) * 5;
+  for (const [prefix, regime] of [["", "legacy"], ["combined|", "combined"]]) {
+    const oldKey = `${prefix}claude|five_hour|5h|${bucket}|${digest("a@example.com")}`;
+    const upgraded = { current: { fired: { [oldKey]: { crossed80: true, crossed100: false, until: reset } } } };
+    const after = alertsWith(upgraded);
+    after.alerts.evaluate({ subscription_regime: regime, providers: [claude("a@example.com", { subscription_regime: "legacy" })] }, { threshold: 80 });
+    assert.equal(after.shown.length, 0, `already warned (${regime})`);
+    assert.deepEqual(Object.keys(upgraded.current.fired), [`claude|five_hour|5h|${bucket}|${digest("b".repeat(32))}`], "moved to the new key");
+  }
 });
 
 test("rate limits honour Retry-After, otherwise back off further with each refusal, and recover", async () => {

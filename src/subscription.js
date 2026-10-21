@@ -35,7 +35,8 @@ function consolidate(providers, selected) {
     pool_reader: base?.id || "grok",
     account: base?.account, account_id: base?.account_id,
     cache_scope: base?.cache_scope,
-    status: valid ? base.status : { state: base?.status?.state === "stale" ? "stale" : "unknown",
+    // A sign-out or a failed read says what to do; only a missing pool gets the generic hint.
+    status: valid || ["logged_out", "not_installed", "fetch_failed"].includes(base?.status?.state) ? base.status : { state: base?.status?.state === "stale" ? "stale" : "unknown",
       hint: base?.status?.state === "stale" ? "Stale reading · shared weekly usage unavailable. Open the usage dashboard." : "Shared weekly usage unavailable. Open the usage dashboard." },
     windows: [...(valid ? [weekly] : [{ kind: "weekly", label: "Weekly", used_pct: null, remaining_pct: null, resets_at: null }]), ...(base?.windows || []).filter((w) => w.kind === "credits")
       .map((w) => ({ ...w, label: w.label.replace(/^Credits/, "Additional Usage") }))],

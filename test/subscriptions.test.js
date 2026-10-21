@@ -117,6 +117,21 @@ test("copilot meters included allowances and skips an empty premium bucket", asy
   assert.equal((await denied.fetchUsage()).status.state, "logged_out");
 });
 
+test("copilot names the gh login from hosts.yml, so each GitHub account keeps its own cache and history", () => {
+  let text = `github.com:\r\n    users:\r\n        octocat:\r\n            oauth_token: ${FAKE_TOKEN}\r\n    git_protocol: https\r\n    user: octocat\r\n    oauth_token: ${FAKE_TOKEN}\r\n`;
+  const adapter = load("src/adapters/copilot.js", {
+    fs: { readFileSync: (file) => { if (file !== "second.yml") throw new Error("missing"); return text; } },
+    "../paths": { ghHosts: () => ["first.yml", "second.yml"], cliOnPath: () => false, fileExists: () => false },
+    "../github-auth": { token: async () => { throw new Error("the login never comes from the token"); } },
+    "../accounts": { observe() {} },
+  });
+  assert.equal(adapter.accountRef(), "octocat");
+  text = text.replace("user: octocat", "user: hubot");
+  assert.equal(adapter.accountRef(), "hubot", "gh auth switch is a different account");
+  text = `github.com:\n    oauth_token: ${FAKE_TOKEN}\n`;
+  assert.equal(adapter.accountRef(), null, "no login: unidentified");
+});
+
 test("cursor and copilot stay off the snapshot until they are installed", async () => {
   const ids = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
   const mocks = { "./cache": { loadSnapshot: () => null, saveSnapshot() {} } };
@@ -140,6 +155,21 @@ test("Cursor and Copilot reject missing and malformed quota numbers", () => {
   }
   assert.equal(cursor.provider(null, { planUsage: { totalPercentUsed: "0" } }).windows[0].used_pct, 0);
   assert.equal(copilot.quotaWindow({ entitlement: "200", remaining: "150" }, "Chat", null).used_pct, 25);
+});
+
+test("Copilot and Cursor readings with nothing metered stay current and say so", async () => {
+  const copilot = load("src/adapters/copilot.js", {
+    "../paths": { ghHosts: () => [], cliOnPath: () => false, fileExists: () => false },
+    "../github-auth": { token: async () => FAKE_TOKEN, forget() {} },
+    "../accounts": { observe() {} },
+    "../http": { getJson: async () => ({ status: 200, json: { quota_snapshots: { chat: { unlimited: true }, completions: { unlimited: true }, premium_interactions: { unlimited: true } } } }) },
+  });
+  const cursor = load("src/adapters/cursor.js", {}, ["provider"]);
+  for (const result of [await copilot.fetchUsage(), cursor.provider(null, {})]) {
+    assert.deepEqual(result.status, { state: "ok", hint: "No metered limits" });
+    assert.deepEqual(result.windows, []);
+  }
+  assert.deepEqual(cursor.provider(null, { planUsage: { totalPercentUsed: 5 } }).status, { state: "ok" });
 });
 
 test("Cursor ignores an out-of-range billing date without losing valid usage", () => {

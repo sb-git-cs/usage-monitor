@@ -94,6 +94,16 @@ test("cached shared readings stay stale and never notify; fresh shared pool aler
   assert.equal(shown.length, 1);
 });
 
+test("the combined card passes on a sign-out or a failed read instead of the generic hint", () => {
+  const signedOut = (id, hint) => ({ ...provider(id), status: { state: "logged_out", hint }, windows: [] });
+  const x = consolidate([signedOut("grok", "Run: grok login"), signedOut("cursor", "Sign in to Cursor")], "combined")[0];
+  assert.deepEqual(x.status, { state: "logged_out", hint: "Run: grok login" });
+  const failed = consolidate([{ ...provider("grok"), status: { state: "fetch_failed", message: "HTTP 500" }, windows: [] }], "combined")[0];
+  assert.deepEqual(failed.status, { state: "fetch_failed", message: "HTTP 500" });
+  assert.equal(currentWindow(failed), null);
+  assert.match(consolidate([provider("grok")], "combined")[0].status.hint, /^Shared weekly usage unavailable/, "a reading without the pool");
+});
+
 test("cached Additional Usage stays visibly stale when the weekly pool expires", () => {
   const grok = { ...provider("grok"), status: { state: "stale" }, source: "cache",
     shared_weekly: { kind: "weekly", label: "Weekly", used_pct: 42, resets_at: "2020-01-01T00:00:00Z" },
@@ -122,9 +132,22 @@ test("poll caches cannot cross a regime, account selection or signed-in account"
     const cfg = change === "regime" ? { subscription_regime: "combined" } : change === "account" ? { accounts: { claude: "account-b" } } : {};
     if (change === "sign-in") p.signIn("user-b");
     const snap = await p.poller.pollOnce(cfg);
-    assert.equal(snap.providers[0].status.state, "fetch_failed", change);
-    assert.equal(snap.providers[0].windows.length, 0);
+    // The regime only applies to Grok and Cursor.
+    const reading = snap.providers.find((x) => x.id === (change === "regime" ? "grok" : "claude"));
+    assert.equal(reading.status.state, "fetch_failed", change);
+    assert.equal(reading.windows.length, 0);
   }
+});
+
+test("switching the X Subscription setting keeps the other plans' cache, history and Insights keys", async () => {
+  const p = polling();
+  const legacy = await p.poller.pollOnce({ subscription_regime: "legacy" }); p.fail();
+  const combined = await p.poller.pollOnce({ subscription_regime: "combined" });
+  const claude = (snap) => snap.providers.find((x) => x.id === "claude");
+  assert.equal(claude(combined).status.state, "stale", "the last Claude reading survives the switch");
+  assert.equal(claude(combined).cache_scope, claude(legacy).cache_scope);
+  assert.equal(claude(combined).subscription_regime, "legacy");
+  assert.equal(combined.providers.find((x) => x.id === "grok").subscription_regime, "combined");
 });
 
 test("a refreshed token keeps its account's cache scope; tokens never key the cache", async () => {

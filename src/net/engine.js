@@ -30,6 +30,19 @@ function periodStart(period, now) {
   return null;
 }
 
+// Buckets of an hour or more follow the local calendar, so a DST change moves no boundary.
+function calendarBuckets(size) {
+  const days = size / 1440, perDay = 24 / (size / 60);
+  const dayNumber = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;
+  if (size >= 1440) {
+    return { indexOf: (ms) => Math.floor(dayNumber(new Date(ms)) / days), startOf: (i) => new Date(1970, 0, 1 + i * days).getTime() };
+  }
+  return {
+    indexOf: (ms) => { const d = new Date(ms); return dayNumber(d) * perDay + Math.floor(d.getHours() / (24 / perDay)); },
+    startOf: (i) => { const day = Math.floor(i / perDay); return new Date(1970, 0, 1 + day, (i - day * perDay) * (24 / perDay)).getTime(); },
+  };
+}
+
 class Engine extends EventEmitter {
   constructor({ store, settings, capabilities = {}, now = Date.now }) {
     super();
@@ -69,9 +82,14 @@ class Engine extends EventEmitter {
     const seen = new Set();
     for (const app of (sample && sample.apps) || []) {
       const key = app && typeof app.key === "string" && app.key ? app.key : null;
-      if (!key || !this.tracks(key)) continue;
+      if (!key) continue;
       const rx = amount(app.rx);
       const tx = amount(app.tx);
+      // Focusing another app only stops recording; an app's cap keeps counting.
+      if (!this.tracks(key)) {
+        if (!this.ignored.has(key) && (rx || tx)) this.countCap(key, rx + tx, ts);
+        continue;
+      }
       let live = this.live.get(key);
       if (!live && !rx && !tx) continue;
       if (!live) {
@@ -149,7 +167,7 @@ class Engine extends EventEmitter {
   rollCap(key, rule, now) {
     const cap = rule.cap;
     const start = periodStart(cap.period, now);
-    if (start == null || cap.period_start >= start) return;
+    if (start == null || cap.period_start === start) return;
     const wasEnforced = cap.enforced;
     cap.used_bytes = 0;
     cap.period_start = start;
@@ -257,7 +275,9 @@ class Engine extends EventEmitter {
     const minutes = rangeMinutes(rangeId);
     const since = minutes ? nowMin - minutes + 1 : 0;
     const earliest = this.store.earliestMinute();
-    const covered = earliest == null ? 0 : Math.max(1, nowMin - Math.max(earliest, since) + 1);
+    const retained = nowMin - this.settings.retention_minutes + 1;
+    const coveredFrom = (keep) => earliest == null ? 0 : Math.max(1, nowMin - Math.max(earliest, since, keep ? 0 : retained) + 1);
+    const covered = coveredFrom(true);
     const fresh = now - this.lastSampleAt <= STALE_RATE_MS;
     const rows = new Map();
     const blank = (key, name, path) => ({ key, name, path, rx_rate: 0, tx_rate: 0, pids: 0, rx: 0, tx: 0 });
@@ -280,11 +300,13 @@ class Engine extends EventEmitter {
     for (const row of rows.values()) {
       const rule = this.settings.rules[row.key];
       row.total = row.rx + row.tx;
-      row.avg_per_min = covered ? row.total / covered : 0;
       row.can_block = !!(this.capabilities.block && row.path && /\.exe$/i.test(row.path));
       row.blocked = this.desiredBlocked(rule);
       row.block_pending = row.can_block && row.blocked !== this.actualBlocked.has(String(row.path).toLowerCase());
       row.keep_forever = !!(rule && rule.keep_forever);
+      // Rows that are pruned by retention only span the retained time.
+      const rowCovered = coveredFrom(row.keep_forever);
+      row.avg_per_min = rowCovered ? row.total / rowCovered : 0;
       row.record_connections = !!(rule && rule.record_connections);
       row.focused = this.focused.has(row.key);
       row.cap = rule && rule.cap ? { ...rule.cap } : null;
@@ -343,11 +365,12 @@ class Engine extends EventEmitter {
     const size = BUCKETS.find((b) => Math.ceil(span / b) <= maxBars) || BUCKETS[BUCKETS.length - 1];
     // Align buckets to local time so hourly and daily bars start on the hour and at midnight.
     const offset = -new Date(now).getTimezoneOffset();
-    const bucketOf = (m) => Math.floor((m + offset) / size);
+    const calendar = size >= 60 ? calendarBuckets(size) : null;
+    const bucketOf = calendar ? (m) => calendar.indexOf(m * 60000) : (m) => Math.floor((m + offset) / size);
     const first = bucketOf(start);
     const last = bucketOf(nowMin);
     const buckets = [];
-    for (let b = first; b <= last; b++) buckets.push({ start_ms: (b * size - offset) * 60000, rx: 0, tx: 0 });
+    for (let b = first; b <= last; b++) buckets.push({ start_ms: calendar ? calendar.startOf(b) : (b * size - offset) * 60000, rx: 0, tx: 0 });
     for (const p of points) {
       const i = bucketOf(p.minute) - first;
       if (i < 0 || i >= buckets.length) continue;
@@ -420,6 +443,10 @@ class Engine extends EventEmitter {
     if (prev && prev.period === next.period) {
       next.used_bytes = prev.used_bytes;
       next.period_start = prev.period_start;
+    } else if (periodStart(period, now) != null) {
+      // A new cap counts what the app already used in this period.
+      const seen = this.store.totals(minuteOf(next.period_start)).find((t) => t.key === key);
+      if (seen) next.used_bytes = seen.rx + seen.tx;
     }
     rule.cap = next;
     if (prev && prev.enforced && next.used_bytes < next.limit_bytes) this.syncBlock(key);
@@ -519,4 +546,4 @@ class Engine extends EventEmitter {
   }
 }
 
-module.exports = { Engine, periodStart, minuteOf, BUCKETS };
+module.exports = { Engine, periodStart, minuteOf, calendarBuckets, BUCKETS };

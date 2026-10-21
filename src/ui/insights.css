@@ -464,6 +464,11 @@ select:focus, input:focus {
 
 .rec-item.warning .rec-dot { background: var(--amber); }
 .rec-item.critical .rec-dot { background: var(--rose); }
+.rec-item.danger .rec-dot { background: var(--rose); }
+.rec-item.success .rec-dot { background: var(--emerald); }
+.rec-text { min-width: 0; }
+.rec-title { display: block; font-size: 12.5px; font-weight: 600; }
+.rec-body { margin: 2px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 
 /* ==========================================================================
    Summary KPI Grid
@@ -474,7 +479,7 @@ select:focus, input:focus {
   gap: 10px;
 }
 
-.summary-card, .summary div {
+.summary-card, .summary > div {
   background: var(--bg-subtle);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

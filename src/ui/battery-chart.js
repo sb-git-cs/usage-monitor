@@ -16,10 +16,12 @@ window.drawBatteryChart = function (root, points, detail, compact = false) {
   const first = points[0].t, span = Math.max(60000, points.at(-1).t - first);
   const x = (p) => 40 + (p.t - first) / span * 745;
   const bottom = compact ? 65 : 145, height = compact ? 55 : 125;
+  // The compact chart is drawn at about 70% of its size, so its labels are larger and shorter.
+  const font = compact ? 17 : 11;
   const y = (p) => bottom - p.percent / 100 * height;
-  for (const pct of [0, 50, 100]) {
+  for (const pct of compact ? [0, 100] : [0, 50, 100]) {
     const row = bottom - pct / 100 * height;
-    svg.append(make("line", { x1: 40, x2: 785, y1: row, y2: row, stroke: "currentColor", opacity: ".15" }), make("text", { x: 4, y: row + 4, fill: "currentColor", "font-size": 11 }, `${pct}%`));
+    svg.append(make("line", { x1: 40, x2: 785, y1: row, y2: row, stroke: "currentColor", opacity: ".15" }), make("text", { x: 0, y: row + font / 3, fill: "currentColor", opacity: compact ? ".7" : "1", "font-size": font }, `${pct}%`));
   }
   let group = [];
   function flush() {
@@ -35,8 +37,10 @@ window.drawBatteryChart = function (root, points, detail, compact = false) {
     group.push(p);
   }
   flush();
-  svg.append(make("text", { x: 40, y: bottom + 29, fill: "currentColor", "font-size": 11 }, new Date(first).toLocaleString()),
-    make("text", { x: 785, y: bottom + 29, fill: "currentColor", "font-size": 11, "text-anchor": "end" }, new Date(points.at(-1).t).toLocaleString()));
+  const stamp = (t) => compact && new Date(t).toDateString() === new Date().toDateString()
+    ? new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : new Date(t).toLocaleString();
+  svg.append(make("text", { x: 40, y: bottom + 29, fill: "currentColor", opacity: compact ? ".7" : "1", "font-size": font }, stamp(first)),
+    make("text", { x: 785, y: bottom + 29, fill: "currentColor", opacity: compact ? ".7" : "1", "font-size": font, "text-anchor": "end" }, stamp(points.at(-1).t)));
   const dot = make("circle", { r: 4, fill: "currentColor" });
   svg.append(dot);
   const at = Number.isFinite(kept) ? points.findIndex((p) => p.t >= kept) : -1;

@@ -89,11 +89,13 @@ const NetChart = (() => {
         band.setAttribute("x", PAD.left + i * slot);
         band.setAttribute("visibility", "visible");
         if (!tip) return;
-        const end = p.start_ms + bucket * 60000;
+        // Day buckets can be 23 or 25 hours long, so the end comes from the next bucket and the last minute names the last day.
+        const next = points[i + 1];
+        const end = (next ? next.start_ms : p.start_ms + bucket * 60000) - (bucket >= 1440 ? 60000 : 0);
         tip.replaceChildren();
         const head = document.createElement("div");
         head.className = "tip-head";
-        head.textContent = bucket === 1 ? timeLabel(p.start_ms, 1, multiDay) : `${timeLabel(p.start_ms, bucket, multiDay)} – ${timeLabel(end, bucket, false)}`;
+        head.textContent = bucket === 1 || bucket === 1440 ? timeLabel(p.start_ms, bucket, multiDay) : `${timeLabel(p.start_ms, bucket, multiDay)} – ${timeLabel(end, bucket, false)}`;
         tip.appendChild(head);
         for (const [cls, label, value] of [["rx", "Download", p.rx], ["tx", "Upload", p.tx], [null, "Total", p.rx + p.tx]]) {
           const row = document.createElement("div");

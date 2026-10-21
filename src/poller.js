@@ -65,13 +65,16 @@ async function collect(cfg) {
 
   const results = await Promise.all(
     PROVIDERS.map(async ({ id }) => {
+      // The X Subscription setting only changes what Grok and Cursor read; other plans keep their
+      // cache and history when it is switched.
+      const selected = ["grok", "cursor"].includes(id) ? regime(cfg.subscription_regime) : "legacy";
       let scope;
       try {
         // The signed-in account, from the tool's own files. A token never keys the cache: it changes
         // on every refresh, which would split one account's readings and history.
         const account = adapters[id].accountRef
           ? await withTimeout(Promise.resolve().then(() => adapters[id].accountRef(cfg)), ACCOUNT_TIMEOUT_MS, id).catch(() => null) : null;
-        scope = createHash("sha256").update(JSON.stringify([id, regime(cfg.subscription_regime), cfg.accounts?.[id] || "", account || "unidentified"])).digest("hex").slice(0, 32);
+        scope = createHash("sha256").update(JSON.stringify([id, selected, cfg.accounts?.[id] || "", account || "unidentified"])).digest("hex").slice(0, 32);
         const cached = previous?.cached_readings?.[`${id}|${scope}`] || (prevById[id]?.cache_scope === scope ? prevById[id] : null);
         if (backoff[scope] && Date.now() < backoff[scope].until) {
           if (cached && cached.windows.length) {
@@ -92,7 +95,7 @@ async function collect(cfg) {
         const fresh = await withTimeout(pending[id], ADAPTER_TIMEOUT_MS, id);
         delete pending[id];
         fresh.cache_scope = scope;
-        fresh.subscription_regime = regime(cfg.subscription_regime);
+        fresh.subscription_regime = selected;
         if (fresh && fresh._rateLimited) {
           const strikes = (backoff[scope]?.strikes || 0) + 1;
           backoff[scope] = { strikes, until: Date.now() + backoffMs(fresh._retryAfter, strikes) };
@@ -113,7 +116,7 @@ async function collect(cfg) {
           fetched_at: new Date().toISOString(),
           source: "none",
           cache_scope: scope,
-          subscription_regime: regime(cfg.subscription_regime),
+          subscription_regime: selected,
         };
         return mergeWithCache(failed, scope ? previous?.cached_readings?.[`${id}|${scope}`] || (prevById[id]?.cache_scope === scope ? prevById[id] : null) : null);
       }

@@ -13,6 +13,7 @@ test("overview counts providers once and selects the earliest future reset", () 
   ], 80, now);
   assert.equal(result.reporting, 3);
   assert.equal(result.attention, 2);
+  assert.equal(result.atRisk.length, 2);
   assert.equal(result.nextReset.at, now + 10 * 60000);
 });
 
@@ -23,7 +24,7 @@ test("cached, failed and unknown readings never drive current advice", () => {
     provider("ok", [{ used_pct: null }]),
     provider("logged_out", []),
   ], 80, now);
-  assert.deepEqual(result, { reporting: 0, attention: 0, unavailable: 4, nextReset: null });
+  assert.deepEqual(result, { reporting: 0, attention: 0, unavailable: 4, nextReset: null, atRisk: [] });
 });
 
 test("custom threshold and expired or invalid forecasts are respected", () => {
@@ -33,5 +34,5 @@ test("custom threshold and expired or invalid forecasts are respected", () => {
     provider("ok", [{ used_pct: 10, forecast_at: "invalid" }]),
   ], 60, now);
   assert.equal(result.attention, 1);
-  assert.deepEqual(summarize([], 80, now), { reporting: 0, attention: 0, unavailable: 0, nextReset: null });
+  assert.deepEqual(summarize([], 80, now), { reporting: 0, attention: 0, unavailable: 0, nextReset: null, atRisk: [] });
 });

@@ -18,7 +18,7 @@ let batteryPoll;
 function batteryView() { return batteryHistory ? batteryHistory.view(1 / 24) : { latest: null, points: [] }; }
 const sessions = require("./sessions");
 const { History } = require("./history");
-const { Insights } = require("./insights");
+const { Insights, displayPrefs } = require("./insights");
 const insightsWindow = require("./insights-window");
 const { PhoneLink } = require("./phone");
 const accounts = require("./accounts");
@@ -324,7 +324,7 @@ function restoreVisibility() {
     applyActivity();
   }
   if (!chips || chips.isDestroyed()) return;
-  sendChipsLoading();
+  if (!chips.isVisible() || !latest) sendChipsLoading();
   placeChips();
   chips.setOpacity(1);
   chips.showInactive();
@@ -415,6 +415,7 @@ function refreshTrayMenu() {
 // resumed). The chips' system readings pause while the screen is locked or the strip is hidden.
 const IDLE_SECS = 300;
 let screenLocked = false;
+let suspended = false;
 function applyActivity() {
   if (!cfg) return;
   let idle = false;
@@ -423,21 +424,27 @@ function applyActivity() {
   } catch {
     /* idle time unavailable */
   }
-  const away = screenLocked || idle;
+  const away = screenLocked || suspended || idle;
   if (poll) poll.setAway(away);
   if (sessionWatch) sessionWatch.setAway(away);
-  if (systemPoll) systemPoll.setPaused(screenLocked || !!cfg.chips_hidden);
+  // A paired phone shows this computer's load, so sampling continues for it while locked.
+  const phoneReads = !!(cfg.phone && cfg.phone.enabled && (cfg.phone.devices || []).length);
+  if (systemPoll) systemPoll.setPaused(suspended || (!phoneReads && (screenLocked || !!cfg.chips_hidden)));
 }
 
 function watchActivity() {
-  const set = (locked) => () => {
+  const lock = (locked) => () => {
     screenLocked = locked;
     applyActivity();
   };
-  powerMonitor.on("lock-screen", set(true));
-  powerMonitor.on("suspend", set(true));
-  powerMonitor.on("unlock-screen", set(false));
-  powerMonitor.on("resume", set(false));
+  const sleep = (asleep) => () => {
+    suspended = asleep;
+    applyActivity();
+  };
+  powerMonitor.on("lock-screen", lock(true));
+  powerMonitor.on("suspend", sleep(true));
+  powerMonitor.on("unlock-screen", lock(false));
+  powerMonitor.on("resume", sleep(false));
   setInterval(applyActivity, 30_000);
   applyActivity();
 }
@@ -446,6 +453,7 @@ function setChipsHidden(hidden) {
   cfg.chips_hidden = !!hidden;
   config.save(cfg);
   applyActivity();
+  sendSettings();
   if (!chips || chips.isDestroyed()) return;
   if (cfg.chips_hidden || taskbarConcealed) chips.hide();
   else {
@@ -456,6 +464,7 @@ function setChipsHidden(hidden) {
 
 function setChipsDocked(docked, opts = {}) {
   cfg.chips_docked = !!docked;
+  sendSettings();
   if (!cfg.chips_docked) taskbarConcealed = false;
   if (!cfg.chips_docked && chips) {
     const pos = chips.getPosition();
@@ -563,7 +572,7 @@ function sendFlyoutState() {
   flyout.webContents.send("usage://flyout-state", {
     docked: !!cfg.flyout_docked,
     pinned: !!cfg.flyout_pinned,
-    canDock: true,
+    canDock: IS_WINDOWS,
   });
 }
 
@@ -608,6 +617,8 @@ function setFlyoutDocked(docked, opts = {}) {
     flyout.setAlwaysOnTop(true, "pop-up-menu");
     if (!flyout.isVisible()) flyout.showInactive();
   } else placeFlyoutRight();
+  // Kept open: desktop clicks must reach other apps. Not kept: the overlay hides the panel on the next click.
+  if (flyout.isVisible()) sendPairing();
 }
 
 function setFlyoutPinned(pinned) {
@@ -678,14 +689,7 @@ function setPollInterval(secs) {
   cfg.poll_interval_secs = next;
   config.save(cfg);
   if (poll) poll.setIntervalSecs(next);
-  broadcastInterval();
-}
-
-function broadcastInterval() {
-  const secs = cfg.poll_interval_secs || 5;
-  for (const win of [flyout, chips]) {
-    if (win && !win.isDestroyed()) win.webContents.send("usage://interval", secs);
-  }
+  sendSettings();
 }
 
 // Live network speed for the chips (always) and the flyout (only while it is open).
@@ -735,6 +739,7 @@ function buildMenu() {
         config.save(cfg);
         broadcastNet();
         refreshTrayMenu();
+        sendSettings();
       },
     },
     { label: "Refresh now", click: () => poll && poll.refresh() },
@@ -886,6 +891,12 @@ function prefs() {
   return { alert_threshold: cfg.alert_threshold, chips_show: cfg.chips_show, display: cfg.display, dark: nativeTheme.shouldUseDarkColors };
 }
 
+// The display theme drives every window: "system" follows the OS, light and dark override it.
+function applyTheme() {
+  const source = ["light", "dark"].includes(cfg && cfg.display && cfg.display.theme) ? cfg.display.theme : "system";
+  if (nativeTheme.themeSource !== source) nativeTheme.themeSource = source;
+}
+
 function broadcastPrefs() {
   for (const win of [flyout, chips]) {
     if (win && !win.isDestroyed()) win.webContents.send("usage://prefs", prefs());
@@ -902,6 +913,7 @@ function settingsView() {
     intervals: config.ALLOWED_INTERVALS,
     thresholds: config.ALERT_THRESHOLDS,
     settings: Object.fromEntries(keys.map((k) => [k, cfg[k]])),
+    display: cfg.display,
     update: updater.getState(),
     phone: phone ? withQr(phone.status()) : null,
     accounts: accounts.list(),
@@ -1034,8 +1046,16 @@ function withQr(status) {
   return status;
 }
 
+let pairingExpiry = null;
 function sendPairing() {
   const status = phone ? withQr(phone.status()) : null;
+  clearTimeout(pairingExpiry);
+  if (status && status.pairing) {
+    pairingExpiry = setTimeout(() => {
+      sendPairing();
+      sendSettings();
+    }, Math.max(0, status.pairing.expires_at - Date.now()) + 500);
+  }
   if (flyout && !flyout.isDestroyed()) flyout.webContents.send("usage://pairing", status);
   if (!flyout || flyout.isDestroyed() || !flyout.isVisible()) return;
   // A code on screen has to stay visible while the phone is scanned, so clicks on the
@@ -1065,7 +1085,7 @@ function openSettings() {
     return;
   }
   settingsWin = new BrowserWindow({
-    width: 640,
+    width: 900,
     height: 760,
     minWidth: 520,
     minHeight: 480,
@@ -1118,6 +1138,10 @@ function applySettings(patch) {
   if (patch.chips_show && typeof patch.chips_show === "object") {
     for (const key of config.CHIP_KEYS) if (bool(patch.chips_show[key]) !== null) cfg.chips_show[key] = patch.chips_show[key];
   }
+  if (patch.display && typeof patch.display === "object") {
+    cfg.display = displayPrefs({ ...cfg.display, ...patch.display });
+    applyTheme();
+  }
   if (config.ALERT_THRESHOLDS.includes(Number(patch.alert_threshold))) cfg.alert_threshold = Number(patch.alert_threshold);
   if (bool(patch.notify_on_limit_reached) !== null) cfg.notify_on_limit_reached = patch.notify_on_limit_reached;
   if (bool(patch.forecast_alerts) !== null) cfg.forecast_alerts = patch.forecast_alerts;
@@ -1144,7 +1168,7 @@ function applySettings(patch) {
     cfg.phone.port = port;
     phoneChanged = true;
   }
-  config.save(cfg);
+  const saved = config.save(cfg);
   if (updatesChanged) updater.settingChanged();
   if (phoneChanged && phone) phone.apply();
   broadcastPrefs();
@@ -1152,7 +1176,7 @@ function applySettings(patch) {
   refreshTrayMenu();
   const view = settingsView();
   sendSettings();
-  return view;
+  return saved === false ? { ...view, error: "Could not save settings. Check available space and folder permissions." } : view;
 }
 
 // What a paired phone receives: the plan meters (with forecasts) and a few live readings.
@@ -1285,6 +1309,7 @@ function createWindows() {
   flyout.on("closed", () => {
     flyout = null;
   });
+  flyout.on("session-end", persistOnce);
 
   createChips();
 }
@@ -1383,7 +1408,7 @@ function wireIpc() {
   ipcMain.handle("usage://get-flyout-state", () => ({
     docked: !!(cfg && cfg.flyout_docked),
     pinned: !!(cfg && cfg.flyout_pinned),
-    canDock: true,
+    canDock: IS_WINDOWS,
   }));
   ipcMain.on("usage://flyout-resize", (_e, h, w) => {
     if (!flyout || !Number.isFinite(h) || !Number.isFinite(w)) return;
@@ -1397,8 +1422,6 @@ function wireIpc() {
       shell.openExternal(url).catch((err) => console.error("open usage failed", err.message));
     }
   });
-  ipcMain.handle("usage://get-interval", () => cfg.poll_interval_secs || 5);
-  ipcMain.on("usage://set-interval", (_e, secs) => setPollInterval(secs));
   ipcMain.on("usage://chips-resize", (_e, w, h) => {
     if (!chips || chips.isDestroyed() || !Number.isFinite(w) || !Number.isFinite(h)) return;
     const width = Math.max(96, Math.min(720, Math.round(w)));
@@ -1416,6 +1439,8 @@ function wireIpc() {
       else chips.setPosition(cx, cy + ch - height);
       placingChips = false;
       placeChipsDocked();
+    } else if (!cfg.chips_docked && !cfg.chips_hidden && !dragState) {
+      placeChipsFloating();
     }
   });
   ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
@@ -1469,10 +1494,10 @@ function wireIpc() {
   ipcMain.on("usage://update-action", (e) => {
     if (!fromFlyout(e)) return;
     ignoreFlyoutBlur = true;
-    updater.action();
-    setTimeout(() => {
+    // The check's result dialog belongs to the flyout; keep it open until the dialog closes.
+    Promise.resolve(updater.action()).catch(() => {}).finally(() => setTimeout(() => {
       ignoreFlyoutBlur = false;
-    }, 300);
+    }, 300));
   });
 }
 
@@ -1543,11 +1568,12 @@ if (!gotLock) {
     }
     cfg.autostart = autostart.apply(cfg.autostart !== false);
     config.save(cfg);
+    applyTheme();
     insights = new Insights();
     batteryHistory = new batteryUsage.BatteryHistory();
     insightsWindow.init({ cfg, insights, battery: batteryHistory, snapshot: () => latest, network: () => netUsage.summary(),
       sessions: () => latestSessions,
-      save: () => { const saved = config.save(cfg); broadcastPrefs(); if (latest) broadcast(latest); return saved; },
+      save: () => { const saved = config.save(cfg); applyTheme(); broadcastPrefs(); sendSettings(); if (latest) broadcast(latest); return saved; },
       refresh: () => poll && poll.refresh(), openNetwork: () => netUsage.openWindow(), openSettings,
       // The combined X Subscription signs in through whichever tool reads its shared pool.
       login: (id) => beginAccountSwitch(id === "x_subscription" ? (latest?.providers.find((p) => p.id === id)?.pool_reader || "grok") : id) });
@@ -1573,6 +1599,7 @@ if (!gotLock) {
           cfg.autostart = autostart.apply(enabled);
           config.save(cfg);
           refreshTrayMenu();
+          sendSettings();
         },
       });
       if (process.argv.includes("--network")) netUsage.openWindow();
@@ -1612,7 +1639,6 @@ if (!gotLock) {
     });
 
     flyout.webContents.on("did-finish-load", () => {
-      flyout.webContents.send("usage://interval", cfg.poll_interval_secs || 5);
       sendFlyoutState();
       flyout.webContents.send("usage://update", updater.getState());
       flyout.webContents.send("usage://prefs", prefs());
@@ -1714,8 +1740,7 @@ app.on("window-all-closed", (e) => {
   e.preventDefault();
 });
 
-app.on("before-quit", () => {
-  app.isQuitting = true;
+function persistAll() {
   clearTimeout(saveTimer);
   if (cfg) {
     try { config.save(cfg); } catch (err) { console.error("config write failed", err.message); }
@@ -1731,4 +1756,14 @@ app.on("before-quit", () => {
   netUsage.shutdown();
   if (taskbarLayout.stopTaskbarWatch) taskbarLayout.stopTaskbarWatch();
   if (tray && !tray.isDestroyed()) tray.destroy();
-});
+}
+
+let persisted = false;
+function persistOnce() {
+  app.isQuitting = true;
+  if (persisted) return;
+  persisted = true;
+  persistAll();
+}
+
+app.on("before-quit", persistOnce);

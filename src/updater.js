@@ -36,6 +36,8 @@ const TIMING = {
 let ctx = null;
 let state = null;
 let checking = null;
+// Set when the user asked for the check, so its download installs even with automatic updates off.
+let userAsked = false;
 let failures = 0;
 let lastAttempt = 0;
 let updater = null;
@@ -224,17 +226,19 @@ function electronUpdater() {
   });
   autoUpdater.on("update-downloaded", (info) => {
     setState({ status: "ready", latest: (info && info.version) || state.latest, progress: 100 });
-    installWhenIdle();
+    installWhenIdle(userAsked);
   });
   updater = autoUpdater;
   return updater;
 }
 
-function installWhenIdle() {
+// With automatic updates off, a downloaded update waits for the next quit (autoInstallOnAppQuit).
+function installWhenIdle(force) {
   clearTimeout(timers.install);
   if (state.status === "installing") return;
+  if (!force && !autoEnabled()) return;
   if (!canRestart()) {
-    timers.install = setTimeout(installWhenIdle, TIMING.idle);
+    timers.install = setTimeout(() => installWhenIdle(force), TIMING.idle);
     return;
   }
   setState({ status: "installing" });
@@ -318,8 +322,10 @@ async function gitFlow(interactive) {
   if (interactive) {
     const lines = info.summary.length ? `\n\n${info.summary.join("\n")}` : "";
     await box("info", "Installing the update. Usage Monitor restarts when it is done.", `${info.behind} new change${info.behind === 1 ? "" : "s"}:${lines}`);
-  } else {
-    await whenIdle();
+  } else if (!(await whenIdle())) {
+    // Automatic updates were turned off while waiting; the next check finds the update again.
+    setState({ status: "off" });
+    return { ...info, updated: false };
   }
   setState({ status: "installing" });
   const result = await gitApply(info);
@@ -332,6 +338,7 @@ async function gitFlow(interactive) {
 async function installerFlow(interactive) {
   const u = electronUpdater();
   u.allowPrerelease = beta();
+  userAsked = !!interactive;
   const result = await u.checkForUpdates();
   setState({ checked_at: Date.now() });
   if (!result || !result.isUpdateAvailable) {
@@ -373,7 +380,7 @@ async function doCheck(interactive) {
   if (["ready", "installing"].includes(state.status)) {
     if (interactive) {
       // The user asked, so a downloaded installer update goes in now rather than at the next quiet moment.
-      if (state.kind === "installer" && state.status === "ready") installWhenIdle();
+      if (state.kind === "installer" && state.status === "ready") installWhenIdle(true);
       box("info", `Usage Monitor ${state.latest || ""} is being installed.`.replace("  ", " "), "It restarts on its own in a moment.");
     }
     return { available: true };
@@ -440,10 +447,12 @@ function canRestart() {
   return !ctx || !ctx.canRestart || ctx.canRestart();
 }
 
+// Resolves true when a restart is possible, or false once automatic updates are turned off.
 function whenIdle() {
   return new Promise((resolve) => {
     const tryNow = () => {
-      if (canRestart()) resolve();
+      if (!autoEnabled()) resolve(false);
+      else if (canRestart()) resolve(true);
       else timers.idle = setTimeout(tryNow, TIMING.idle);
     };
     tryNow();
@@ -500,7 +509,8 @@ function start(context) {
   state = { kind: context.kind || installKind(), status: "idle", current: app.getVersion(), build: null, latest: null, progress: null, url: null, message: null, checked_at: null };
   log.info(`Usage Monitor ${state.current} started (${state.kind} install, ${process.platform} ${process.arch})`);
   if (state.kind === "git") git(["rev-parse", "--short", "HEAD"]).then((build) => setState({ build })).catch(() => {});
-  setState({ status: autoEnabled() || state.kind === "source" ? "idle" : "off" });
+  if (state.kind === "source") setState({ status: "skipped", message: "This copy can't update itself" });
+  else setState({ status: autoEnabled() ? "idle" : "off" });
   schedule(TIMING.first);
   timers.period = setInterval(automatic, TIMING.period);
   try {
@@ -516,10 +526,13 @@ function settingChanged() {
   if (autoEnabled()) {
     failures = 0;
     if (["off", "idle"].includes(state.status)) setState({ status: "idle" });
+    if (state.kind === "installer" && state.status === "ready") installWhenIdle();
     schedule(TIMING.first);
   } else {
     clearTimeout(timers.next);
+    clearTimeout(timers.install);
     if (["idle", "up-to-date", "error", "skipped"].includes(state.status)) setState({ status: "off" });
+    else setState({});
   }
 }
 
@@ -531,9 +544,12 @@ function checkNow() {
   return runCheck(true);
 }
 
+// Resolves when the flyout's action is done, so the flyout can stay open behind its dialog.
 function action() {
   if (state && state.status === "available") openDownload();
-  else if (state && !["checking", "downloading", "ready", "installing"].includes(state.status)) checkNow();
+  else if (state && state.status === "ready" && state.kind === "installer") installWhenIdle(true);
+  else if (state && !["checking", "downloading", "ready", "installing"].includes(state.status)) return checkNow();
+  return Promise.resolve();
 }
 
 function getState() {
