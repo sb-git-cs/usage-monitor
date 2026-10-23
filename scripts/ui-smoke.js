@@ -87,7 +87,7 @@ async function check(file) {
         return hit === el || el.contains(hit);
       })(),
     })`);
-    assert.match(result.battery, /~50m to full/);
+    assert.match(result.battery, file === "chips" ? /^▲50m$/ : /~50m to full/);
     assert.equal(result.injected, false);
     assert.equal(result.node, "undefined");
     assert.equal(result.clickable, true, `${file} controls must receive pointer events`);
@@ -220,12 +220,15 @@ async function check(file) {
       win.webContents.send("usage://system", systemSummary);
       await new Promise((resolve) => setTimeout(resolve, 60));
     }
-    for (const [reading, expected] of [
-      [{ ...batteryView.latest, percent: 9, state: "discharging", seconds: null }, "Estimating"],
-      [{ ...batteryView.latest, percent: 100, state: "full", seconds: null }, "Full"],
-      [{ ...batteryView.latest, percent: 80, state: "plugged", seconds: null }, "Plugged in"],
-      [{ ...batteryView.latest, present: null, percent: null, state: "unknown", seconds: null }, "Unavailable"],
+    // The strip keeps to short forms; the panel spells them out.
+    for (const [reading, long, short] of [
+      [{ ...batteryView.latest, percent: 9, state: "discharging", seconds: null }, "Estimating", "…"],
+      [{ ...batteryView.latest, percent: 100, state: "full", seconds: null }, "Full", "Full"],
+      [{ ...batteryView.latest, percent: 80, state: "plugged", seconds: null }, "Plugged in", "Plugged"],
+      [{ ...batteryView.latest, present: null, percent: null, state: "unknown", seconds: null }, "Unavailable", "—"],
+      [{ ...batteryView.latest, percent: 40, state: "discharging", seconds: 7500 }, "~2h 5m left", "▼2h05"],
     ]) {
+      const expected = file === "chips" ? short : long;
       win.webContents.send("usage://battery", { latest: reading, points: batteryPoints });
       await new Promise((resolve) => setTimeout(resolve, 40));
       const battery = await win.webContents.executeJavaScript(`({text: (document.getElementById('batteryEta') || document.getElementById('batteryStatus')).textContent, hidden: (document.getElementById('batteryChip') || document.getElementById('batteryCard')).hidden})`);
@@ -264,8 +267,8 @@ async function check(file) {
       assert.equal(fill.netDisplay, "grid");
       // About 48px with Segoe UI; the default fonts on macOS (50px) and Ubuntu (52.5px) are wider.
       assert.ok(fill.session <= 54, `compact sessions chip: ${fill.session}px`);
-      assert.ok(fill.battery <= 130, `compact battery chip: ${fill.battery}px`);
-      assert.ok(fill.width - fill.session - fill.battery < 420, `compact strip including system metrics: ${fill.width}px`);
+      assert.ok(fill.battery <= 56, `compact battery chip: ${fill.battery}px`);
+      assert.ok(fill.width - fill.session - fill.battery < 400, `compact strip including system metrics: ${fill.width}px`);
       renderedFrame = null;
       const fillDeadline = Date.now() + 5000;
       while (!renderedFrame && Date.now() < fillDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
