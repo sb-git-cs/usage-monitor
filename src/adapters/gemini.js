@@ -8,7 +8,7 @@ const {
   fileExists,
 } = require("../paths");
 const { windowOf, emptyProvider } = require("../models");
-const { postJson, postForm } = require("../http");
+const { getJson, postJson, postForm } = require("../http");
 const { readGenericCredential } = require("../wincred");
 const { jwtClaims } = require("../jwt");
 
@@ -31,6 +31,39 @@ const MAX_BINARY_BYTES = 512 * 1024 * 1024;
 let memCreds = null;
 let oauthClient = null;
 const wincred = { at: 0, blob: undefined };
+// Which Google account an access token belongs to, asked once per token: the Antigravity
+// sign-in blob has no ID token to read it from.
+const USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
+const identities = new Map();
+
+async function identityOf(token) {
+  if (!token) return null;
+  if (identities.has(token)) return identities.get(token);
+  let found = null;
+  try {
+    const res = await getJson(USERINFO_URL, { Authorization: `Bearer ${token}`, Accept: "application/json" });
+    const email = res.status === 200 && res.json && typeof res.json.email === "string" ? res.json.email : "";
+    const sub = res.status === 200 && res.json && typeof res.json.sub === "string" ? res.json.sub : "";
+    if (email || sub) found = { email: email || null, sub: sub || null };
+  } catch {
+    found = null;
+  }
+  if (identities.size > 16) identities.delete(identities.keys().next().value);
+  identities.set(token, found);
+  return found;
+}
+
+// The account behind the saved sign-in, if it was looked up already; no network here.
+function knownIdentity(token) {
+  return (token && identities.get(token)) || null;
+}
+
+// After a sign-in was switched or added, the next poll reads the saved sign-in afresh.
+function forgetCredentials() {
+  memCreds = null;
+  wincred.at = 0;
+  wincred.blob = undefined;
+}
 const clientLookup = { key: null };
 const poolKinds = new Map();
 
@@ -562,6 +595,8 @@ async function fetchUsage(cfg) {
   const limited = !best && lastFail && lastFail.status === 429 ? lastFail : null;
   if (limited && (limited.windows || []).some((w) => w.used_pct > 0)) best = limited;
   if (best) {
+    // Which Google account this is, so several saved sign-ins can be told apart.
+    const who = creds.account_id ? null : await identityOf(token);
     return {
       id: "gemini",
       display_name: DISPLAY,
@@ -570,6 +605,8 @@ async function fetchUsage(cfg) {
       windows: best.windows,
       fetched_at: new Date().toISOString(),
       source: "api",
+      ...(who && who.email ? { account: who.email } : {}),
+      ...(creds.account_id || (who && who.sub) ? { account_id: creds.account_id || who.sub } : {}),
       ...(limited ? { _rateLimited: true, _retryAfter: limited.retryAt } : {}),
     };
   }
@@ -605,7 +642,8 @@ async function linkToken(cfg) {
 
 // The Google account of the saved sign-in, when the CLI kept its ID token.
 async function accountRef() {
-  return (await readStoredCreds())?.account_id || null;
+  const creds = await readStoredCreds();
+  return (creds && (creds.account_id || (knownIdentity(creds.access_token) || {}).sub)) || null;
 }
 
-module.exports = { id: "gemini", displayName: DISPLAY, probe, fetchUsage, linkToken, accountRef };
+module.exports = { id: "gemini", displayName: DISPLAY, probe, fetchUsage, linkToken, accountRef, identityOf, knownIdentity, forgetCredentials };

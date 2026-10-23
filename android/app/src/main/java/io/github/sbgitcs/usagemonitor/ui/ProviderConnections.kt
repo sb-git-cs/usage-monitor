@@ -44,7 +44,9 @@ import io.github.sbgitcs.usagemonitor.direct.PhoneSignIn
 import io.github.sbgitcs.usagemonitor.direct.PlanReadings
 import io.github.sbgitcs.usagemonitor.direct.TokenVault
 import io.github.sbgitcs.usagemonitor.model.MeterConnection
+import io.github.sbgitcs.usagemonitor.model.SavedAccount
 import io.github.sbgitcs.usagemonitor.net.Format
+import io.github.sbgitcs.usagemonitor.pairing.DesktopClient
 import io.github.sbgitcs.usagemonitor.widget.Widgets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -58,17 +60,45 @@ fun AccountsScreen(settings: Settings, computer: PairedComputer?, onPair: () -> 
     // Bumped after any change, so the rows read the vault and the meters again.
     var version by remember { mutableIntStateOf(0) }
     var providers by remember { mutableStateOf(PlanReadings.read(settings).snapshot?.providers.orEmpty()) }
-    var phoneSignIns by remember { mutableStateOf(emptySet<String>()) }
+    // Every sign-in made on this phone, per tool, the one in use marked.
+    var phoneAccounts by remember { mutableStateOf(emptyMap<String, List<SavedAccount>>()) }
     var linked by remember { mutableStateOf(emptyMap<String, Long?>()) }
     var signingOut by remember { mutableStateOf<String?>(null) }
+    var switching by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<Pair<String, String>?>(null) }
     val step by PhoneSignIn.step.collectAsState()
 
     fun reload() {
         scope.launch {
             val all = withContext(Dispatchers.IO) { TokenVault(context).all() }
-            phoneSignIns = all.filter { it.origin == TokenVault.PHONE }.map { it.provider }.toSet()
+            phoneAccounts = PlanReadings.MOBILE.associateWith { id ->
+                val active = PlanReadings.activePhone(all, id, settings.phoneAccount(id))
+                PlanReadings.phoneSignIns(all, id).map { c -> SavedAccount(TokenVault.phoneKey(c), c.account ?: c.accountId ?: c.userId ?: "Account", c === active) }
+            }
             linked = all.filter { it.origin == TokenVault.LINKED }.associate { it.provider to it.expiresAt }
             providers = PlanReadings.read(settings).snapshot?.providers.orEmpty()
+        }
+    }
+    fun pickPhone(id: String, key: String) {
+        if (switching != null) return
+        switching = id
+        scope.launch {
+            runCatching { PlanReadings.selectPhoneAccount(context, settings, id, key) }.onFailure { notice = id to (it.message ?: "Could not switch.") }
+            Widgets.refresh(context)
+            switching = null
+            version++
+        }
+    }
+    fun pickComputer(id: String, accountId: String?) {
+        if (switching != null) return
+        switching = id
+        scope.launch {
+            notice = id to withContext(Dispatchers.IO) {
+                runCatching { DesktopClient(settings).switchAccount(id, accountId) }.fold(
+                    onSuccess = { if (accountId == null) "Confirm on your computer: its sign-in opens there." else "Confirm the switch on your computer." },
+                    onFailure = { it.message ?: "The computer could not switch the account." })
+            }
+            switching = null
         }
     }
     WhileVisible(version, 5_000) { reload() }
@@ -82,16 +112,20 @@ fun AccountsScreen(settings: Settings, computer: PairedComputer?, onPair: () -> 
         item { LinkCard(settings, computer, linked, onPair) { version++ } }
         item {
             Section("Usage accounts") {
-                Note("Sign in on this phone to read a tool without the computer. Sign-ins stay encrypted on this phone and are used only to read usage.")
+                Note("Sign in on this phone to read a tool without the computer; several accounts can be kept per tool and switched with a tap. Sign-ins stay encrypted on this phone and are used only to read usage. The computer's saved accounts can be switched from here too; the computer asks you to confirm.")
                 PlanReadings.MOBILE.forEachIndexed { i, id ->
                     if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     AccountRow(
                         name = PlanReadings.NAMES.getValue(id),
                         meter = providers.firstOrNull { it.id == id },
-                        signedInHere = id in phoneSignIns,
+                        phoneAccounts = phoneAccounts[id].orEmpty(),
                         canSignIn = id in PhoneSignIn.providers,
+                        busy = switching == id,
+                        notice = notice?.takeIf { it.first == id }?.second,
                         onSignIn = { PhoneSignIn.start(context, id) },
                         onSignOut = { signingOut = id },
+                        onPickPhone = { pickPhone(id, it) },
+                        onPickComputer = { pickComputer(id, it) },
                     )
                 }
             }
@@ -101,9 +135,10 @@ fun AccountsScreen(settings: Settings, computer: PairedComputer?, onPair: () -> 
     step?.let { s -> SignInDialog(s) }
     signingOut?.let { id ->
         val name = PlanReadings.NAMES.getValue(id)
+        val who = phoneAccounts[id].orEmpty().firstOrNull { it.active }?.label
         CompactDialog(onDismissRequest = { signingOut = null },
             title = { Text("Sign out of $name?") },
-            text = { Text("This phone forgets its $name sign-in. The computer's sign-in is not affected.") },
+            text = { Text("This phone forgets its $name sign-in${who?.let { " for $it" } ?: ""}. Other accounts saved on the phone stay, and the computer's sign-in is not affected.") },
             confirmButton = {
                 TextButton(onClick = {
                     signingOut = null
@@ -180,28 +215,43 @@ private fun LinkCard(settings: Settings, computer: PairedComputer?, linked: Map<
 }
 
 @Composable
-private fun AccountRow(name: String, meter: io.github.sbgitcs.usagemonitor.model.Provider?, signedInHere: Boolean, canSignIn: Boolean,
-                       onSignIn: () -> Unit, onSignOut: () -> Unit) {
+private fun AccountRow(name: String, meter: io.github.sbgitcs.usagemonitor.model.Provider?, phoneAccounts: List<SavedAccount>, canSignIn: Boolean,
+                       busy: Boolean, notice: String?, onSignIn: () -> Unit, onSignOut: () -> Unit,
+                       onPickPhone: (String) -> Unit, onPickComputer: (String?) -> Unit) {
     val connection = MeterConnection.from(meter)
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 6.dp)) {
-            Text(name, style = MaterialTheme.typography.titleSmall)
-            val who = meter?.account?.takeIf { it.isNotBlank() }
-            Text(listOfNotNull(if (signedInHere) "Phone" else connection.source, connection.signInLabel, who).joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            meter?.hint?.takeIf { meter.state != "ok" }?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    val signedInHere = phoneAccounts.isNotEmpty()
+    // The computer's saved accounts, offered while the tool reads from the computer.
+    val computerAccounts = if (!signedInHere && meter != null && meter.source == "desktop") meter.accounts else emptyList()
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(end = 6.dp)) {
+                Text(name, style = MaterialTheme.typography.titleSmall)
+                val who = meter?.account?.takeIf { it.isNotBlank() }
+                Text(listOfNotNull(if (signedInHere) "Phone" else connection.source, connection.signInLabel, who).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                meter?.hint?.takeIf { meter.state != "ok" }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            when {
+                busy -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                signedInHere -> Row {
+                    if (canSignIn && meter?.state != "ok") TextButton(onClick = onSignIn) { Text("Retry sign-in") }
+                    TextButton(onClick = onSignOut) { Text("Sign out") }
+                }
+                canSignIn -> OutlinedButton(onClick = onSignIn) { Text("Sign in") }
+                else -> Note("Via computer")
             }
         }
-        when {
-            signedInHere -> Row {
-                if (canSignIn && meter?.state != "ok") TextButton(onClick = onSignIn) { Text("Retry sign-in") }
-                TextButton(onClick = onSignOut) { Text("Sign out") }
-            }
-            canSignIn -> OutlinedButton(onClick = onSignIn) { Text("Sign in") }
-            else -> Note("Via computer")
+        if (signedInHere) {
+            AccountTabs(phoneAccounts, enabled = !busy, onPick = onPickPhone)
+            if (canSignIn) TextButton(enabled = !busy, onClick = onSignIn) { Text("Add account on this phone") }
+        } else if (computerAccounts.isNotEmpty()) {
+            AccountTabs(computerAccounts, enabled = !busy, onPick = { onPickComputer(it) })
+            TextButton(enabled = !busy, onClick = { onPickComputer(null) }) { Text("Add account on computer") }
         }
+        notice?.let { Note(it) }
     }
 }
 

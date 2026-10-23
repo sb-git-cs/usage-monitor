@@ -23,6 +23,29 @@ class DirectReadingTest {
         Provider(id, id, null, state, null, listOf(PlanWindow("five_hour", "5h", used, null, null, null)),
             account = "$id@example.test", source = source, fetchedAt = at)
 
+    @Test fun severalPhoneSignInsPerToolAreKeptAndTheChosenOneIsRead() {
+        val alice = Credential("claude", TokenVault.PHONE, "a1", "r1", accountId = "acct-alice", account = "alice@example.test")
+        val bob = Credential("claude", TokenVault.PHONE, "b1", "r2", accountId = "acct-bob", account = "bob@example.test")
+        val linked = Credential("claude", TokenVault.LINKED, "pc")
+        var list = TokenVault.replacing(emptyList(), alice)
+        list = TokenVault.replacing(list, bob)
+        list = TokenVault.replacing(list, linked)
+        assertEquals(listOf("acct-alice", "acct-bob", null), list.map { it.accountId })
+        // A renewed token replaces its own account only; a new linked token replaces the old linked one.
+        list = TokenVault.replacing(list, alice.copy(accessToken = "a2"))
+        list = TokenVault.replacing(list, linked.copy(accessToken = "pc2"))
+        assertEquals(listOf("acct-bob", "a2", "pc2"), listOf(list[0].accountId, list.single { it.accountId == "acct-alice" }.accessToken, list.single { it.origin == TokenVault.LINKED }.accessToken))
+        assertEquals(3, list.size)
+        // The newest sign-in is read unless another was chosen; an unknown choice falls back to the newest.
+        assertEquals("acct-alice", PlanReadings.activePhone(list, "claude", null)!!.accountId)
+        assertEquals("acct-bob", PlanReadings.activePhone(list, "claude", "acct-bob")!!.accountId)
+        assertEquals("acct-alice", PlanReadings.activePhone(list, "claude", "gone")!!.accountId)
+        assertNull(PlanReadings.activePhone(list, "codex", null))
+        assertEquals(listOf("acct-bob", "acct-alice"), PlanReadings.phoneSignIns(list, "claude").map { it.accountId })
+        assertEquals("", TokenVault.phoneKey(Credential("cursor", TokenVault.PHONE, "c")))
+        assertEquals("me@example.test", TokenVault.phoneKey(Credential("cursor", TokenVault.PHONE, "c", account = "me@example.test")))
+    }
+
     @Test fun aPhoneSignInAlwaysWinsAndACurrentComputerReadingBeatsALinkedOne() {
         val merged = PlanReadings.merge(
             listOf(meter("claude"), meter("codex")),

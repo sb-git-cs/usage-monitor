@@ -64,6 +64,10 @@ class Settings(context: Context) {
         get() = p.getLong("tokens_at", 0)
         set(v) = p.edit().putLong("tokens_at", v).apply()
 
+    /** Which of this phone's sign-ins a tool reads with, by [io.github.sbgitcs.usagemonitor.direct.TokenVault.phoneKey]; null means the newest. */
+    fun phoneAccount(provider: String): String? = p.getString("phone_account_$provider", null)?.ifEmpty { null }
+    fun setPhoneAccount(provider: String, key: String?) = p.edit().putString("phone_account_$provider", key).apply()
+
     /** Usage read directly by this phone, as snapshot providers JSON. Holds no sign-in data. */
     var directJson: String?
         get() = p.getString("direct", null)

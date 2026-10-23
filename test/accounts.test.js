@@ -41,6 +41,7 @@ function harness(files, cred, extra = {}) {
   const vault = extra.vault || memoryVault();
   const accounts = load("src/accounts.js", {
     "./account-vault": vault,
+    "./adapters/gemini": extra.gemini || { knownIdentity: () => null },
     fs: {
       readFileSync: (file) => {
         if (!Object.hasOwn(files, file)) throw new Error("missing");
@@ -197,4 +198,21 @@ test("sign-in waits for the browser and reports opening failures", async () => {
   const failed = { ok: false, error: "Couldn't open the sign-in page in your browser." };
   assert.deepEqual(await accounts.openLogin("grok", async () => { throw new Error("failed"); }), failed);
   assert.deepEqual(await accounts.openLogin("grok", () => { throw new Error("failed"); }), failed);
+});
+
+test("a Gemini sign-in without an ID token is named by what the usage reader learned about its token", async () => {
+  const files = { [geminiToken]: JSON.stringify({ token: { access_token: "antigravity-access", refresh_token: "r" } }) };
+  const unknown = harness(files, null);
+  await unknown.accounts.refresh({});
+  let gemini = unknown.accounts.list().find((row) => row.id === "gemini");
+  assert.equal(gemini.signed_in, true);
+  assert.equal(gemini.account_id, null, "no identity yet: nothing is saved under a guessed name");
+  assert.deepEqual(unknown.vault.tools.gemini, []);
+  const known = harness(files, null, { gemini: { knownIdentity: (token) => (token === "antigravity-access" ? { email: "g@example.com", sub: "1234" } : null) } });
+  await known.accounts.refresh({});
+  gemini = known.accounts.list().find((row) => row.id === "gemini");
+  assert.equal(gemini.account, "g@example.com");
+  assert.equal(gemini.account_id, "g@example.com");
+  assert.deepEqual(known.vault.tools.gemini.map((row) => row.id), ["g@example.com"]);
+  assert.equal(JSON.stringify(known.accounts.list()).includes("antigravity-access"), false);
 });

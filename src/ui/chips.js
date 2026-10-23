@@ -304,17 +304,22 @@ function renderSystem(data = {}) {
     disk: data.diskRate != null ? "DISK: total read + write throughput" : "DISK: busiest HDD/SSD active time",
     space: "SPACE: fullest mounted volume (storage used)",
   };
+  // Only what changed is written: rewriting a tooltip on every sample hides and reshows it.
+  const set = (el, prop, value) => {
+    if (el[prop] !== value) el[prop] = value;
+  };
   for (const [key] of systemFields) {
     const el = systemRoot.querySelector(`[data-metric="${key}"]`);
-    el.hidden = prefs.chips_show[key] === false || (key === "gpu" && data.gpuPresent !== true);
-    el.querySelector(".system-value").textContent = key === "disk" && data.diskRate != null ? NetFormat.formatRateShort(data.diskRate) : pct(data[key]);
+    set(el, "hidden", prefs.chips_show[key] === false || (key === "gpu" && data.gpuPresent !== true));
+    set(el.querySelector(".system-value"), "textContent", key === "disk" && data.diskRate != null ? NetFormat.formatRateShort(data.diskRate) : pct(data[key]));
     el.classList.toggle("busy", Number.isFinite(data[key]) && data[key] >= 80);
-    el.title = titles[key];
-    if (key === "disk") el.title += (data.disks || []).map((d) => `\n${d.name}: ${pct(d.busy)}`).join("");
-    if (key === "space") el.title += (data.volumes || []).map((v) => `\n${v.name}: ${gb(v.used)} / ${gb(v.size)}`).join("");
+    let title = titles[key];
+    if (key === "disk") title += (data.disks || []).map((d) => `\n${d.name}: ${pct(d.busy)}`).join("");
+    if (key === "space") title += (data.volumes || []).map((v) => `\n${v.name}: ${gb(v.used)} / ${gb(v.size)}`).join("");
+    set(el, "title", title);
   }
   // With every metric turned off, the empty group would still take up space on the strip.
-  systemRoot.hidden = [...systemRoot.children].every((el) => el.hidden);
+  set(systemRoot, "hidden", [...systemRoot.children].every((el) => el.hidden));
   requestAnimationFrame(fitBar);
 }
 renderSystem();
@@ -358,11 +363,15 @@ function renderBattery(view = {}) {
   lastBattery = view;
   const r = view.latest;
   const el = document.getElementById("batteryChip");
-  el.hidden = prefs.chips_show.battery === false || r?.present === false;
-  document.getElementById("batteryPct").textContent = `${r?.state === "charging" ? "⚡" : "BAT"} ${r?.percent != null ? Math.round(r.percent) + "%" : "—"}`;
-  document.getElementById("batteryEta").textContent = r?.state === "plugged" ? "Plugged in" : BatteryModel.label(r);
-  el.title = `Battery · ${BatteryModel.label(r)}${r ? " · Updated " + new Date(r.t).toLocaleTimeString() : ""}`;
-  el.setAttribute("aria-label", `${el.title}${r?.state === "discharging" && r.percent <= 20 ? " · Low battery" : ""}. Open battery details`);
+  const set = (node, prop, value) => {
+    if (node[prop] !== value) node[prop] = value;
+  };
+  set(el, "hidden", prefs.chips_show.battery === false || r?.present === false);
+  set(document.getElementById("batteryPct"), "textContent", `${r?.state === "charging" ? "⚡" : "BAT"} ${r?.percent != null ? Math.round(r.percent) + "%" : "—"}`);
+  set(document.getElementById("batteryEta"), "textContent", r?.state === "plugged" ? "Plugged in" : BatteryModel.label(r));
+  set(el, "title", `Battery · ${BatteryModel.label(r)}${r ? " · Updated " + new Date(r.t).toLocaleTimeString() : ""}`);
+  const aria = `${el.title}${r?.state === "discharging" && r.percent <= 20 ? " · Low battery" : ""}. Open battery details`;
+  if (el.getAttribute("aria-label") !== aria) el.setAttribute("aria-label", aria);
   el.classList.toggle("low", r?.state === "discharging" && r.percent <= 20);
   el.classList.toggle("critical", r?.state === "discharging" && r.percent <= 10);
   requestAnimationFrame(fitBar);
