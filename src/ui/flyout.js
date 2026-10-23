@@ -63,8 +63,20 @@ window.addEventListener("resize", fitFlyout);
 // Newest successful reading among the shown providers, for the header.
 let freshest = null;
 let refreshingSince = 0;
+// A short message from an account switch, shown in the header in place of the freshness line.
+let notice = { text: "", until: 0 };
+function showNotice(text) {
+  notice = { text: String(text || ""), until: Date.now() + 8000 };
+  renderUpdated();
+}
+
 function renderUpdated() {
   updated.classList.remove("warn");
+  if (notice.text && Date.now() < notice.until) {
+    updated.textContent = notice.text;
+    updated.title = notice.text;
+    return;
+  }
   // Until the next snapshot arrives, at most 15 s.
   if (refreshingSince && Date.now() - refreshingSince < 15000) {
     updated.textContent = "Refreshing…";
@@ -85,7 +97,42 @@ function names(list) {
   return list.length > 2 ? `${shown} +${list.length - 2}` : shown;
 }
 
+// A reading that arrives while an account menu is open waits until it closes, so the open
+// menu is not replaced under the pointer.
+let pendingSnapshot = null;
+const ACCOUNT_TOOLS = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+
+function accountMenu(p) {
+  if (!ACCOUNT_TOOLS.includes(p.id)) return "";
+  const picks = Array.isArray(p.accounts) ? p.accounts : [];
+  if (!picks.length && !p.account) return "";
+  const active = picks.find((a) => a.active);
+  const options = picks.map((a) => `<option value="${escapeHtml(a.id)}"${a.active ? " selected" : ""}>${escapeHtml(a.label)}</option>`);
+  if (!active && p.account) options.push(`<option value="" selected>${escapeHtml(p.account)}</option>`);
+  options.push(`<option value="__add">Add account…</option>`);
+  return `<div class="p-account"><select class="account-pick" data-tool="${escapeHtml(p.id)}" aria-label="${escapeHtml(p.display_name)} account" title="Switch the ${escapeHtml(p.display_name)} account">${options.join("")}</select></div>`;
+}
+
+async function pickAccount(select) {
+  const tool = select.dataset.tool;
+  const value = select.value;
+  const current = [...select.options].find((o) => o.defaultSelected);
+  if (current) select.value = current.value;
+  // "" is the sign-in already in use when it has no saved copy: nothing to switch to.
+  if (value === "" || (current && value === current.value)) return;
+  const result = await window.usage.switchAccount(tool, value === "__add" ? null : value);
+  // The next reading shows the account now in use; it is held while the menu has focus.
+  select.blur();
+  if (!result) return;
+  showNotice(result.message || result.error || "");
+}
+
 function render(snapshot) {
+  if (document.activeElement?.classList?.contains("account-pick")) {
+    pendingSnapshot = snapshot;
+    return;
+  }
+  pendingSnapshot = null;
   const focused = document.activeElement?.dataset.id;
   // Hidden providers have no card, so they are left out of the overview too.
   const visible = (snapshot.providers || []).filter((p) => p.id === "x_subscription"
@@ -128,7 +175,9 @@ function render(snapshot) {
     const age = stale && Number.isFinite(p.status.age_secs) ? ` · saved ${formatAgo(Date.now() - p.status.age_secs * 1000)}` : "";
     parts.push(`<section class="provider accent-${escapeHtml(p.id)}" data-id="${escapeHtml(p.id)}" role="button" tabindex="0" aria-label="Open ${escapeHtml(p.display_name)} usage page" title="Open the ${escapeHtml(p.display_name)} usage page">
       <div class="p-head"><span class="p-name">${mark(p.id)}<span>${escapeHtml(p.display_name)}</span></span><span class="p-meta"><span class="p-plan">${escapeHtml(p.plan || "")}</span>${stale ? `<span class="pill warn" title="The last reading failed; showing saved readings${escapeHtml(age)}">stale</span>` : ""}</span></div>`);
-    if (p.account) parts.push(`<div class="p-account">${escapeHtml(p.account)}</div>`);
+    const menu = accountMenu(p);
+    if (menu) parts.push(menu);
+    else if (p.account) parts.push(`<div class="p-account">${escapeHtml(p.account)}</div>`);
     if (hint && !(p.windows && p.windows.length)) {
       const tone = state === "fetch_failed" ? "bad" : state === "logged_out" || state === "not_installed" ? "warn" : "";
       parts.push(`<div class="status-line ${tone}">${escapeHtml(hint)}</div>`);
@@ -175,6 +224,16 @@ function render(snapshot) {
       }
     });
     if (el.dataset.id === focused) el.focus({ preventScroll: true });
+  });
+  body.querySelectorAll(".account-pick").forEach((select) => {
+    // The menu sits on a card that opens the usage page; its clicks and keys stay on the menu.
+    for (const type of ["click", "pointerdown", "mousedown", "keydown", "keyup"]) select.addEventListener(type, (e) => e.stopPropagation());
+    select.addEventListener("change", () => pickAccount(select));
+    for (const type of ["blur", "focusout"]) {
+      select.addEventListener(type, () => {
+        if (pendingSnapshot) render(pendingSnapshot);
+      });
+    }
   });
   requestAnimationFrame(fitFlyout);
 }
@@ -445,6 +504,11 @@ window.usage.onSnapshot((s) => {
   render(s);
 });
 setInterval(() => {
+  // A reading held back while an account menu was open is applied once the menu is closed.
+  if (pendingSnapshot && !document.activeElement?.classList?.contains("account-pick")) {
+    render(pendingSnapshot);
+    return;
+  }
   if (!window.__last) return;
   const next = applyLocalResets(window.__last);
   if (next.changed) {

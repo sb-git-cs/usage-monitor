@@ -15,9 +15,32 @@ function jwt(payload) {
   return `e30.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.sig`;
 }
 
-function harness(files, cred) {
+// A vault with no disk: entries live in memory and activation reports which account was put back.
+function memoryVault() {
+  const tools = { claude: [], codex: [], gemini: [], cursor: [] };
+  const activated = [];
+  return {
+    tools, activated,
+    TOOLS: Object.keys(tools),
+    capture: (tool, identity) => {
+      const rows = tools[tool];
+      const existing = rows.find((row) => row.id === identity.id);
+      if (existing) { existing.label = identity.label; return false; }
+      rows.unshift({ id: identity.id, label: identity.label, detail: identity.detail || null });
+      return true;
+    },
+    list: (tool) => tools[tool].map((row) => ({ ...row })),
+    has: (tool, id) => !!tools[tool] && tools[tool].some((row) => row.id === id),
+    forget: (tool, id) => { const i = tools[tool].findIndex((row) => row.id === id); if (i < 0) return false; tools[tool].splice(i, 1); return true; },
+    activate: (tool, id) => { activated.push([tool, id]); return { ok: true }; },
+  };
+}
+
+function harness(files, cred, extra = {}) {
   const opened = [];
+  const vault = extra.vault || memoryVault();
   const accounts = load("src/accounts.js", {
+    "./account-vault": vault,
     fs: {
       readFileSync: (file) => {
         if (!Object.hasOwn(files, file)) throw new Error("missing");
@@ -34,10 +57,10 @@ function harness(files, cred) {
       fileExists: (file) => Object.hasOwn(files, file),
     },
     "./wincred": { readGenericCredential: async () => cred || null },
-    "./github-auth": { token: async () => "", forget() {} },
+    "./github-auth": extra.github || { token: async () => "", forget() {}, users: () => ({ active: null, logins: [] }), switchUser: async () => false },
     electron: { shell: { openExternal: async (url) => { opened.push(url); } } },
   });
-  return { accounts, opened };
+  return { accounts, opened, vault };
 }
 
 test("account labels come from saved sign-ins and never include tokens", async () => {
@@ -62,13 +85,88 @@ test("account labels come from saved sign-ins and never include tokens", async (
   for (const secret of ["codex-secret", "grok-old-secret", "grok-new-secret", "gemini-secret"]) {
     assert.equal(dumped.includes(secret), false);
   }
-  assert.equal(accounts.select("grok", "new-user"), true);
+  assert.deepEqual(await accounts.select("grok", "new-user"), { ok: true });
   assert.equal(accounts.list().find((row) => row.id === "grok").account, "new@example.com");
-  assert.equal(accounts.select("claude", "other@example.com"), false);
+  assert.equal((await accounts.select("claude", "other@example.com")).ok, false);
   const decorated = accounts.decorate({ id: "grok", display_name: "Grok Build", windows: [] });
   assert.equal(decorated.account, "new@example.com");
   assert.equal(decorated.accounts.length, 2);
-  assert.equal(accounts.decorate({ id: "claude", windows: [] }).accounts, undefined);
+  // The current Claude sign-in is saved on refresh and offered as its one choice.
+  const claude = accounts.decorate({ id: "claude", windows: [] });
+  assert.deepEqual(claude.accounts, [{ id: "claude@example.com", label: "claude@example.com", active: true }]);
+  assert.equal(accounts.decorate({ id: "cursor", windows: [] }).accounts, undefined, "a tool that is not signed in offers nothing");
+});
+
+test("saved sign-ins are kept across logins, switch the tool's files back and can be forgotten", async () => {
+  const files = {
+    [claudeJson]: JSON.stringify({ oauthAccount: { emailAddress: "alice@example.com" } }),
+    [codexAuth]: JSON.stringify({ tokens: { access_token: "codex-secret", id_token: jwt({ email: "codex@example.com" }) } }),
+  };
+  const { accounts, vault } = harness(files, null);
+  await accounts.refresh({});
+  assert.deepEqual(vault.tools.claude.map((row) => row.id), ["alice@example.com"]);
+  assert.deepEqual(vault.tools.codex.map((row) => row.id), ["codex@example.com"]);
+  // Bob signs in through the CLI; Alice's copy stays and both are offered, Bob marked current.
+  files[claudeJson] = JSON.stringify({ oauthAccount: { emailAddress: "bob@example.com", displayName: "Bob" } });
+  await accounts.refresh({});
+  const claude = accounts.list().find((row) => row.id === "claude");
+  assert.deepEqual(claude.choices.map((c) => [c.id, c.active]), [["bob@example.com", true], ["alice@example.com", false]]);
+  assert.equal(claude.removable, true);
+  assert.equal(accounts.hasChoice("claude", "alice@example.com"), true);
+  assert.equal(accounts.hasChoice("claude", "nobody@example.com"), false);
+  // Switching puts Alice's files back; the tool is read again right away.
+  files[claudeJson] = JSON.stringify({ oauthAccount: { emailAddress: "alice@example.com" } });
+  assert.deepEqual(await accounts.select("claude", "alice@example.com"), { ok: true });
+  assert.deepEqual(vault.activated, [["claude", "alice@example.com"]]);
+  assert.equal(accounts.list().find((row) => row.id === "claude").account, "alice@example.com");
+  assert.equal(accounts.forget("claude", "alice@example.com"), false, "the account in use stays");
+  assert.equal(accounts.forget("claude", "bob@example.com"), true);
+  assert.deepEqual(accounts.list().find((row) => row.id === "claude").choices.map((c) => c.id), ["alice@example.com"]);
+  assert.equal(accounts.forget("grok", "anything"), false, "Grok's own list is not edited here");
+  const dumped = JSON.stringify(accounts.list());
+  assert.equal(dumped.includes("codex-secret"), false);
+});
+
+test("gh logins are offered as Copilot accounts and switched with gh itself", async () => {
+  const switched = [];
+  const github = {
+    token: async () => "gho_token", forget() {},
+    users: () => ({ active: "octocat", logins: ["octocat", "other-user"] }),
+    switchUser: async (login) => { switched.push(login); return login === "other-user"; },
+  };
+  const { accounts } = harness({}, null, { github });
+  await accounts.refresh({});
+  const copilot = accounts.list().find((row) => row.id === "copilot");
+  assert.equal(copilot.account, "octocat");
+  assert.deepEqual(copilot.choices.map((c) => [c.id, c.active]), [["octocat", true], ["other-user", false]]);
+  assert.equal(copilot.removable, false);
+  assert.equal(accounts.hasChoice("copilot", "other-user"), true);
+  assert.equal((await accounts.select("copilot", "ghost")).ok, false);
+  assert.deepEqual(await accounts.select("copilot", "other-user"), { ok: true });
+  assert.deepEqual(switched, ["other-user"]);
+});
+
+test("gh hosts.yml lists every saved login and the active one", () => {
+  const hosts = path.join(homeDir, "hosts.yml");
+  const text = [
+    "github.com:", "    users:", "        octocat:", "            oauth_token: gho_a", "        other-user:",
+    "            oauth_token: gho_b", "    git_protocol: https", "    oauth_token: gho_a", "    user: octocat", "",
+  ].join("\n");
+  const github = load("src/github-auth.js", {
+    fs: { readFileSync: (file) => { if (file !== hosts) throw new Error("missing"); return text; } },
+    "./paths": { ghHosts: () => [hosts], cliPath: () => null, cliOnPath: () => false },
+  });
+  assert.deepEqual(github.users(), { active: "octocat", logins: ["octocat", "other-user"] });
+  const single = load("src/github-auth.js", {
+    fs: { readFileSync: () => "github.com:\n    oauth_token: gho_a\n    user: solo\n" },
+    "./paths": { ghHosts: () => [hosts], cliPath: () => null, cliOnPath: () => false },
+  });
+  assert.deepEqual(single.users(), { active: "solo", logins: ["solo"] });
+  const none = load("src/github-auth.js", {
+    fs: { readFileSync: () => { throw new Error("missing"); } },
+    "./paths": { ghHosts: () => [hosts], cliPath: () => null, cliOnPath: () => false },
+  });
+  assert.deepEqual(none.users(), { active: null, logins: [] });
 });
 
 test("sign-in opens the corresponding provider's browser page and rejects unknown tools", async () => {

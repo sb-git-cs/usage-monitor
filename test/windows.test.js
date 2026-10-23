@@ -84,6 +84,31 @@ test("hidden chips stay hidden when other windows request always-on-top", () => 
   assert.equal(shown, true);
 });
 
+test("a visible strip that is already on top is left alone by the recovery timer", () => {
+  const { api } = mainHarness();
+  let onTop = false;
+  let level = null;
+  const calls = [];
+  const chips = {
+    isDestroyed: () => false, isVisible: () => true, getOpacity: () => 1, setOpacity() {}, showInactive() {},
+    isAlwaysOnTop: () => onTop,
+    setAlwaysOnTop(_flag, next) { onTop = true; level = next; calls.push(next); },
+    webContents: { isCrashed: () => false, setBackgroundThrottling() {} },
+  };
+  api.setState({ cfg: { chips_docked: true, chips_hidden: false }, chips });
+  api.keepWidgetOnTop(chips, true);
+  assert.deepEqual(calls, ["screen-saver"]);
+  for (let i = 0; i < 5; i++) api.recoverChipsIfNeeded();
+  api.keepWidgetOnTop(chips, true);
+  assert.deepEqual(calls, ["screen-saver"], "re-asserting always-on-top every 800 ms re-stacked (flickered) the strip");
+  api.keepWidgetOnTop(chips, false);
+  assert.deepEqual(calls, ["screen-saver", "pop-up-menu"], "a level change is applied");
+  onTop = false;
+  api.recoverChipsIfNeeded();
+  assert.equal(calls.length, 3, "a strip that lost its level gets it back");
+  assert.equal(level, "screen-saver");
+});
+
 test("two-row chips resize before docking and center completely inside the taskbar", () => {
   for (const trayHeight of [32, 40, 48, 60]) {
     for (const startHeight of [50, trayHeight - 4, trayHeight - 3]) {

@@ -48,7 +48,7 @@ POST /v1/account/<tool>          ask the computer to open that tool's sign-in
 POST /v1/account/<tool>/<id>     ask the computer to meter a saved sign-in
 ```
 
-`<tool>` is `claude`, `codex`, `gemini`, `grok`, `cursor` or `copilot`. `<id>` is the saved account id from the snapshot (letters, digits and `_. : @ -`). The signature uses `POST` as the method. Every POST is accepted once: the same id, path and time again gets `409`, so a request recorded on the network cannot be replayed while its time is still valid. The computer confirms before it switches, and answers `{ ok: true, provider, account }` immediately. The snapshot's `account` is the email or name the meter is reading, and `accounts` lists saved sign-ins when there is more than one. Cursor and Copilot are included in the snapshot when that login is present on the computer.
+`<tool>` is `claude`, `codex`, `gemini`, `grok`, `cursor` or `copilot`. `<id>` is the saved account id from the snapshot (letters, digits and `_. : @ -`). The signature uses `POST` as the method. Every POST is accepted once: the same id, path and time again gets `409`, so a request recorded on the network cannot be replayed while its time is still valid. The computer confirms before it switches, and answers `{ ok: true, provider, account }` immediately. The snapshot's `account` is the email or name the meter is reading, and `accounts` lists the saved sign-ins (from 1.12.0 whenever any are saved, before only when there was more than one). Cursor and Copilot are included in the snapshot when that login is present on the computer.
 
 ### Direct reading
 

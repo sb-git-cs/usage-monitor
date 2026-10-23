@@ -16,6 +16,7 @@ const {
 const { readGenericCredential } = require("./wincred");
 const { readValue } = require("./cursor-local");
 const githubAuth = require("./github-auth");
+const vault = require("./account-vault");
 
 const TOOLS = {
   claude: { label: "Claude Code", url: "https://claude.ai/login", file: "claude", args: ["auth", "login"] },
@@ -29,7 +30,12 @@ const TOOLS = {
 const ACCOUNT_ID = /^[A-Za-z0-9_.:@-]{1,200}$/;
 
 function blank(id) {
-  return { id, label: TOOLS[id].label, login_command: [TOOLS[id].file, ...TOOLS[id].args].join(" "), signed_in: false, account: null, account_id: null, detail: null, choices: [] };
+  return {
+    id, label: TOOLS[id].label, login_command: [TOOLS[id].file, ...TOOLS[id].args].join(" "),
+    signed_in: false, account: null, account_id: null, detail: null, choices: [],
+    // Saved copies of this tool's sign-in can be removed; Grok's and gh's own lists cannot from here.
+    removable: vault.TOOLS.includes(id),
+  };
 }
 
 function clean(value) {
@@ -168,11 +174,16 @@ async function readCopilot() {
   try { found = await githubAuth.token(); } catch { found = ""; }
   if (!found) return base;
   const prev = cached.copilot;
+  // gh keeps a token per login, so every saved login is a choice and the active one is current.
+  let saved = { active: null, logins: [] };
+  try { saved = githubAuth.users(); } catch { saved = { active: null, logins: [] }; }
+  const active = saved.active && ACCOUNT_ID.test(saved.active) ? saved.active : null;
   return {
     ...base,
     signed_in: true,
-    account: prev && prev.account ? prev.account : null,
-    account_id: prev && prev.account_id ? prev.account_id : null,
+    account: active || (prev && prev.account ? prev.account : null),
+    account_id: active || (prev && prev.account_id ? prev.account_id : null),
+    choices: saved.logins.filter((login) => ACCOUNT_ID.test(login)).map((login) => ({ id: login, label: login, active: login === active })),
   };
 }
 
@@ -196,16 +207,77 @@ function list() {
   return Object.keys(TOOLS).map((id) => ({ ...cached[id], choices: cached[id].choices.map((choice) => ({ ...choice })) }));
 }
 
-function hasChoice(provider, accountId) {
-  if (provider !== "grok" || !ACCOUNT_ID.test(accountId || "")) return false;
-  return readGrok(accountId).choices.some((choice) => choice.id === accountId);
+// Tools whose sign-in is one credential file: the vault keeps a copy per account.
+const SAVED_TOOLS = vault.TOOLS;
+
+// Keeps the tool's current sign-in in the vault under its account, so signing in to another
+// account (or switching) never loses it. Silent when the current sign-in has no identity.
+function stash(id, row = cached[id]) {
+  if (!SAVED_TOOLS.includes(id) || !row || !row.signed_in || !row.account_id) return false;
+  try {
+    return vault.capture(id, { id: row.account_id, label: row.account, detail: row.detail });
+  } catch {
+    return false;
+  }
 }
 
-// Remembers the saved sign-in the meters should read. The CLI file is left as it is.
-function select(provider, accountId) {
-  if (!hasChoice(provider, accountId)) return false;
-  cached.grok = readGrok(accountId);
-  return true;
+// The saved sign-ins of a tool as choices, the current one marked. A current sign-in that could
+// not be saved (no identity) is still listed as the active choice when it has an id.
+function withSaved(id, row) {
+  if (!SAVED_TOOLS.includes(id)) return row;
+  let saved = [];
+  try { saved = vault.list(id); } catch { saved = []; }
+  const choices = saved.map((entry) => ({ id: entry.id, label: entry.label, active: row.signed_in && entry.id === row.account_id }));
+  if (row.signed_in && row.account_id && !choices.some((choice) => choice.active)) {
+    choices.unshift({ id: row.account_id, label: row.account || row.account_id, active: true });
+  }
+  return { ...row, choices };
+}
+
+function hasChoice(provider, accountId) {
+  if (!TOOLS[provider] || !ACCOUNT_ID.test(accountId || "")) return false;
+  if (provider === "grok") return readGrok(accountId).choices.some((choice) => choice.id === accountId);
+  if (provider === "copilot") {
+    try { return githubAuth.users().logins.includes(accountId); } catch { return false; }
+  }
+  return vault.has(provider, accountId);
+}
+
+// Makes a saved sign-in the one the tool and the meters use. Grok keeps every login in its
+// own file, so the meters just follow the chosen one; gh switches with its own command; the
+// other tools get their saved credential file put back. The current sign-in is saved first.
+async function select(provider, accountId) {
+  if (!hasChoice(provider, accountId)) return { ok: false, error: "That account is not saved on this computer." };
+  if (provider === "grok") {
+    cached.grok = readGrok(accountId);
+    return { ok: true };
+  }
+  if (provider === "copilot") {
+    const switched = await githubAuth.switchUser(accountId);
+    if (!switched) return { ok: false, error: "gh could not switch to that login. Run: gh auth switch" };
+    try { cached.copilot = await readCopilot(); } catch { /* keep the previous row */ }
+    return { ok: true };
+  }
+  stash(provider);
+  const result = vault.activate(provider, accountId);
+  if (!result.ok) return result;
+  try {
+    const fresh = provider === "gemini" ? await readGemini() : provider === "claude" ? readClaude() : provider === "codex" ? readCodex() : readCursor();
+    cached[provider] = withSaved(provider, fresh);
+  } catch {
+    /* the next refresh reads it */
+  }
+  return { ok: true };
+}
+
+// Drops a saved sign-in that is not the current one.
+function forget(provider, accountId) {
+  if (!SAVED_TOOLS.includes(provider) || !ACCOUNT_ID.test(accountId || "")) return false;
+  const row = cached[provider];
+  if (row && row.signed_in && row.account_id === accountId) return false;
+  const dropped = vault.forget(provider, accountId);
+  if (dropped) cached[provider] = withSaved(provider, { ...row, choices: [] });
+  return dropped;
 }
 
 async function refresh(preferred) {
@@ -230,6 +302,10 @@ async function refresh(preferred) {
   if (next.copilot.signed_in && !next.copilot.account && cached.copilot && cached.copilot.account) {
     next.copilot.account = cached.copilot.account;
     next.copilot.account_id = cached.copilot.account_id;
+  }
+  for (const id of SAVED_TOOLS) {
+    stash(id, next[id]);
+    next[id] = withSaved(id, next[id]);
   }
   cached = next;
   return list();
@@ -256,7 +332,8 @@ function decorate(provider) {
     if (row.signed_in && row.account) next.account = row.account;
     else delete next.account;
   }
-  if (row.choices.length > 1) next.accounts = row.choices.map(({ id, label, active }) => ({ id, label, active }));
+  // Every saved sign-in, so the panel can offer them; one entry still lets a phone pick it.
+  if (row.choices.length) next.accounts = row.choices.map(({ id, label, active }) => ({ id, label, active }));
   else delete next.accounts;
   return next;
 }
@@ -273,4 +350,4 @@ async function openLogin(id, openExternal = (url) => require("electron").shell.o
   }
 }
 
-module.exports = { list, refresh, decorate, select, hasChoice, observe, openLogin, TOOLS };
+module.exports = { list, refresh, decorate, select, hasChoice, forget, stash, observe, openLogin, TOOLS, SAVED_TOOLS };

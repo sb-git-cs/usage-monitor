@@ -39,18 +39,23 @@ function chipForecast(p, win) {
   return win && p.status?.state === "ok" && Date.parse(win.forecast_at) > Date.now() && Number.isFinite(win.used_pct) ? win.forecast_at : "";
 }
 
+// What one chip shows: its colour, number and tooltip. Two readings that look the same give
+// the same view, so a forecast that moves by a few seconds does not touch the strip.
+function chipView(p) {
+  const win = UsageModels.currentWindow(p);
+  const block = blockingWindow(p, win);
+  const stale = p.status?.state === "stale";
+  const cls = `pct-icon ${win ? (block ? "red" : "green") : "gray"}${stale ? " stale" : ""}`;
+  const other = block && block !== win ? ` - ${block.label} ${chipValue(block)}` : "";
+  const forecastAt = chipForecast(p, win);
+  const pace = forecastAt ? ` - 100% around ${formatClock(forecastAt)} at this pace` : "";
+  const title = `${p.display_name}${win ? ` - ${win.label}` : ""}${other}${stale ? " (stale)" : ""}${pace}`;
+  return { id: p.id, cls, num: win ? chipValue(win) : "—", title };
+}
+
 function chipKey(snapshot) {
   const docked = bar.classList.contains("docked") ? "1" : "0";
-  const parts = shownProviders(snapshot).map((p) => {
-    const win = UsageModels.currentWindow(p);
-    const num = chipValue(win);
-    const block = blockingWindow(p, win);
-    const cls = win ? (block ? "red" : "green") : "gray";
-    const state = (p.status && p.status.state) || "";
-    const other = block && block !== win ? `${block.label}=${chipValue(block)}` : "";
-    return `${escapeHtml(p.id)}:${win?.kind || ""}:${win?.label || ""}:${cls}:${num}:${state}:${other}:${chipForecast(p, win)}`;
-  });
-  return docked + "|" + parts.join("|");
+  return docked + "|" + shownProviders(snapshot).map((p) => JSON.stringify(chipView(p))).join("|");
 }
 
 // Taskbar height when docked on a horizontal taskbar; the strip then fills it exactly.
@@ -67,16 +72,26 @@ function setFill(height) {
   requestAnimationFrame(fitBar);
 }
 
+// The size last asked of the window. Every sample measures the strip, but the window is only
+// resized (and re-docked) when the measurement changed; the values have fixed widths.
+let askedSize = "";
+
+function askSize(w, h) {
+  const key = `${w}x${h}`;
+  if (key === askedSize) return;
+  askedSize = key;
+  window.usage.resizeChips(w, h);
+}
+
 function fitBar() {
-  bar.style.width = "max-content";
   const w = Math.ceil(Math.max(bar.scrollWidth, bar.offsetWidth));
   if (fillHeight) {
     // No transparent margin below the strip, so it sits flush with the taskbar edges.
-    window.usage.resizeChips(w + 2, fillHeight);
+    askSize(w + 2, fillHeight);
     return;
   }
   const h = Math.ceil(Math.max(bar.scrollHeight, bar.offsetHeight, 24));
-  window.usage.resizeChips(w + 4, h + 4);
+  askSize(w + 4, h + 4);
 }
 
 function showLoading() {
@@ -119,31 +134,29 @@ function render(snapshot) {
   const key = chipKey(snapshot);
   if (key === lastKey) return;
   lastKey = key;
-  const parts = [];
-  for (const p of shownProviders(snapshot)) {
-    const win = UsageModels.currentWindow(p);
-    const block = blockingWindow(p, win);
-    let cls = "gray";
-    let num = "—";
-    if (win) {
-      num = chipValue(win);
-      cls = block ? "red" : "green";
-    }
-    const stale = p.status?.state === "stale";
-    const other = block && block !== win ? ` - ${block.label} ${chipValue(block)}` : "";
-    const forecastAt = chipForecast(p, win);
-    const pace = forecastAt ? ` - 100% around ${formatClock(forecastAt)} at this pace` : "";
-    parts.push(`<div class="pct-icon ${cls}${stale ? " stale" : ""}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.display_name)}${win ? ` - ${escapeHtml(win.label)}` : ""}${escapeHtml(other)}${stale ? " (stale)" : ""}${escapeHtml(pace)}"><span class="who">${mark(p.id)}</span>${num}</div>`);
-  }
-  root.innerHTML = parts.join("");
-  requestAnimationFrame(fitBar);
-  root.querySelectorAll(".pct-icon").forEach((el) => {
-    el.addEventListener("click", () => window.usage.toggleFlyout());
-    el.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      window.usage.openTrayMenu();
+  const views = shownProviders(snapshot).map(chipView);
+  // The same plans in the same order: update the chips in place. Replacing them re-created
+  // every element on each reading, which showed as a flicker on the strip.
+  const existing = [...root.querySelectorAll(".pct-icon[data-id]")];
+  const same = existing.length === views.length && existing.every((el, i) => el.dataset.id === views[i].id);
+  if (!same) {
+    root.innerHTML = views.map((v) => `<div class="pct-icon" data-id="${escapeHtml(v.id)}"><span class="who">${mark(v.id)}</span><span class="num"></span></div>`).join("");
+    root.querySelectorAll(".pct-icon").forEach((el) => {
+      el.addEventListener("click", () => window.usage.toggleFlyout());
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        window.usage.openTrayMenu();
+      });
     });
+  }
+  root.querySelectorAll(".pct-icon[data-id]").forEach((el, i) => {
+    const v = views[i];
+    if (el.className !== v.cls) el.className = v.cls;
+    if (el.title !== v.title) el.title = v.title;
+    const num = el.querySelector(".num");
+    if (num.textContent !== v.num) num.textContent = v.num;
   });
+  requestAnimationFrame(fitBar);
 }
 
 // ---- network speed chip ----------------------------------------------------------

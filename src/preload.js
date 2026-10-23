@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("usage", {
   getSessions: () => ipcRenderer.invoke("usage://get-sessions"),
   setAutoResume: (enabled) => ipcRenderer.send("usage://set-auto-resume", enabled),
   openUsage: (id) => ipcRenderer.send("usage://open-usage", id),
+  switchAccount: (id, accountId) => ipcRenderer.invoke("usage://account", id, accountId || null),
   setChipsHit: (hit) => ipcRenderer.send("usage://chips-hit", hit),
   resizeChips: (w, h) => ipcRenderer.send("usage://chips-resize", w, h),
   getChipsDocked: () => ipcRenderer.invoke("usage://get-chips-docked"),

@@ -94,7 +94,19 @@ label.setting-name { cursor: default; }
 .account-who { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-who.signed-in { color: var(--good); }
 .account .hint { grid-column: 1 / -1; margin: 0; }
-.account-choices { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.account-tabs { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0; }
+.account-tab {
+  height: 28px; padding: 0 11px; border: 1px solid var(--border); border-radius: 99px; background: var(--surface-2);
+  color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.account-tab:hover { color: var(--text); border-color: var(--axis); }
+.account-tab.active { background: var(--selected); border-color: var(--accent); color: var(--text); font-weight: 600; cursor: default; }
+.account-tab.active::before { content: "●"; color: var(--good); font-size: 8px; margin-right: 6px; vertical-align: 1px; }
+.account-remove {
+  width: 22px; height: 22px; margin-left: -4px; margin-right: 4px; border: 1px solid transparent; border-radius: 50%; background: transparent;
+  color: var(--muted); font: inherit; font-size: 14px; line-height: 1; cursor: pointer;
+}
+.account-remove:hover { color: var(--danger); border-color: var(--border); background: var(--surface-2); }
 .account .btn { grid-row: 1; grid-column: 2; }
 
 /* Narrow windows: the section links become a scrolling row above the settings. */

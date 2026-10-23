@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, Notification, nativeImage, nativeTheme, ipcMain, shell, screen, dialog, powerMonitor } = require("electron");
+const { app, BrowserWindow, Menu, Tray, Notification, nativeImage, nativeTheme, ipcMain, shell, screen, dialog, powerMonitor, safeStorage } = require("electron");
 const path = require("path");
 const os = require("os");
 const config = require("./config");
@@ -22,6 +22,9 @@ const { Insights, displayPrefs } = require("./insights");
 const insightsWindow = require("./insights-window");
 const { PhoneLink } = require("./phone");
 const accounts = require("./accounts");
+const accountVault = require("./account-vault");
+const { cliOnPath } = require("./paths");
+const godmodeLaunch = require("./godmode-launch");
 const folderMenu = require("./folder-menu");
 const claude = require("./adapters/claude");
 const codex = require("./adapters/codex");
@@ -303,15 +306,34 @@ function sendChipsLoading() {
   if (chips && !chips.isDestroyed()) chips.webContents.send("usage://loading");
 }
 
+// The z-order level each widget was last given. Re-asserting "always on top" re-stacks the
+// window (SetWindowPos on Windows), which repaints the strip and the taskbar behind it; done
+// from the 800 ms recovery timer that showed as a flicker beside the chips. So the level is
+// only set again when it changed or the window lost it.
+const onTopLevel = new WeakMap();
+const unthrottled = new WeakSet();
+
 function keepWidgetOnTop(win, docked) {
   if (!win || win.isDestroyed()) return;
   if (win === chips && (cfg?.chips_hidden || taskbarConcealed)) return;
   const level = docked ? "screen-saver" : "pop-up-menu";
-  win.setAlwaysOnTop(true, level, 1);
+  let onTop = false;
   try {
-    win.webContents.setBackgroundThrottling(false);
+    onTop = typeof win.isAlwaysOnTop === "function" ? win.isAlwaysOnTop() : false;
   } catch {
-    /* ignore */
+    onTop = false;
+  }
+  if (!onTop || onTopLevel.get(win) !== level) {
+    win.setAlwaysOnTop(true, level, 1);
+    onTopLevel.set(win, level);
+  }
+  if (!unthrottled.has(win)) {
+    try {
+      win.webContents.setBackgroundThrottling(false);
+      unthrottled.add(win);
+    } catch {
+      /* ignore */
+    }
   }
   if (!win.isVisible()) win.showInactive();
 }
@@ -376,7 +398,14 @@ function recoverChipsIfNeeded() {
     chips.setOpacity(1);
     chips.showInactive();
   }
-  keepWidgetOnTop(chips, cfg.chips_docked);
+  // A strip that is visible and still on top needs nothing; touching it every 800 ms flickered.
+  let onTop = false;
+  try {
+    onTop = typeof chips.isAlwaysOnTop === "function" ? chips.isAlwaysOnTop() : false;
+  } catch {
+    onTop = false;
+  }
+  if (hidden || !onTop) keepWidgetOnTop(chips, cfg.chips_docked);
 }
 
 function createTray() {
@@ -927,11 +956,30 @@ function present(snapshot) {
 
 const ACCOUNT_TOOLS = Object.keys(accounts.TOOLS);
 
+// After "Add account" the tool's files are read every 10 s for three minutes, so the new
+// sign-in shows up in the list soon after it is done instead of at the next minute.
+let signInWatch = null;
+function watchForSignIn() {
+  if (signInWatch) clearInterval(signInWatch);
+  const until = Date.now() + 3 * 60_000;
+  signInWatch = setInterval(() => {
+    if (Date.now() > until) {
+      clearInterval(signInWatch);
+      signInWatch = null;
+      return;
+    }
+    refreshAccounts();
+  }, 10_000);
+}
+
 async function beginAccountSwitch(provider, accountId) {
   if (!ACCOUNT_TOOLS.includes(provider)) return { ok: false, error: "Unknown tool" };
   const row = accounts.list().find((item) => item.id === provider);
+  const name = row ? row.label : "The meters";
   if (accountId) {
-    if (!accounts.select(provider, accountId)) return { ok: false, error: "That account is not saved on this computer." };
+    const choice = row && row.choices.find((item) => item.id === accountId);
+    const result = await accounts.select(provider, accountId);
+    if (!result.ok) return { ok: false, error: result.error || "That account is not saved on this computer.", view: settingsView() };
     cfg.accounts[provider] = accountId;
     config.save(cfg);
     if (latest) {
@@ -940,11 +988,43 @@ async function beginAccountSwitch(provider, accountId) {
     }
     if (poll) poll.refresh();
     sendSettings();
-    return { ok: true, view: settingsView(), message: `${row ? row.label : "The meters"} will use that account.` };
+    return { ok: true, view: settingsView(), message: `${name} now uses ${choice ? choice.label : accountId}.` };
+  }
+  // Adding an account: the current sign-in is kept, then the tool's own sign-in runs in a
+  // terminal (or its web sign-in opens when the CLI is not on this computer's PATH).
+  accounts.stash(provider);
+  const spec = accounts.TOOLS[provider];
+  const command = { label: spec.label, title: `${spec.label} sign-in`, file: spec.file, args: spec.args };
+  let launched = { ok: false };
+  if (cliOnPath(spec.file)) {
+    try {
+      launched = godmodeLaunch.open(provider, { command });
+    } catch (err) {
+      launched = { ok: false, error: err && err.message };
+    }
+  }
+  watchForSignIn();
+  if (launched.ok) {
+    return { ok: true, view: settingsView(), message: `A terminal opened with "${row ? row.login_command : spec.file}". Your current ${spec.label} account stays saved; the new one is added here once you have signed in.` };
   }
   const opened = await accounts.openLogin(provider);
   if (!opened.ok) return opened;
-  return { ok: true, view: settingsView(), message: `Sign-in opened in your browser. To change the account the meters read, also sign in with ${row ? row.login_command : "the tool"}.` };
+  return { ok: true, view: settingsView(), message: `Sign-in opened in your browser. To add the account here, also sign in with ${row ? row.login_command : "the tool"}; your current sign-in stays saved.` };
+}
+
+function forgetAccount(provider, accountId) {
+  if (!ACCOUNT_TOOLS.includes(provider) || typeof accountId !== "string") return { ok: false, error: "Unknown tool", view: settingsView() };
+  const row = accounts.list().find((item) => item.id === provider);
+  const choice = row && row.choices.find((item) => item.id === accountId);
+  if (!accounts.forget(provider, accountId)) {
+    return { ok: false, error: choice && choice.active ? "The account in use cannot be removed. Switch to another one first." : "That saved sign-in is not here.", view: settingsView() };
+  }
+  if (latest) {
+    latest = present(latest);
+    broadcast(latest);
+  }
+  sendSettings();
+  return { ok: true, view: settingsView(), message: `Removed ${choice ? choice.label : accountId} from the saved ${row ? row.label : provider} sign-ins. The tool's own login is unchanged.` };
 }
 
 function askAccountSwitch(provider, accountId) {
@@ -1478,6 +1558,15 @@ function wireIpc() {
     else if (op === "unlink" && typeof arg === "string") phone.setDirect(arg, false);
     return settingsView();
   });
+  ipcMain.handle("settings:account-forget", (e, provider, accountId) => {
+    if (!fromSettings(e)) return null;
+    return forgetAccount(provider, typeof accountId === "string" ? accountId : "");
+  });
+  // The panel's account menu: the same switch Settings offers, from the flyout's own page only.
+  ipcMain.handle("usage://account", (e, provider, accountId) => {
+    if (!fromFlyout(e)) return null;
+    return beginAccountSwitch(provider, typeof accountId === "string" && accountId ? accountId : null);
+  });
   ipcMain.handle("settings:account", (e, provider, accountId) => {
     if (!fromSettings(e)) return null;
     return beginAccountSwitch(provider, typeof accountId === "string" && accountId ? accountId : null);
@@ -1673,6 +1762,16 @@ if (!gotLock) {
     screen.on("display-added", displaysChanged);
 
     if (!latest) sendChipsLoading();
+    // Saved sign-ins are encrypted with the OS keychain when Electron can reach it.
+    try {
+      const canEncrypt = !!(safeStorage && typeof safeStorage.isEncryptionAvailable === "function" && safeStorage.isEncryptionAvailable());
+      accountVault.init(canEncrypt
+        ? { available: true, encrypt: (text) => safeStorage.encryptString(text), decrypt: (buf) => safeStorage.decryptString(buf) }
+        : { available: false });
+    } catch (err) {
+      log.error("account vault", err && err.message ? err.message : err);
+      accountVault.init({ available: false });
+    }
     refreshAccounts();
     poll = poller.start(cfg, (snap) => {
       const { snapshot: fresh } = applyLocalResets(snap);
