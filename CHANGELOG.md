@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.1 — 2026-10-23
+
+- **Android: switch accounts with a tap.** The phone keeps several of its own sign-ins per tool (Claude Code, Codex, Grok Build, Cursor); Home's tool details and the Accounts tab show them as tabs, the one in use selected, with **Add account on this phone** to sign in to another without signing out. Signing out forgets only the account in use. While a tool reads from the computer, the computer's saved accounts are the tabs instead: tapping one asks the computer, which confirms, and **Add account on computer** starts the computer's own sign-in there. Android only; the desktop app is unchanged from 1.12.0.
+
 ## 1.12.0 — 2026-10-23
 
 - **Switch accounts with one click.** Every card on the panel has an account menu and Settings → Accounts shows the same sign-ins as tabs. Picking one switches the meters and the tool itself: Usage Monitor keeps a copy of each Claude Code, Codex, Gemini and Cursor sign-in it has seen (encrypted with the computer's keychain where Electron can reach it, owner-only on disk either way) and puts the chosen one back into the tool's login file. Grok's and gh's own saved logins are offered the same way; Copilot switches with `gh auth switch`. **Add account…** keeps the current sign-in and opens a terminal with the tool's sign-in command; the new account joins the list within seconds of signing in (the tool's files are read every 10 s for three minutes). Saved copies can be removed in Settings. The account in use is never removed, and a phone can pick any saved sign-in (you still confirm on the computer).

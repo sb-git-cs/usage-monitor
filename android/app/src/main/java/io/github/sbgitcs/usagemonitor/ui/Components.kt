@@ -25,6 +25,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
@@ -38,6 +39,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -147,6 +151,23 @@ fun CompactDialog(onDismissRequest: () -> Unit, title: @Composable () -> Unit, t
                     confirmButton()
                 }
             }
+        }
+    }
+}
+
+/**
+ * Saved accounts as a row of chips: the one in use is selected, tapping another switches to it.
+ * The same control the desktop panel and Settings use for its sign-ins.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun AccountTabs(accounts: List<io.github.sbgitcs.usagemonitor.model.SavedAccount>, enabled: Boolean = true, onPick: (String) -> Unit) {
+    if (accounts.isEmpty()) return
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (a in accounts) {
+            FilterChip(selected = a.active, enabled = enabled && !a.active, onClick = { onPick(a.id) },
+                label = { Text(a.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                modifier = Modifier.semantics { contentDescription = if (a.active) "${a.label}, in use" else "Use ${a.label}" })
         }
     }
 }

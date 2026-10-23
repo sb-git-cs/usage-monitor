@@ -23,9 +23,15 @@ class TokenVault(context: Context) {
 
     fun get(provider: String, origin: String): Credential? = all().firstOrNull { it.provider == provider && it.origin == origin }
 
-    fun put(c: Credential) = update { list -> list.filterNot { it.provider == c.provider && it.origin == c.origin } + c }
+    /** Saves [c]; a phone sign-in replaces only the same account, so several accounts can be kept per tool. */
+    fun put(c: Credential) = update { list -> replacing(list, c) }
 
     fun remove(provider: String, origin: String) = update { list -> list.filterNot { it.provider == provider && it.origin == origin } }
+
+    /** Forgets one phone sign-in of [provider], the one whose [phoneKey] is [key]. */
+    fun removePhone(provider: String, key: String) = update { list ->
+        list.filterNot { it.provider == provider && it.origin == PHONE && phoneKey(it) == key }
+    }
 
     /** Replaces every token linked from the computer. */
     fun replaceLinked(linked: List<Credential>) = update { list -> list.filter { it.origin != LINKED } + linked }
@@ -75,6 +81,14 @@ class TokenVault(context: Context) {
         const val PHONE = "phone"
         private const val ALIAS = "sign-ins"
         private val lock = Any()
+
+        /** What tells one phone sign-in of a tool from another: its account, user or email. */
+        fun phoneKey(c: Credential): String = c.accountId ?: c.userId ?: c.account ?: ""
+
+        /** [c] in place of the sign-in it renews or repeats; linked tokens stay one per tool. */
+        internal fun replacing(list: List<Credential>, c: Credential): List<Credential> = list.filterNot {
+            it.provider == c.provider && it.origin == c.origin && (c.origin != PHONE || phoneKey(it) == phoneKey(c))
+        } + c
 
         internal fun encode(list: List<Credential>): String = JSONArray(list.map { c ->
             JSONObject().put("provider", c.provider).put("origin", c.origin).put("access", c.accessToken)

@@ -109,10 +109,35 @@ object PlanReadings {
         saveDirect(settings, directReadings(settings).filter { it.source != "linked" })
     }
 
-    /** Signs a tool out on this phone only. */
+    /** This phone's sign-ins for [provider], oldest first. */
+    fun phoneSignIns(creds: List<Credential>, provider: String): List<Credential> =
+        creds.filter { it.provider == provider && it.origin == TokenVault.PHONE }
+
+    /** The phone sign-in [provider] reads with: the chosen one, else the newest. */
+    internal fun activePhone(creds: List<Credential>, provider: String, selected: String?): Credential? {
+        val mine = phoneSignIns(creds, provider)
+        return mine.lastOrNull { selected != null && TokenVault.phoneKey(it) == selected } ?: mine.lastOrNull()
+    }
+
+    /** Makes one of this phone's saved sign-ins the one [provider] reads with, and reads it now. */
+    suspend fun selectPhoneAccount(context: Context, settings: Settings, provider: String, key: String) {
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                if (phoneSignIns(TokenVault(context).all(), provider).none { TokenVault.phoneKey(it) == key }) return@withLock
+                settings.setPhoneAccount(provider, key)
+                saveDirect(settings, directReadings(settings).filterNot { it.id == provider && it.source == "phone" })
+            }
+        }
+        refresh(context, settings, force = true)
+    }
+
+    /** Signs a tool out on this phone only: the sign-in in use goes; any other saved one takes over. */
     suspend fun signOut(context: Context, settings: Settings, provider: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            TokenVault(context).remove(provider, TokenVault.PHONE)
+            val vault = TokenVault(context)
+            val active = activePhone(vault.all(), provider, settings.phoneAccount(provider))
+            if (active != null) vault.removePhone(provider, TokenVault.phoneKey(active)) else vault.remove(provider, TokenVault.PHONE)
+            settings.setPhoneAccount(provider, null)
             backoffUntil.remove(provider)
             saveDirect(settings, directReadings(settings).filterNot { it.id == provider && it.source == "phone" })
         }
@@ -125,6 +150,8 @@ object PlanReadings {
             currentCoroutineContext().ensureActive()
             val selected = credential.copy(subscriptionRegime = settings.subscriptionRegime)
             TokenVault(context).put(selected)
+            // A new sign-in is the one to read with; the others stay saved for switching.
+            settings.setPhoneAccount(credential.provider, TokenVault.phoneKey(selected))
             val now = System.currentTimeMillis()
             backoffUntil.remove(credentialScope(selected))
             val provider = when (reading) {
@@ -171,7 +198,7 @@ object PlanReadings {
         val creds = vault.all()
         var changed = false
         for (id in MOBILE) {
-            val phone = creds.firstOrNull { it.provider == id && it.origin == TokenVault.PHONE }
+            val phone = activePhone(creds, id, settings.phoneAccount(id))
             val linked = creds.firstOrNull { it.provider == id && it.origin == TokenVault.LINKED }
             val computerCurrent = desktop[id]?.state == "ok" || (id in setOf("grok", "cursor") && desktop["x_subscription"]?.state == "ok")
             val chosen = phone ?: linked?.takeIf { !computerCurrent } ?: continue
@@ -185,7 +212,7 @@ object PlanReadings {
                 is UsageResult.Ok -> reading.provider.copy(source = source,
                     account = reading.provider.account ?: c.account, plan = reading.provider.plan ?: c.plan)
                 is UsageResult.AuthFailed -> {
-                    vault.remove(id, c.origin)
+                    if (c.origin == TokenVault.PHONE) vault.removePhone(id, TokenVault.phoneKey(c)) else vault.remove(id, c.origin)
                     if (source == "phone") placeholder(id, source, "logged_out", "Signed out on this phone. Sign in again.", c.account, now)
                     else placeholder(id, source, "logged_out", "Computer sign-in expired. Reconnect the computer to update it.", c.account, now)
                 }

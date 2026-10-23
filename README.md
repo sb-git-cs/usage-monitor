@@ -157,7 +157,7 @@ Version 1.4.0 publishes desktop downloads only; build Android from source using 
 
 | Screen | What it shows |
 | --- | --- |
-| **Home** | Your computer's Claude Code, Codex, Gemini, Grok Build and Cursor meters, reset times and forecasts, plus its CPU, memory, GPU, disk and network. Read over your Wi-Fi every 30 seconds while the app is open. GitHub Copilot remains available in the desktop app. |
+| **Home** | Your computer's Claude Code, Codex, Gemini, Grok Build and Cursor meters, reset times and forecasts, plus its CPU, memory, GPU, disk and network. Read over your Wi-Fi every 30 seconds while the app is open. Tap a tool for every window and its saved accounts as tabs: the phone's own sign-ins, or the computer's (the computer confirms a switch). GitHub Copilot remains available in the desktop app. |
 | **Data** | Live download and upload speed; mobile and Wi-Fi data today and this billing cycle; data per app. Needs **Usage access**, which the app asks for. |
 | **Phone** | CPU clock per core, memory, storage, battery level, temperature and current, heat status. |
 | **Settings** | Pairing, status bar speed, data plan (billing day, monthly and daily caps, warning level), alerts and quiet hours, updates, permissions. |

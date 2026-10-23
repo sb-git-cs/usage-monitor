@@ -1,7 +1,6 @@
 package io.github.sbgitcs.usagemonitor.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,11 +13,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -32,11 +31,14 @@ import android.net.Uri
 import androidx.compose.ui.unit.dp
 import io.github.sbgitcs.usagemonitor.data.PairedComputer
 import io.github.sbgitcs.usagemonitor.data.Settings
+import io.github.sbgitcs.usagemonitor.direct.PhoneSignIn
 import io.github.sbgitcs.usagemonitor.direct.PlanReadings
+import io.github.sbgitcs.usagemonitor.direct.TokenVault
 import io.github.sbgitcs.usagemonitor.model.DesktopSnapshot
 import io.github.sbgitcs.usagemonitor.model.MeterConnection
 import io.github.sbgitcs.usagemonitor.model.PlanWindow
 import io.github.sbgitcs.usagemonitor.model.Provider
+import io.github.sbgitcs.usagemonitor.model.SavedAccount
 import io.github.sbgitcs.usagemonitor.net.Format
 import io.github.sbgitcs.usagemonitor.pairing.DesktopClient
 import io.github.sbgitcs.usagemonitor.pairing.NotPairedException
@@ -183,6 +185,11 @@ private fun ProviderDetails(settings: Settings, p: Provider, warnAt: Double, now
     val scope = rememberCoroutineScope()
     var switching by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
+    // This phone's own sign-ins for the tool, when it reads with one of them.
+    var phoneAccounts by remember { mutableStateOf<List<SavedAccount>>(emptyList()) }
+    LaunchedEffect(p.id, p.source, switching) {
+        if (p.source == "phone") phoneAccounts = withContext(Dispatchers.IO) { phoneAccountsOf(context, settings, p.id) }
+    }
     fun ask(accountId: String?) {
         if (switching) return
         switching = true
@@ -190,12 +197,22 @@ private fun ProviderDetails(settings: Settings, p: Provider, warnAt: Double, now
             note = withContext(Dispatchers.IO) {
                 runCatching { DesktopClient(settings).switchAccount(p.id, accountId) }.fold(
                     onSuccess = {
-                        if (accountId == null) "Confirm the switch on your computer, then finish sign-in there."
+                        if (accountId == null) "Confirm on your computer: its sign-in opens there, and the new account joins this list."
                         else "Confirm the switch on your computer."
                     },
                     onFailure = { it.message ?: "The computer could not switch the account." },
                 )
             }
+            switching = false
+        }
+    }
+    fun pickPhone(key: String) {
+        if (switching) return
+        switching = true
+        scope.launch {
+            runCatching { PlanReadings.selectPhoneAccount(context, settings, p.id, key) }
+                .onFailure { note = it.message ?: "Could not switch." }
+            Widgets.refresh(context)
             switching = false
         }
     }
@@ -223,22 +240,37 @@ private fun ProviderDetails(settings: Settings, p: Provider, warnAt: Double, now
                     if (p.state == "ok") windowDetail(w, used, now) else "Last reading · ${w.label}")
             }
         }
-        if (p.accounts.size > 1) {
-            Spacer(Modifier.height(6.dp))
-            for (choice in p.accounts) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().clickable(enabled = !switching && !choice.active) { ask(choice.id) },
-                ) {
-                    RadioButton(selected = choice.active, onClick = null, enabled = !switching)
-                    Text(choice.label)
-                }
+        // Saved accounts as tabs: this phone's own when it reads with one, else the computer's.
+        if (p.source == "phone") {
+            if (phoneAccounts.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Note("Accounts on this phone")
+                AccountTabs(phoneAccounts, enabled = !switching, onPick = { pickPhone(it) })
+            }
+            if (p.id in PhoneSignIn.providers) TextButton(enabled = !switching, onClick = { PhoneSignIn.start(context, p.id) }) {
+                Text("Add account on this phone")
+            }
+        } else if (p.id != "x_subscription") {
+            if (p.accounts.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Note("Accounts on the computer")
+                AccountTabs(p.accounts, enabled = !switching, onPick = { ask(it) })
+            }
+            TextButton(enabled = !switching, onClick = { ask(null) }) {
+                Text(if (p.account.isNullOrBlank() && p.accounts.isEmpty()) "Sign in on computer" else "Add account on computer")
             }
         }
-        if (p.source != "phone" && p.id != "x_subscription") TextButton(enabled = !switching, onClick = { ask(null) }) {
-            Text(if (p.account.isNullOrBlank()) "Sign in on computer" else "Switch computer account")
-        }
         note?.let { Note(it) }
+    }
+}
+
+/** This phone's sign-ins for [provider] as tabs, the one it reads with selected. */
+internal fun phoneAccountsOf(context: android.content.Context, settings: Settings, provider: String): List<SavedAccount> {
+    val creds = TokenVault(context).all()
+    val active = PlanReadings.activePhone(creds, provider, settings.phoneAccount(provider))
+    return PlanReadings.phoneSignIns(creds, provider).map { c ->
+        val key = TokenVault.phoneKey(c)
+        SavedAccount(key, c.account ?: c.accountId ?: c.userId ?: "Account", active = c === active)
     }
 }
 

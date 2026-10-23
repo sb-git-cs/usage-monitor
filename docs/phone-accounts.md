@@ -38,6 +38,8 @@ pairing another computer drops the linked tokens.
 | Cursor | Browser approval at cursor.com while the phone waits. | None; sign in again after 60 days |
 | Gemini | Not offered: Google sign-in needs the Antigravity client secret, which is not sent to the phone. Use the computer link. | — |
 
+Several accounts can be signed in per tool (1.12.1). Each phone sign-in is kept under its account (`accountId`, `userId` or email, `TokenVault.phoneKey`); the tool reads with the one chosen in Home or Accounts, by default the newest. Signing out forgets only that account, and a token the service refuses drops only that account. Readings are cached per account, so switching back shows that account's last reading until the next read.
+
 Each flow mirrors the tool's own command-line sign-in (endpoints and client IDs confirmed
 against the installed CLIs on 2026-10-01). The Codex and Grok device codes were issued by the
 live services on the test phone; completing a sign-in and reading usage with it still needs

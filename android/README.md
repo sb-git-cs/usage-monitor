@@ -104,7 +104,12 @@ computer's CPU, memory, GPU, disk and network are one card below.
 
 **Accounts** has the **Computer link** (read usage directly with the computer's current
 access tokens, approved on the computer) and a row per tool with **Sign in** on the phone for
-Claude Code, Codex, Grok Build and Cursor. Gemini reads through the link. Widgets show the
+Claude Code, Codex, Grok Build and Cursor. Gemini reads through the link. Several accounts can
+be signed in per tool: they are tabs, the one in use selected, **Add account on this phone**
+adds another without signing out, and **Sign out** forgets only the one in use. While a tool
+reads from the computer, the computer's saved accounts are the tabs; tapping one asks the
+computer (which confirms) and **Add account on computer** starts its sign-in there. The same
+tabs are in a tool's details on Home. Widgets show the
 same readings with **PC**, **Direct** or **Phone**; cached values are muted and compact
 widgets show **Old**. How each source is chosen, token lifetimes and storage are in
 [phone accounts](../docs/phone-accounts.md).
