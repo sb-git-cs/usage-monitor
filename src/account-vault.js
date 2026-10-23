@@ -21,10 +21,19 @@ function file() {
   return path.join(paths.configDir(), "accounts.json");
 }
 
+// Gemini (Antigravity) on Windows keeps its sign-in in Credential Manager rather than a file.
+const WINCRED_TARGETS = { gemini: "gemini:antigravity" };
+let credentials = { read: null, write: null };
+
 // Encryption is optional: without it the copies are as protected as the CLI's own files.
+// readCredential(target) and writeCredential(target, text) reach Credential Manager on Windows.
 function init(options = {}) {
   const available = typeof options.encrypt === "function" && typeof options.decrypt === "function" && options.available !== false;
   codec = available ? { name: "keychain", encrypt: options.encrypt, decrypt: options.decrypt } : { name: "plain", encrypt: (t) => t, decrypt: (t) => t };
+  credentials = {
+    read: typeof options.readCredential === "function" ? options.readCredential : null,
+    write: typeof options.writeCredential === "function" ? options.writeCredential : null,
+  };
   store = null;
 }
 
@@ -111,15 +120,25 @@ function claudeConfig() {
   return path.join(paths.home(), ".claude.json");
 }
 
-// The current sign-in of a tool as the files that hold it; null when none is on disk.
-function snapshot(tool) {
+// The current sign-in of a tool as the files that hold it, or the Credential Manager entry
+// when the tool keeps it there; null when there is none.
+async function snapshot(tool) {
   const files = [];
   for (const target of sources(tool)) {
     const text = readText(target);
     if (text != null) files.push({ path: target, text });
   }
-  if (!files.length) return null;
   const extra = {};
+  if (!files.length && WINCRED_TARGETS[tool] && credentials.read) {
+    let blob = null;
+    try {
+      blob = await credentials.read(WINCRED_TARGETS[tool]);
+    } catch {
+      blob = null;
+    }
+    if (blob && typeof blob === "object") extra.wincred = { target: WINCRED_TARGETS[tool], text: JSON.stringify(blob) };
+  }
+  if (!files.length && !extra.wincred) return null;
   if (tool === "claude") {
     try {
       const acct = JSON.parse(readText(claudeConfig()) || "{}").oauthAccount;
@@ -148,9 +167,9 @@ function decode(payload) {
 
 // Saves (or refreshes) the tool's current sign-in under the given account. Nothing is written
 // when the copy already matches, so an unchanged login never rewrites the vault.
-function capture(tool, identity) {
+async function capture(tool, identity) {
   if (!TOOLS.includes(tool) || !identity || !ACCOUNT_ID.test(String(identity.id || ""))) return false;
-  const snap = snapshot(tool);
+  const snap = await snapshot(tool);
   if (!snap) return false;
   const data = load();
   const rows = data.tools[tool];
@@ -200,7 +219,7 @@ function forget(tool, id) {
 
 // Puts a saved sign-in back as the tool's current one. The sign-in that was current is kept
 // (captured by the caller) so the switch can be undone the same way.
-function activate(tool, id) {
+async function activate(tool, id) {
   if (!has(tool, id)) return { ok: false, error: "That account is not saved on this computer." };
   const row = load().tools[tool].find((item) => item.id === id);
   let snap;
@@ -209,7 +228,19 @@ function activate(tool, id) {
   } catch {
     return { ok: false, error: "The saved sign-in could not be read on this computer. Sign in again to save it." };
   }
-  if (!snap || !Array.isArray(snap.files) || !snap.files.length) return { ok: false, error: "The saved sign-in is empty." };
+  const stored = snap && typeof snap === "object" && snap.wincred && typeof snap.wincred === "object" ? snap.wincred : null;
+  if (!snap || !Array.isArray(snap.files) || (!snap.files.length && !stored)) return { ok: false, error: "The saved sign-in is empty." };
+  if (stored) {
+    if (stored.target !== WINCRED_TARGETS[tool] || typeof stored.text !== "string") return { ok: false, error: "The saved sign-in is not this tool's." };
+    if (!credentials.write) return { ok: false, error: "This computer cannot write that sign-in back." };
+    let written = false;
+    try {
+      written = await credentials.write(stored.target, stored.text);
+    } catch {
+      written = false;
+    }
+    if (!written) return { ok: false, error: "Couldn't write the sign-in to Credential Manager." };
+  }
   const allowed = new Set(sources(tool));
   try {
     for (const entry of snap.files) {

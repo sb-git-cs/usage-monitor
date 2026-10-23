@@ -13,6 +13,7 @@ public class TaskbarLayout {
   [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int index);
   [DllImport("user32.dll", EntryPoint="SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);
   [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
+  [DllImport("user32.dll")] public static extern bool GetWindowDisplayAffinity(IntPtr h, out uint affinity);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   public struct RECT { public int L; public int T; public int R; public int B; }
   public struct MONITORINFO {
@@ -89,8 +90,13 @@ function Get-Layout($hwnd, $own, $apppid, $capture) {
       $ownerApplied = ([TaskbarLayout]::GetWindowLongPtr($chips, -8) -eq $target)
       # 0x11 excludes the window from screen capture. Docked chips then are not a separate
       # bar in a share that does not include the taskbar. 0 puts a floating strip back in.
+      # Set only when it differs: setting it again makes DWM redraw the strip, which this loop
+      # did every 8 seconds and showed as a flicker beside the taskbar.
       $affinity = if ($capture -eq 1) { [uint32]0x11 } else { [uint32]0 }
-      [void][TaskbarLayout]::SetWindowDisplayAffinity($chips, $affinity)
+      $current = [uint32]0
+      if (-not [TaskbarLayout]::GetWindowDisplayAffinity($chips, [ref]$current) -or $current -ne $affinity) {
+        [void][TaskbarLayout]::SetWindowDisplayAffinity($chips, $affinity)
+      }
     }
   }
 

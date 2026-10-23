@@ -980,6 +980,8 @@ async function beginAccountSwitch(provider, accountId) {
     const choice = row && row.choices.find((item) => item.id === accountId);
     const result = await accounts.select(provider, accountId);
     if (!result.ok) return { ok: false, error: result.error || "That account is not saved on this computer.", view: settingsView() };
+    // The Gemini reader caches its Credential Manager read; the switched sign-in is read now.
+    if (provider === "gemini") gemini.forgetCredentials();
     cfg.accounts[provider] = accountId;
     config.save(cfg);
     if (latest) {
@@ -992,7 +994,7 @@ async function beginAccountSwitch(provider, accountId) {
   }
   // Adding an account: the current sign-in is kept, then the tool's own sign-in runs in a
   // terminal (or its web sign-in opens when the CLI is not on this computer's PATH).
-  accounts.stash(provider);
+  await accounts.stash(provider);
   const spec = accounts.TOOLS[provider];
   const command = { label: spec.label, title: `${spec.label} sign-in`, file: spec.file, args: spec.args };
   let launched = { ok: false };
@@ -1765,9 +1767,12 @@ if (!gotLock) {
     // Saved sign-ins are encrypted with the OS keychain when Electron can reach it.
     try {
       const canEncrypt = !!(safeStorage && typeof safeStorage.isEncryptionAvailable === "function" && safeStorage.isEncryptionAvailable());
-      accountVault.init(canEncrypt
-        ? { available: true, encrypt: (text) => safeStorage.encryptString(text), decrypt: (buf) => safeStorage.decryptString(buf) }
-        : { available: false });
+      const { readGenericCredential, writeGenericCredential } = require("./wincred");
+      accountVault.init({
+        ...(canEncrypt ? { available: true, encrypt: (text) => safeStorage.encryptString(text), decrypt: (buf) => safeStorage.decryptString(buf) } : { available: false }),
+        readCredential: readGenericCredential,
+        writeCredential: writeGenericCredential,
+      });
     } catch (err) {
       log.error("account vault", err && err.message ? err.message : err);
       accountVault.init({ available: false });

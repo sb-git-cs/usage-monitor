@@ -2,7 +2,9 @@
 
 ## 1.12.1 — 2026-10-23
 
-- **Android: switch accounts with a tap.** The phone keeps several of its own sign-ins per tool (Claude Code, Codex, Grok Build, Cursor); Home's tool details and the Accounts tab show them as tabs, the one in use selected, with **Add account on this phone** to sign in to another without signing out. Signing out forgets only the account in use. While a tool reads from the computer, the computer's saved accounts are the tabs instead: tapping one asks the computer, which confirms, and **Add account on computer** starts the computer's own sign-in there. Android only; the desktop app is unchanged from 1.12.0.
+- **Chips: the remaining flicker.** The taskbar helper re-applied the strip's screen-capture exclusion every 8 seconds, which makes Windows redraw the window; it now sets it only when it differs. The strip's system and battery tooltips were rewritten on every sample, which hides and reshows an open tooltip; they are written only when they change.
+- **Gemini accounts.** Antigravity keeps its sign-in in Windows Credential Manager with no ID token, so a second Gemini account was neither named nor saved. The account is now identified from the token (Google's userinfo, once per token), saved copies are taken from and put back into Credential Manager, and a switch reads the new sign-in at once instead of after the reader's cache expired.
+- **Android: switch accounts with a tap.** The phone keeps several of its own sign-ins per tool (Claude Code, Codex, Grok Build, Cursor); Home's tool details and the Accounts tab show them as tabs, the one in use selected, with **Add account on this phone** to sign in to another without signing out. Signing out forgets only the account in use. While a tool reads from the computer, the computer's saved accounts are the tabs instead: tapping one asks the computer, which confirms, and **Add account on computer** starts the computer's own sign-in there. 
 
 ## 1.12.0 — 2026-10-23
 

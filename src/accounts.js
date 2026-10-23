@@ -17,6 +17,7 @@ const { readGenericCredential } = require("./wincred");
 const { readValue } = require("./cursor-local");
 const githubAuth = require("./github-auth");
 const vault = require("./account-vault");
+const geminiAdapter = require("./adapters/gemini");
 
 const TOOLS = {
   claude: { label: "Claude Code", url: "https://claude.ai/login", file: "claude", args: ["auth", "login"] },
@@ -142,11 +143,17 @@ function readGrok(preferred) {
 
 function geminiIdentity(json) {
   if (!json || typeof json !== "object") return null;
-  const email = emailOf(jwtClaims(json.id_token)) || emailOf(jwtClaims(json.token && json.token.id_token));
+  const claims = jwtClaims(json.id_token) || jwtClaims(json.token && json.token.id_token);
   const token = json.token && typeof json.token === "object" ? json.token : json;
   const access = token && (token.access_token || token.accessToken || token.refresh_token || token.refreshToken);
+  // Antigravity keeps no ID token beside its access token; the account is then what the usage
+  // reader learned about that token (Google's userinfo), once it has read it.
+  const known = access ? geminiAdapter.knownIdentity(token.access_token || token.accessToken) : null;
+  const email = emailOf(claims) || emailOf(known || {});
+  const sub = clean((claims && claims.sub) || (known && known.sub));
   if (!email && !access) return null;
-  return { ...blank("gemini"), signed_in: true, account: email || null, account_id: email || null };
+  const id = email || (ACCOUNT_ID.test(sub) ? sub : null);
+  return { ...blank("gemini"), signed_in: true, account: email || (id ? "Google account" : null), account_id: id };
 }
 
 function readCursor() {
@@ -212,10 +219,10 @@ const SAVED_TOOLS = vault.TOOLS;
 
 // Keeps the tool's current sign-in in the vault under its account, so signing in to another
 // account (or switching) never loses it. Silent when the current sign-in has no identity.
-function stash(id, row = cached[id]) {
+async function stash(id, row = cached[id]) {
   if (!SAVED_TOOLS.includes(id) || !row || !row.signed_in || !row.account_id) return false;
   try {
-    return vault.capture(id, { id: row.account_id, label: row.account, detail: row.detail });
+    return await vault.capture(id, { id: row.account_id, label: row.account, detail: row.detail });
   } catch {
     return false;
   }
@@ -258,8 +265,8 @@ async function select(provider, accountId) {
     try { cached.copilot = await readCopilot(); } catch { /* keep the previous row */ }
     return { ok: true };
   }
-  stash(provider);
-  const result = vault.activate(provider, accountId);
+  await stash(provider);
+  const result = await vault.activate(provider, accountId);
   if (!result.ok) return result;
   try {
     const fresh = provider === "gemini" ? await readGemini() : provider === "claude" ? readClaude() : provider === "codex" ? readCodex() : readCursor();
@@ -304,7 +311,7 @@ async function refresh(preferred) {
     next.copilot.account_id = cached.copilot.account_id;
   }
   for (const id of SAVED_TOOLS) {
-    stash(id, next[id]);
+    await stash(id, next[id]);
     next[id] = withSaved(id, next[id]);
   }
   cached = next;
