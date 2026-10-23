@@ -11,6 +11,7 @@ app.setPath("userData", path.join(output, "electron-profile"));
 app.disableHardwareAcceleration();
 app.on("window-all-closed", () => {});
 
+let resizes = 0;
 const future = new Date(Date.now() + 3600000).toISOString();
 const netSummary = {
   state: "running", message: null, rx_rate: 1.5 * 1024 ** 2, tx_rate: 30 * 1024, active: 2,
@@ -159,6 +160,21 @@ async function check(file) {
       assert.equal(result.reds, 2);
       assert.match(await win.webContents.executeJavaScript(`document.querySelector('.pct-icon[data-id="claude"]').title`), /Weekly 90%/);
       assert.match(result.text, /CPU42%MEM67%GPU18%DISK9%SPACE84%/);
+      // A reading that looks the same keeps the same elements and asks for no resize: re-creating
+      // the chips and re-docking the window on every poll showed as a flicker beside the strip.
+      await win.webContents.executeJavaScript(`document.querySelector('.pct-icon[data-id="codex"]').dataset.mark = "kept"`);
+      const resizesBefore = resizes;
+      const moved = { providers: snapshot.providers.map((p) => p.id !== "codex" ? p : { ...p, fetched_at: new Date().toISOString(),
+        windows: [{ ...p.windows[0], forecast_at: new Date(Date.parse(p.windows[0].forecast_at) + 20000).toISOString() }] }) };
+      win.webContents.send("usage://snapshot", moved);
+      win.webContents.send("usage://system", { ...systemSummary, cpu: 43 });
+      win.webContents.send("usage://battery", batteryView);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal(await win.webContents.executeJavaScript(`document.querySelector('.pct-icon[data-id="codex"]').dataset.mark`), "kept", "chips are updated in place");
+      assert.equal(resizes, resizesBefore, "an unchanged strip size asks for no window resize");
+      win.webContents.send("usage://snapshot", { providers: snapshot.providers.map((p) => p.id !== "codex" ? p : { ...p, windows: [{ ...p.windows[0], used_pct: 81 }] }) });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.match(await win.webContents.executeJavaScript(`document.querySelector('.pct-icon[data-id="codex"]').textContent`), /81%/, "a changed reading still shows");
     }
     for (const [reading, expected] of [
       [{ ...batteryView.latest, percent: 9, state: "discharging", seconds: null }, "Estimating"],
@@ -554,6 +570,7 @@ async function checkInsights() {
 
 app.whenReady().then(async () => {
   fs.mkdirSync(output, { recursive: true });
+  ipcMain.on("usage://chips-resize", () => { resizes++; });
   ipcMain.handle("usage://get-interval", () => 5);
   ipcMain.handle("usage://get-chips-docked", () => true);
   ipcMain.handle("usage://get-flyout-state", () => ({ docked: false, pinned: false }));

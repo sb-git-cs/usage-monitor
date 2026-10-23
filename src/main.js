@@ -303,15 +303,34 @@ function sendChipsLoading() {
   if (chips && !chips.isDestroyed()) chips.webContents.send("usage://loading");
 }
 
+// The z-order level each widget was last given. Re-asserting "always on top" re-stacks the
+// window (SetWindowPos on Windows), which repaints the strip and the taskbar behind it; done
+// from the 800 ms recovery timer that showed as a flicker beside the chips. So the level is
+// only set again when it changed or the window lost it.
+const onTopLevel = new WeakMap();
+const unthrottled = new WeakSet();
+
 function keepWidgetOnTop(win, docked) {
   if (!win || win.isDestroyed()) return;
   if (win === chips && (cfg?.chips_hidden || taskbarConcealed)) return;
   const level = docked ? "screen-saver" : "pop-up-menu";
-  win.setAlwaysOnTop(true, level, 1);
+  let onTop = false;
   try {
-    win.webContents.setBackgroundThrottling(false);
+    onTop = typeof win.isAlwaysOnTop === "function" ? win.isAlwaysOnTop() : false;
   } catch {
-    /* ignore */
+    onTop = false;
+  }
+  if (!onTop || onTopLevel.get(win) !== level) {
+    win.setAlwaysOnTop(true, level, 1);
+    onTopLevel.set(win, level);
+  }
+  if (!unthrottled.has(win)) {
+    try {
+      win.webContents.setBackgroundThrottling(false);
+      unthrottled.add(win);
+    } catch {
+      /* ignore */
+    }
   }
   if (!win.isVisible()) win.showInactive();
 }
@@ -376,7 +395,14 @@ function recoverChipsIfNeeded() {
     chips.setOpacity(1);
     chips.showInactive();
   }
-  keepWidgetOnTop(chips, cfg.chips_docked);
+  // A strip that is visible and still on top needs nothing; touching it every 800 ms flickered.
+  let onTop = false;
+  try {
+    onTop = typeof chips.isAlwaysOnTop === "function" ? chips.isAlwaysOnTop() : false;
+  } catch {
+    onTop = false;
+  }
+  if (hidden || !onTop) keepWidgetOnTop(chips, cfg.chips_docked);
 }
 
 function createTray() {
