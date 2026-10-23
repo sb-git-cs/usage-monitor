@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.12.0 — 2026-10-23
+
+- **Switch accounts with one click.** Every card on the panel has an account menu and Settings → Accounts shows the same sign-ins as tabs. Picking one switches the meters and the tool itself: Usage Monitor keeps a copy of each Claude Code, Codex, Gemini and Cursor sign-in it has seen (encrypted with the computer's keychain where Electron can reach it, owner-only on disk either way) and puts the chosen one back into the tool's login file. Grok's and gh's own saved logins are offered the same way; Copilot switches with `gh auth switch`. **Add account…** keeps the current sign-in and opens a terminal with the tool's sign-in command; the new account joins the list within seconds of signing in (the tool's files are read every 10 s for three minutes). Saved copies can be removed in Settings. The account in use is never removed, and a phone can pick any saved sign-in (you still confirm on the computer).
+- **Chips no longer flicker.** The strip was re-stacked as "always on top" every 800 ms and its chips were re-created on every reading, which showed as a flicker beside the taskbar. The level is now set only when it changed or was lost, chips are updated in place, and the window is resized only when its measured size changed.
+
 ## 1.11.0 — 2026-10-21
 
 - **Panel:** a toolbar of labelled icons (refresh, Insights, network, pair a phone, keep open, settings) and a **Close** button replace the mixed glyphs and the refresh-interval list, which lives in Settings. The header says when the meters were last read. The summary names the plans at risk and the plan and window that resets next. Cards show **% used** instead of `used/100%`, line their bars up, show the exact reset time on hover and wrap long forecasts. Network and battery sit together under **This computer**, and the battery chart's labels are readable. Signed-out and failed plans show a coloured status line, and an empty or all-hidden panel says what to do.

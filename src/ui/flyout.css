@@ -151,6 +151,14 @@ html.side-panel, html.side-panel body { width: 100%; height: 100%; overflow: hid
 .pill.muted { color: var(--muted); }
 .p-account { font-size: 11px; color: var(--muted); margin: -4px 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flyout.compact .p-account { display: none; }
+/* The account menu on a card: looks like the account line, opens the saved sign-ins. */
+.account-pick {
+  font: inherit; font-size: 11px; color: var(--muted); background: transparent; max-width: 100%;
+  border: 1px solid transparent; border-radius: 5px; padding: 1px 2px; margin-left: -3px; cursor: pointer;
+  text-overflow: ellipsis; overflow: hidden; white-space: nowrap;
+}
+.account-pick:hover, .account-pick:focus { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text); }
+.account-pick option { background: var(--surface); color: var(--text); }
 .flyout.compact .provider { padding-top: 7px; padding-bottom: 7px; }
 .flyout.compact .provider .p-head { margin-bottom: 5px; }
 /* One grid per card, so every row's bar, percentage and reset line up. */

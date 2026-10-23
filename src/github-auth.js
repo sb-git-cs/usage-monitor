@@ -123,6 +123,69 @@ async function fromWindows() {
   return decodeBlob(await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded]));
 }
 
+// The gh logins saved for github.com in hosts.yml, and which one is active. gh keeps one
+// token per login, so switching between them needs no new sign-in.
+function users() {
+  for (const file of ghHosts()) {
+    let text;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const host = /^github\.com:\s*\n((?:[ \t]+.*\n?)*)/m.exec(text);
+    if (!host) continue;
+    const block = host[1];
+    const active = (/^[ \t]+user:[ \t]*([A-Za-z0-9-]{1,39})[ \t]*$/m.exec(block) || [])[1] || null;
+    const logins = [];
+    const section = /^([ \t]+)users:[ \t]*\n((?:\1[ \t]+.*\n?)*)/m.exec(block);
+    if (section) {
+      const indent = section[1].length;
+      for (const line of section[2].split("\n")) {
+        const m = /^([ \t]+)([A-Za-z0-9-]{1,39}):[ \t]*$/.exec(line);
+        if (m && m[1].length > indent && !logins.includes(m[2])) logins.push(m[2]);
+      }
+    }
+    if (active && !logins.includes(active)) logins.unshift(active);
+    if (logins.length) return { active, logins };
+  }
+  return { active: null, logins: [] };
+}
+
+// gh auth switch: the saved token for that login becomes the active one.
+async function switchUser(login) {
+  if (!/^[A-Za-z0-9-]{1,39}$/.test(String(login || ""))) return false;
+  const bin = cliPath("gh");
+  if (!bin) return false;
+  const args = ["auth", "switch", "--hostname", "github.com", "--user", login];
+  const ok = await new Promise((resolve) => {
+    let child;
+    try {
+      child = bin.endsWith(".cmd") || bin.endsWith(".bat")
+        ? spawn("cmd.exe", ["/d", "/c", bin, ...args], { windowsHide: true })
+        : spawn(bin, args, { windowsHide: true });
+    } catch {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killer);
+      resolve(value);
+    };
+    const killer = setTimeout(() => {
+      try { child.kill(); } catch { /* ignore */ }
+      finish(false);
+    }, 8000);
+    child.on("error", () => finish(false));
+    child.on("close", (code) => finish(code === 0));
+  });
+  if (ok) forget();
+  return ok;
+}
+
 async function token() {
   const now = Date.now();
   if (cache.at && now - cache.at < CACHE_MS) return cache.token;
@@ -137,4 +200,4 @@ function forget() {
   cache = { token: "", at: 0 };
 }
 
-module.exports = { token, forget, usable, decodeBlob };
+module.exports = { token, forget, usable, decodeBlob, users, switchUser };

@@ -294,29 +294,48 @@ function renderAccounts(rows) {
     );
     block.append(head);
     if (row.detail) block.append(el("p", "hint", row.detail));
-    if (row.choices && row.choices.length > 1) {
-      const choices = el("div", "account-choices");
-      block.append(choices);
+    // Every saved sign-in is a tab; the one in use is marked, the others switch with one click.
+    if (row.choices && row.choices.length) {
+      const tabs = el("div", "account-tabs");
+      tabs.setAttribute("role", "group");
+      tabs.setAttribute("aria-label", `${row.label} accounts`);
       for (const choice of row.choices) {
-        const label = el("label", "radio");
-        const input = el("input");
-        input.type = "radio";
-        input.name = `account-${row.id}`;
-        input.checked = !!choice.active;
-        input.addEventListener("change", () => {
-          if (input.checked) switchAccount(row.id, choice.id);
-        });
-        label.append(input, el("span", null, choice.label));
-        choices.append(label);
+        const tab = el("button", `account-tab${choice.active ? " active" : ""}`, choice.label);
+        tab.type = "button";
+        tab.setAttribute("aria-pressed", choice.active ? "true" : "false");
+        tab.title = choice.active ? `${row.label} uses ${choice.label}` : `Use ${choice.label} for ${row.label}`;
+        if (!choice.active) tab.addEventListener("click", () => switchAccount(row.id, choice.id));
+        tabs.append(tab);
+        if (!choice.active && row.removable) {
+          const remove = el("button", "account-remove", "×");
+          remove.type = "button";
+          remove.title = `Remove ${choice.label} from the saved ${row.label} sign-ins`;
+          remove.setAttribute("aria-label", remove.title);
+          remove.addEventListener("click", () => forgetAccount(row.id, choice.id));
+          tabs.append(remove);
+        }
       }
+      block.append(tabs);
     }
-    const button = el("button", "btn", row.signed_in ? "Switch account" : "Sign in");
+    const button = el("button", "btn", row.signed_in || (row.choices && row.choices.length) ? "Add account" : "Sign in");
     button.type = "button";
     button.addEventListener("click", () => switchAccount(row.id, null));
     block.append(button);
-    if (row.login_command) block.append(el("p", "hint", `To update this meter's account, sign in with ${row.login_command}.`));
+    if (row.login_command) {
+      block.append(el("p", "hint", row.choices && row.choices.length > 1
+        ? `Click an account to use it; the tool switches too. Add account keeps the current sign-in and runs ${row.login_command}.`
+        : `Add account keeps the current sign-in and runs ${row.login_command}; the new account then appears here.`));
+    }
     return block;
   }));
+}
+
+async function forgetAccount(id, accountId) {
+  const result = await api.forgetAccount(id, accountId);
+  if (!result) return;
+  if (result.view) render(result.view);
+  if (result.message) toast(result.message);
+  else if (result.error) toast(result.error);
 }
 
 async function switchAccount(id, accountId) {

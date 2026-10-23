@@ -58,11 +58,20 @@ function cmdQuote(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
 }
 
-function plan(id, { platform = process.platform, cwd = os.homedir(), terminal = platform === "win32" ? "cmd" : platform === "darwin" ? "osascript" : "x-terminal-emulator" } = {}) {
+// A fixed command to run in a terminal instead of a godmode CLI: { label, file, args, title }.
+function commandOf(id, command) {
+  if (command && typeof command === "object" && typeof command.file === "string" && Array.isArray(command.args)) {
+    return { label: String(command.label || command.file), file: command.file, args: command.args.map(String), title: String(command.title || command.label || command.file) };
+  }
   const cli = cliById(id);
+  return cli ? { ...cli, title: `${cli.label} (godmode)` } : null;
+}
+
+function plan(id, { platform = process.platform, cwd = os.homedir(), terminal = platform === "win32" ? "cmd" : platform === "darwin" ? "osascript" : "x-terminal-emulator", command = null } = {}) {
+  const cli = commandOf(id, command);
   if (!cli) return null;
   const dir = cwd || os.homedir();
-  const title = `${cli.label} (godmode)`;
+  const title = cli.title;
   if (platform === "win32" && terminal === "wt") {
     return {
       command: "wt.exe",
@@ -106,13 +115,14 @@ function explorerCommand(id) {
 }
 
 function open(id, deps = {}) {
-  if (!cliById(id)) return { ok: false, error: "Unknown tool" };
+  if (!commandOf(id, deps.command)) return { ok: false, error: "Unknown tool" };
   const platform = deps.platform || process.platform;
   const which = deps.which || defaultWhich;
   const spec = plan(id, {
     platform,
     cwd: deps.cwd || os.homedir(),
     terminal: deps.terminal || terminalFor(platform, which),
+    command: deps.command || null,
   });
   if (!spec) return { ok: false, error: "Unknown tool" };
   const spawnFn = deps.spawn || spawn;

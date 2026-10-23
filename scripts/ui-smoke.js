@@ -11,7 +11,9 @@ app.setPath("userData", path.join(output, "electron-profile"));
 app.disableHardwareAcceleration();
 app.on("window-all-closed", () => {});
 
+const hostile = '<img src="x" onerror="window.injected=true">';
 let resizes = 0;
+const accountSwitches = [];
 const future = new Date(Date.now() + 3600000).toISOString();
 const netSummary = {
   state: "running", message: null, rx_rate: 1.5 * 1024 ** 2, tx_rate: 30 * 1024, active: 2,
@@ -19,7 +21,8 @@ const netSummary = {
   hour: { rx: 120 * 1024 ** 2, tx: 8 * 1024 ** 2 },
 };
 const snapshot = { providers: [
-  { id: "claude", display_name: "Claude Code", status: { state: "ok" }, plan: '<img src="x" onerror="window.injected=true">', windows: [
+  { id: "claude", display_name: "Claude Code", status: { state: "ok" }, plan: '<img src="x" onerror="window.injected=true">',
+    account: "alice@example.com", accounts: [{ id: "alice@example.com", label: "alice@example.com", active: true }, { id: "bob@example.com", label: hostile, active: false }], windows: [
     { kind: "five_hour", label: "5h", used_pct: 25, remaining_pct: 75, resets_at: future },
     { kind: "weekly", label: "Weekly", used_pct: 90, remaining_pct: 10, resets_at: future },
   ] },
@@ -101,6 +104,32 @@ async function check(file) {
       win.webContents.send("usage://snapshot", snapshot);
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.equal(await win.webContents.executeJavaScript(`document.activeElement.dataset.id`), "claude", "provider focus survives polling");
+      // The account menu on a card lists the saved sign-ins, switches with one pick, and offers to add one.
+      const menu = await win.webContents.executeJavaScript(`(() => {
+        const s = document.querySelector('.provider[data-id="claude"] .account-pick');
+        return { options: [...s.options].map((o) => o.textContent), value: s.value, injected: !!s.querySelector('img') };
+      })()`);
+      assert.deepEqual(menu, { options: ["alice@example.com", hostile, "Add account…"], value: "alice@example.com", injected: false });
+      await win.webContents.executeJavaScript(`(() => { const s = document.querySelector('.provider[data-id="claude"] .account-pick'); s.focus(); s.value = "bob@example.com"; s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.deepEqual(accountSwitches.at(-1), ["claude", "bob@example.com"]);
+      assert.equal(await win.webContents.executeJavaScript(`document.getElementById('updated').textContent`), "Switched for the test", "the switch result shows in the header");
+      assert.equal(await win.webContents.executeJavaScript(`document.activeElement.classList.contains('account-pick')`), false, "the menu gives up focus after a switch so the next reading can show the account in use");
+      // A reading that arrives while the menu has focus waits; it is applied when the menu closes.
+      await win.webContents.executeJavaScript(`document.querySelector('.provider[data-id="claude"] .account-pick').focus()`);
+      win.webContents.send("usage://snapshot", { providers: snapshot.providers.map((p) => p.id === "claude" ? { ...p, plan: "Max 20x" } : p) });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(await win.webContents.executeJavaScript(`document.activeElement.classList.contains('account-pick')`), true);
+      assert.notEqual(await win.webContents.executeJavaScript(`document.querySelector('.provider[data-id="claude"] .p-plan').textContent`), "Max 20x");
+      await win.webContents.executeJavaScript(`document.activeElement.blur()`);
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      assert.equal(await win.webContents.executeJavaScript(`document.querySelector('.provider[data-id="claude"] .p-plan').textContent`), "Max 20x");
+      await win.webContents.executeJavaScript(`(() => { const s = document.querySelector('.provider[data-id="claude"] .account-pick'); s.value = "__add"; s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.deepEqual(accountSwitches.at(-1), ["claude", null]);
+      assert.equal(await win.webContents.executeJavaScript(`document.querySelector('.provider[data-id="claude"] .account-pick').value`), "alice@example.com", "the menu returns to the account in use");
+      win.webContents.send("usage://snapshot", snapshot);
+      await new Promise((resolve) => setTimeout(resolve, 100));
       assert.match(result.net, /Download ?1\.50 MB\/s Upload ?30\.0 KB\/s/);
       assert.match(result.net, /Used in the last hour ?↓ 120 MB\s↑ 8\.00 MB/);
       assert.ok(result.net.includes(`Now: ${hostile} 1.0 MB/s · Teams 80 KB/s`), "app names render as text");
@@ -276,7 +305,6 @@ async function check(file) {
 
 const MINUTE = 60000;
 const now = Date.now();
-const hostile = '<img src="x" onerror="window.injected=true">';
 const netState = {
   platform: "win32",
   status: { state: "running", message: null, action: null, warning: null, helper: null },
@@ -319,9 +347,11 @@ async function checkSettings() {
     display: { theme: "system", scale: 100, compact: false, hidden: ["copilot"], order: ["codex", "claude", "gemini", "grok", "cursor", "copilot"] },
     update: { kind: "installer", status: "up-to-date", current: "1.3.0", checked_at: Date.now() - 120000, auto: true },
     accounts: [
-      { id: "grok", label: "Grok Build", signed_in: true, account: hostile, login_command: "grok login",
+      { id: "grok", label: "Grok Build", signed_in: true, account: hostile, login_command: "grok login", removable: false,
         choices: [{ id: "first", label: "First account", active: true }, { id: "second", label: "Second account", active: false }] },
-      { id: "codex", label: "Codex", signed_in: false, account: null, login_command: "codex login", choices: [] },
+      { id: "codex", label: "Codex", signed_in: false, account: null, login_command: "codex login", removable: true, choices: [] },
+      { id: "claude", label: "Claude Code", signed_in: true, account: "alice@example.com", login_command: "claude auth login", removable: true,
+        choices: [{ id: "alice@example.com", label: "alice@example.com", active: true }, { id: "bob@example.com", label: hostile, active: false }] },
     ],
     phone: { enabled: true, listening: true, error: null, port: 47329, addresses: ["192.168.1.20"], name: "desk",
       devices: [{ id: "0123456789abcdef", name: hostile, created_at: Date.now() - 86400000, last_seen: Date.now() - 60000 }],
@@ -333,6 +363,7 @@ async function checkSettings() {
   ipcMain.handle("settings:get", () => view);
   ipcMain.handle("settings:set", (_e, patch) => { patches.push(patch); return view; });
   ipcMain.handle("settings:account", (_e, provider, accountId) => { accountActions.push({ provider, accountId }); return { ok: true }; });
+  ipcMain.handle("settings:account-forget", (_e, provider, accountId) => { accountActions.push({ forget: provider, accountId }); return { ok: true }; });
   const win = new BrowserWindow({ show: false, width: 640, height: 1400, webPreferences: {
     preload: path.join(source, "settings-preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
   } });
@@ -376,17 +407,26 @@ async function checkSettings() {
     })`);
     assert.equal(accountPanel.account, hostile, "account identities render as text");
     assert.equal(accountPanel.injected, false);
-    assert.deepEqual(accountPanel.buttons, ["Switch account", "Sign in"]);
+    // Saved sign-ins are tabs: the one in use is marked, the others switch with a click, saved
+    // copies can be removed, and Add account / Sign in start the tool's own sign-in.
+    assert.deepEqual(accountPanel.buttons, ["First account", "Second account", "Add account", "Sign in", "alice@example.com", hostile, "×", "Add account"]);
     assert.match(accountPanel.instructions, /grok login/);
-    await win.webContents.executeJavaScript(`document.querySelector('#accounts button').click()`);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.deepEqual(accountActions.at(-1), { provider: "grok", accountId: null });
-    await win.webContents.executeJavaScript(`document.querySelectorAll('#accounts button')[1].click()`);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.deepEqual(accountActions.at(-1), { provider: "codex", accountId: null });
-    await win.webContents.executeJavaScript(`(() => { const radio = document.querySelectorAll('#accounts input')[1]; radio.checked = true; radio.dispatchEvent(new Event('change')); })()`);
+    assert.deepEqual(await win.webContents.executeJavaScript(`[...document.querySelectorAll('#accounts .account-tab')].map(b => b.getAttribute('aria-pressed'))`), ["true", "false", "true", "false"]);
+    await win.webContents.executeJavaScript(`document.querySelectorAll('#accounts .account-tab')[1].click()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(accountActions.at(-1), { provider: "grok", accountId: "second" });
+    await win.webContents.executeJavaScript(`document.querySelectorAll('#accounts .account-tab')[0].click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(accountActions.at(-1), { provider: "grok", accountId: "second" }, "the account in use is not switched to again");
+    await win.webContents.executeJavaScript(`document.querySelectorAll('#accounts .btn')[0].click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(accountActions.at(-1), { provider: "grok", accountId: null });
+    await win.webContents.executeJavaScript(`document.querySelectorAll('#accounts .btn')[1].click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(accountActions.at(-1), { provider: "codex", accountId: null });
+    await win.webContents.executeJavaScript(`document.querySelector('#accounts .account-remove').click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(accountActions.at(-1), { forget: "claude", accountId: "bob@example.com" });
     await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('threshold'); s.value = '70'; s.dispatchEvent(new Event('change')); })()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(patches.at(-1), { alert_threshold: 70 });
@@ -571,6 +611,7 @@ async function checkInsights() {
 app.whenReady().then(async () => {
   fs.mkdirSync(output, { recursive: true });
   ipcMain.on("usage://chips-resize", () => { resizes++; });
+  ipcMain.handle("usage://account", (_e, provider, accountId) => { accountSwitches.push([provider, accountId]); return { ok: true, message: "Switched for the test" }; });
   ipcMain.handle("usage://get-interval", () => 5);
   ipcMain.handle("usage://get-chips-docked", () => true);
   ipcMain.handle("usage://get-flyout-state", () => ({ docked: false, pinned: false }));
