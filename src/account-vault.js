@@ -200,6 +200,14 @@ async function capture(tool, identity) {
   return true;
 }
 
+// Where a tool's current sign-in is, for the Settings report: "file", "credential-manager" or "none".
+async function sourceOf(tool) {
+  if (!TOOLS.includes(tool)) return "none";
+  const snap = await snapshot(tool);
+  if (!snap) return "none";
+  return snap.files && snap.files.length ? "file" : "credential-manager";
+}
+
 function list(tool) {
   if (!TOOLS.includes(tool)) return [];
   return load().tools[tool].map((row) => ({ id: row.id, label: row.label, detail: row.detail, saved_at: row.saved_at }));
@@ -269,4 +277,4 @@ async function activate(tool, id) {
   return { ok: true };
 }
 
-module.exports = { init, capture, list, has, forget, activate, TOOLS };
+module.exports = { init, capture, list, has, forget, activate, sourceOf, TOOLS };

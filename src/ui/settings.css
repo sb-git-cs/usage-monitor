@@ -107,6 +107,10 @@ label.setting-name { cursor: default; }
   color: var(--muted); font: inherit; font-size: 14px; line-height: 1; cursor: pointer;
 }
 .account-remove:hover { color: var(--danger); border-color: var(--border); background: var(--surface-2); }
+.account-keep { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.account-keep .hint { margin: 0; }
+.account .text-btn { border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 5px; white-space: nowrap; }
+.account .text-btn:hover { background: var(--surface-2); text-decoration: underline; }
 .account .btn { grid-row: 1; grid-column: 2; }
 
 /* Narrow windows: the section links become a scrolling row above the settings. */

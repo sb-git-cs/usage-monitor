@@ -234,7 +234,7 @@ function withSaved(id, row) {
   if (!SAVED_TOOLS.includes(id)) return row;
   let saved = [];
   try { saved = vault.list(id); } catch { saved = []; }
-  const choices = saved.map((entry) => ({ id: entry.id, label: entry.label, active: row.signed_in && entry.id === row.account_id }));
+  const choices = saved.map((entry) => ({ id: entry.id, label: entry.label, active: row.signed_in && entry.id === row.account_id, saved_at: entry.saved_at }));
   if (row.signed_in && row.account_id && !choices.some((choice) => choice.active)) {
     choices.unshift({ id: row.account_id, label: row.account || row.account_id, active: true });
   }
@@ -275,6 +275,36 @@ async function select(provider, accountId) {
     /* the next refresh reads it */
   }
   return { ok: true };
+}
+
+// Saves the tool's current sign-in now, and says what happened, so a user can make sure an
+// account is kept before signing in to another one.
+async function keep(provider) {
+  if (!TOOLS[provider]) return { ok: false, message: "Unknown tool" };
+  const row = cached[provider] || blank(provider);
+  const name = row.label;
+  if (!SAVED_TOOLS.includes(provider)) {
+    return { ok: true, message: provider === "grok" ? `${name} keeps every login in its own file; each one is already offered here.` : `${name} follows gh's saved logins; each one is already offered here.` };
+  }
+  if (!row.signed_in) return { ok: false, message: `${name} is not signed in on this computer.` };
+  if (!row.account_id) {
+    return { ok: false, message: `${name}'s sign-in has no account name yet. It is kept as soon as the meter has read it; try again after the next reading.` };
+  }
+  const changed = await stash(provider, row);
+  let saved = [];
+  try { saved = vault.list(provider); } catch { saved = []; }
+  if (saved.some((entry) => entry.id === row.account_id)) {
+    cached[provider] = withSaved(provider, { ...row, choices: [] });
+    return { ok: true, message: `${changed ? "Kept" : "Already kept"} ${row.account} for ${name}. ${saved.length} saved sign-in${saved.length === 1 ? "" : "s"}.` };
+  }
+  let source = "none";
+  try { source = await vault.sourceOf(provider); } catch { source = "none"; }
+  if (source === "none") {
+    return { ok: false, message: provider === "claude" && process.platform === "darwin"
+      ? "Claude Code keeps its login in the macOS Keychain, which cannot be copied here."
+      : `No ${name} sign-in file was found to copy.` };
+  }
+  return { ok: false, message: `${name}'s sign-in could not be saved. Check the log for details.` };
 }
 
 // Drops a saved sign-in that is not the current one.
@@ -357,4 +387,4 @@ async function openLogin(id, openExternal = (url) => require("electron").shell.o
   }
 }
 
-module.exports = { list, refresh, decorate, select, hasChoice, forget, stash, observe, openLogin, TOOLS, SAVED_TOOLS };
+module.exports = { list, refresh, decorate, select, hasChoice, forget, stash, keep, observe, openLogin, TOOLS, SAVED_TOOLS };

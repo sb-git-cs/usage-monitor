@@ -321,6 +321,20 @@ function renderAccounts(rows) {
     button.type = "button";
     button.addEventListener("click", () => switchAccount(row.id, null));
     block.append(button);
+    // Sign-ins are kept on their own; this says so, and saves the current one right now.
+    if (row.removable && row.signed_in) {
+      const saved = (row.choices || []).filter((c) => c.saved_at);
+      const newest = Math.max(0, ...saved.map((c) => c.saved_at || 0));
+      const keepRow = el("div", "account-keep");
+      keepRow.append(el("span", "hint", saved.length
+        ? `${saved.length} saved for quick switching${newest ? ` · last saved ${relative(newest)}` : ""}`
+        : "Not saved yet"));
+      const keep = el("button", "text-btn", "Keep current sign-in");
+      keep.type = "button";
+      keep.addEventListener("click", () => keepAccount(row.id));
+      keepRow.append(keep);
+      block.append(keepRow);
+    }
     if (row.login_command) {
       block.append(el("p", "hint", row.choices && row.choices.length > 1
         ? `Click an account to use it; the tool switches too. Add account keeps the current sign-in and runs ${row.login_command}.`
@@ -328,6 +342,13 @@ function renderAccounts(rows) {
     }
     return block;
   }));
+}
+
+async function keepAccount(id) {
+  const result = await api.keepAccount(id);
+  if (!result) return;
+  if (result.view) render(result.view);
+  if (result.message) toast(result.message);
 }
 
 async function forgetAccount(id, accountId) {

@@ -369,7 +369,7 @@ async function checkSettings() {
         choices: [{ id: "first", label: "First account", active: true }, { id: "second", label: "Second account", active: false }] },
       { id: "codex", label: "Codex", signed_in: false, account: null, login_command: "codex login", removable: true, choices: [] },
       { id: "claude", label: "Claude Code", signed_in: true, account: "alice@example.com", login_command: "claude auth login", removable: true,
-        choices: [{ id: "alice@example.com", label: "alice@example.com", active: true }, { id: "bob@example.com", label: hostile, active: false }] },
+        choices: [{ id: "alice@example.com", label: "alice@example.com", active: true, saved_at: Date.now() - 90000 }, { id: "bob@example.com", label: hostile, active: false, saved_at: Date.now() - 3600000 }] },
     ],
     phone: { enabled: true, listening: true, error: null, port: 47329, addresses: ["192.168.1.20"], name: "desk",
       devices: [{ id: "0123456789abcdef", name: hostile, created_at: Date.now() - 86400000, last_seen: Date.now() - 60000 }],
@@ -382,6 +382,7 @@ async function checkSettings() {
   ipcMain.handle("settings:set", (_e, patch) => { patches.push(patch); return view; });
   ipcMain.handle("settings:account", (_e, provider, accountId) => { accountActions.push({ provider, accountId }); return { ok: true }; });
   ipcMain.handle("settings:account-forget", (_e, provider, accountId) => { accountActions.push({ forget: provider, accountId }); return { ok: true }; });
+  ipcMain.handle("settings:account-keep", (_e, provider) => { accountActions.push({ keep: provider }); return { ok: true, message: "Kept for the test" }; });
   const win = new BrowserWindow({ show: false, width: 640, height: 1400, webPreferences: {
     preload: path.join(source, "settings-preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
   } });
@@ -427,7 +428,8 @@ async function checkSettings() {
     assert.equal(accountPanel.injected, false);
     // Saved sign-ins are tabs: the one in use is marked, the others switch with a click, saved
     // copies can be removed, and Add account / Sign in start the tool's own sign-in.
-    assert.deepEqual(accountPanel.buttons, ["First account", "Second account", "Add account", "Sign in", "alice@example.com", hostile, "×", "Add account"]);
+    assert.deepEqual(accountPanel.buttons, ["First account", "Second account", "Add account", "Sign in", "alice@example.com", hostile, "×", "Add account", "Keep current sign-in"]);
+    assert.match(await win.webContents.executeJavaScript(`document.querySelector('#accounts .account-keep .hint').textContent`), /^2 saved for quick switching · last saved /);
     assert.match(accountPanel.instructions, /grok login/);
     assert.deepEqual(await win.webContents.executeJavaScript(`[...document.querySelectorAll('#accounts .account-tab')].map(b => b.getAttribute('aria-pressed'))`), ["true", "false", "true", "false"]);
     await win.webContents.executeJavaScript(`document.querySelectorAll('#accounts .account-tab')[1].click()`);
@@ -445,6 +447,10 @@ async function checkSettings() {
     await win.webContents.executeJavaScript(`document.querySelector('#accounts .account-remove').click()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(accountActions.at(-1), { forget: "claude", accountId: "bob@example.com" });
+    await win.webContents.executeJavaScript(`document.querySelector('#accounts .account-keep .text-btn').click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(accountActions.at(-1), { keep: "claude" });
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('toast').textContent`), "Kept for the test");
     await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('threshold'); s.value = '70'; s.dispatchEvent(new Event('change')); })()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(patches.at(-1), { alert_threshold: 70 });
