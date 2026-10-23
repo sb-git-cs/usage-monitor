@@ -1560,6 +1560,16 @@ function wireIpc() {
     else if (op === "unlink" && typeof arg === "string") phone.setDirect(arg, false);
     return settingsView();
   });
+  ipcMain.handle("settings:account-keep", async (e, provider) => {
+    if (!fromSettings(e)) return null;
+    const result = await accounts.keep(typeof provider === "string" ? provider : "");
+    if (result.ok && latest) {
+      latest = present(latest);
+      broadcast(latest);
+    }
+    sendSettings();
+    return { ...result, view: settingsView() };
+  });
   ipcMain.handle("settings:account-forget", (e, provider, accountId) => {
     if (!fromSettings(e)) return null;
     return forgetAccount(provider, typeof accountId === "string" ? accountId : "");

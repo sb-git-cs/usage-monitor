@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.2 — 2026-10-23
+
+- **Docked chips no longer jump.** The network chip's value box was narrower than its longest values ("1.5 MB/s", "999 KB/s") on the docked strip, so the chip changed width as traffic changed and every change resized the window and re-docked the strip: a jump beside the taskbar every second or two while anything was downloading. Every live value now has a fixed width, and the window is sized in 8px steps so a value that grows by a character cannot move the strip. Covered by the UI smoke test.
+- **Keep current sign-in.** Settings → Accounts shows how many sign-ins are saved for quick switching per tool and when the last one was saved, and a **Keep current sign-in** button saves the one in use right now and says whether it could (not signed in, no account name yet, no file to copy, macOS Keychain). Sign-ins are still saved on their own every minute and every 10 seconds after Add account.
+- **A narrower strip.** The battery chip is two short lines ("⚡62%" over "▲50m" to full, or "▼2h05" left; Full, Plugged, "…" while estimating) at half its former width, with the words in its tooltip. The CPU, memory, GPU, disk and storage group has smaller labels, tighter spacing and a compact disk rate ("1.5M" instead of "1.5 MB/s"; the tooltip keeps the unit). About 70 px shorter in all.
+
 ## 1.12.1 — 2026-10-23
 
 - **Chips: the remaining flicker.** The taskbar helper re-applied the strip's screen-capture exclusion every 8 seconds, which makes Windows redraw the window; it now sets it only when it differs. The strip's system and battery tooltips were rewritten on every sample, which hides and reshows an open tooltip; they are written only when they change.

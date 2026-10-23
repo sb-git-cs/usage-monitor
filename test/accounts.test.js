@@ -216,3 +216,21 @@ test("a Gemini sign-in without an ID token is named by what the usage reader lea
   assert.deepEqual(known.vault.tools.gemini.map((row) => row.id), ["g@example.com"]);
   assert.equal(JSON.stringify(known.accounts.list()).includes("antigravity-access"), false);
 });
+
+test("keeping a sign-in saves it now and says what happened", async () => {
+  const files = { [claudeJson]: JSON.stringify({ oauthAccount: { emailAddress: "alice@example.com" } }) };
+  const { accounts, vault } = harness(files, null);
+  assert.equal((await accounts.keep("codex")).ok, false, "not signed in");
+  assert.match((await accounts.keep("codex")).message, /not signed in/);
+  await accounts.refresh({});
+  const kept = await accounts.keep("claude");
+  assert.equal(kept.ok, true);
+  assert.match(kept.message, /Already kept alice@example.com for Claude Code\. 1 saved sign-in\./);
+  vault.tools.claude.length = 0;
+  const again = await accounts.keep("claude");
+  assert.match(again.message, /^Kept alice@example.com/);
+  assert.deepEqual(vault.tools.claude.map((row) => row.id), ["alice@example.com"]);
+  assert.match((await accounts.keep("grok")).message, /already offered/);
+  assert.equal((await accounts.keep("nope")).ok, false);
+  assert.equal(accounts.list().find((row) => row.id === "claude").choices[0].saved_at, undefined, "the memory vault has no dates; real ones carry saved_at");
+});

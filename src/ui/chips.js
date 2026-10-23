@@ -83,15 +83,20 @@ function askSize(w, h) {
   window.usage.resizeChips(w, h);
 }
 
+// The window is sized in 8px steps, so a value that grows by a character cannot move the docked
+// strip; the spare pixels are transparent.
+const WIDTH_STEP = 8;
+
 function fitBar() {
   const w = Math.ceil(Math.max(bar.scrollWidth, bar.offsetWidth));
+  const step = (px) => Math.ceil(px / WIDTH_STEP) * WIDTH_STEP;
   if (fillHeight) {
     // No transparent margin below the strip, so it sits flush with the taskbar edges.
-    askSize(w + 2, fillHeight);
+    askSize(step(w + 2), fillHeight);
     return;
   }
   const h = Math.ceil(Math.max(bar.scrollHeight, bar.offsetHeight, 24));
-  askSize(w + 4, h + 4);
+  askSize(step(w + 4), h + 4);
 }
 
 function showLoading() {
@@ -297,11 +302,23 @@ function renderSystem(data = {}) {
   lastSystem = data;
   const pct = (n) => Number.isFinite(n) && n >= 0 ? `${Math.round(Math.min(100, n))}%` : "—";
   const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GiB`;
+  // "1.5M", "999K": at most four characters, so the disk column stays as narrow as a percentage.
+  const compactRate = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0.5) return "0";
+    let v = n;
+    let i = 0;
+    while (v >= 999.5 && i < 4) {
+      v /= 1024;
+      i++;
+    }
+    return `${i === 0 || v >= 9.95 ? Math.round(v) : v.toFixed(1)}${["B", "K", "M", "G", "T"][i]}`;
+  };
   const titles = {
     cpu: "CPU: total processor utilization",
     mem: "MEM: physical memory in use",
     gpu: "GPU: busiest GPU engine; — means the driver does not expose utilization",
-    disk: data.diskRate != null ? "DISK: total read + write throughput" : "DISK: busiest HDD/SSD active time",
+    disk: data.diskRate != null ? `DISK: total read + write, ${NetFormat.formatRateShort(data.diskRate)}` : "DISK: busiest HDD/SSD active time",
     space: "SPACE: fullest mounted volume (storage used)",
   };
   // Only what changed is written: rewriting a tooltip on every sample hides and reshows it.
@@ -311,7 +328,7 @@ function renderSystem(data = {}) {
   for (const [key] of systemFields) {
     const el = systemRoot.querySelector(`[data-metric="${key}"]`);
     set(el, "hidden", prefs.chips_show[key] === false || (key === "gpu" && data.gpuPresent !== true));
-    set(el.querySelector(".system-value"), "textContent", key === "disk" && data.diskRate != null ? NetFormat.formatRateShort(data.diskRate) : pct(data[key]));
+    set(el.querySelector(".system-value"), "textContent", key === "disk" && data.diskRate != null ? compactRate(data.diskRate) : pct(data[key]));
     el.classList.toggle("busy", Number.isFinite(data[key]) && data[key] >= 80);
     let title = titles[key];
     if (key === "disk") title += (data.disks || []).map((d) => `\n${d.name}: ${pct(d.busy)}`).join("");
@@ -357,6 +374,17 @@ window.usage.onChipsPopped(setPopped);
 window.usage.onChipsFill(setFill);
 window.usage.getChipsDocked().then(setDocked);
 
+// "▲50m" while charging, "▼2h05" while discharging; Full, Plugged, "…" while estimating.
+function shortBattery(r) {
+  if (!r || r.percent == null || r.present !== true || r.state === "unknown") return "—";
+  if (r.state === "full") return "Full";
+  if (r.state === "plugged") return "Plugged";
+  if (!Number.isFinite(r.seconds) || r.seconds < 0) return "…";
+  const mins = Math.max(0, Math.round(r.seconds / 60));
+  const eta = mins >= 24 * 60 ? `${Math.round(mins / 1440)}d` : mins >= 60 ? `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, "0")}` : `${mins}m`;
+  return `${r.state === "charging" ? "▲" : "▼"}${eta}`;
+}
+
 // Battery is independent of the faster hardware sampler and remains available when chips hide.
 let lastBattery = {};
 function renderBattery(view = {}) {
@@ -367,8 +395,9 @@ function renderBattery(view = {}) {
     if (node[prop] !== value) node[prop] = value;
   };
   set(el, "hidden", prefs.chips_show.battery === false || r?.present === false);
-  set(document.getElementById("batteryPct"), "textContent", `${r?.state === "charging" ? "⚡" : "BAT"} ${r?.percent != null ? Math.round(r.percent) + "%" : "—"}`);
-  set(document.getElementById("batteryEta"), "textContent", r?.state === "plugged" ? "Plugged in" : BatteryModel.label(r));
+  // Two short lines: "⚡62%" over "▲50m" (to full) or "▼2h05" (left); the tooltip has the words.
+  set(document.getElementById("batteryPct"), "textContent", `${r?.state === "charging" ? "⚡" : "▮"}${r?.percent != null ? Math.round(r.percent) + "%" : "—"}`);
+  set(document.getElementById("batteryEta"), "textContent", shortBattery(r));
   set(el, "title", `Battery · ${BatteryModel.label(r)}${r ? " · Updated " + new Date(r.t).toLocaleTimeString() : ""}`);
   const aria = `${el.title}${r?.state === "discharging" && r.percent <= 20 ? " · Low battery" : ""}. Open battery details`;
   if (el.getAttribute("aria-label") !== aria) el.setAttribute("aria-label", aria);

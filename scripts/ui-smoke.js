@@ -87,7 +87,7 @@ async function check(file) {
         return hit === el || el.contains(hit);
       })(),
     })`);
-    assert.match(result.battery, /~50m to full/);
+    assert.match(result.battery, file === "chips" ? /^▲50m$/ : /~50m to full/);
     assert.equal(result.injected, false);
     assert.equal(result.node, "undefined");
     assert.equal(result.clickable, true, `${file} controls must receive pointer events`);
@@ -204,13 +204,31 @@ async function check(file) {
       win.webContents.send("usage://snapshot", { providers: snapshot.providers.map((p) => p.id !== "codex" ? p : { ...p, windows: [{ ...p.windows[0], used_pct: 81 }] }) });
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.match(await win.webContents.executeJavaScript(`document.querySelector('.pct-icon[data-id="codex"]').textContent`), /81%/, "a changed reading still shows");
+      // Live values never change a chip's width: a network chip that grew with "1.5 MB/s" and shrank
+      // with "30 KB/s" resized and re-docked the strip on every reading, which showed as a jump.
+      const widths = [];
+      const resizesAtStart = resizes;
+      for (const [rx, tx] of [[30 * 1024, 2 * 1024], [1.5 * 1024 ** 2, 999 * 1024], [123 * 1024 ** 2, 0.4], [9.9 * 1024, 999.6 * 1024 ** 2]]) {
+        win.webContents.send("usage://net", { ...netSummary, rx_rate: rx, tx_rate: tx });
+        win.webContents.send("usage://system", { ...systemSummary, cpu: rx % 100, mem: 100, space: 9 });
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        widths.push(await win.webContents.executeJavaScript(`[document.getElementById('net').getBoundingClientRect().width, document.getElementById('system').getBoundingClientRect().width, document.getElementById('bar').getBoundingClientRect().width].join('x')`));
+      }
+      assert.equal(new Set(widths).size, 1, `chip widths must not follow their values: ${widths.join(" ")}`);
+      assert.equal(resizes, resizesAtStart, "live values must not resize the window");
+      win.webContents.send("usage://net", netSummary);
+      win.webContents.send("usage://system", systemSummary);
+      await new Promise((resolve) => setTimeout(resolve, 60));
     }
-    for (const [reading, expected] of [
-      [{ ...batteryView.latest, percent: 9, state: "discharging", seconds: null }, "Estimating"],
-      [{ ...batteryView.latest, percent: 100, state: "full", seconds: null }, "Full"],
-      [{ ...batteryView.latest, percent: 80, state: "plugged", seconds: null }, "Plugged in"],
-      [{ ...batteryView.latest, present: null, percent: null, state: "unknown", seconds: null }, "Unavailable"],
+    // The strip keeps to short forms; the panel spells them out.
+    for (const [reading, long, short] of [
+      [{ ...batteryView.latest, percent: 9, state: "discharging", seconds: null }, "Estimating", "…"],
+      [{ ...batteryView.latest, percent: 100, state: "full", seconds: null }, "Full", "Full"],
+      [{ ...batteryView.latest, percent: 80, state: "plugged", seconds: null }, "Plugged in", "Plugged"],
+      [{ ...batteryView.latest, present: null, percent: null, state: "unknown", seconds: null }, "Unavailable", "—"],
+      [{ ...batteryView.latest, percent: 40, state: "discharging", seconds: 7500 }, "~2h 5m left", "▼2h05"],
     ]) {
+      const expected = file === "chips" ? short : long;
       win.webContents.send("usage://battery", { latest: reading, points: batteryPoints });
       await new Promise((resolve) => setTimeout(resolve, 40));
       const battery = await win.webContents.executeJavaScript(`({text: (document.getElementById('batteryEta') || document.getElementById('batteryStatus')).textContent, hidden: (document.getElementById('batteryChip') || document.getElementById('batteryCard')).hidden})`);
@@ -249,8 +267,8 @@ async function check(file) {
       assert.equal(fill.netDisplay, "grid");
       // About 48px with Segoe UI; the default fonts on macOS (50px) and Ubuntu (52.5px) are wider.
       assert.ok(fill.session <= 54, `compact sessions chip: ${fill.session}px`);
-      assert.ok(fill.battery <= 130, `compact battery chip: ${fill.battery}px`);
-      assert.ok(fill.width - fill.session - fill.battery < 420, `compact strip including system metrics: ${fill.width}px`);
+      assert.ok(fill.battery <= 56, `compact battery chip: ${fill.battery}px`);
+      assert.ok(fill.width - fill.session - fill.battery < 400, `compact strip including system metrics: ${fill.width}px`);
       renderedFrame = null;
       const fillDeadline = Date.now() + 5000;
       while (!renderedFrame && Date.now() < fillDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -351,7 +369,7 @@ async function checkSettings() {
         choices: [{ id: "first", label: "First account", active: true }, { id: "second", label: "Second account", active: false }] },
       { id: "codex", label: "Codex", signed_in: false, account: null, login_command: "codex login", removable: true, choices: [] },
       { id: "claude", label: "Claude Code", signed_in: true, account: "alice@example.com", login_command: "claude auth login", removable: true,
-        choices: [{ id: "alice@example.com", label: "alice@example.com", active: true }, { id: "bob@example.com", label: hostile, active: false }] },
+        choices: [{ id: "alice@example.com", label: "alice@example.com", active: true, saved_at: Date.now() - 90000 }, { id: "bob@example.com", label: hostile, active: false, saved_at: Date.now() - 3600000 }] },
     ],
     phone: { enabled: true, listening: true, error: null, port: 47329, addresses: ["192.168.1.20"], name: "desk",
       devices: [{ id: "0123456789abcdef", name: hostile, created_at: Date.now() - 86400000, last_seen: Date.now() - 60000 }],
@@ -364,6 +382,7 @@ async function checkSettings() {
   ipcMain.handle("settings:set", (_e, patch) => { patches.push(patch); return view; });
   ipcMain.handle("settings:account", (_e, provider, accountId) => { accountActions.push({ provider, accountId }); return { ok: true }; });
   ipcMain.handle("settings:account-forget", (_e, provider, accountId) => { accountActions.push({ forget: provider, accountId }); return { ok: true }; });
+  ipcMain.handle("settings:account-keep", (_e, provider) => { accountActions.push({ keep: provider }); return { ok: true, message: "Kept for the test" }; });
   const win = new BrowserWindow({ show: false, width: 640, height: 1400, webPreferences: {
     preload: path.join(source, "settings-preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
   } });
@@ -409,7 +428,8 @@ async function checkSettings() {
     assert.equal(accountPanel.injected, false);
     // Saved sign-ins are tabs: the one in use is marked, the others switch with a click, saved
     // copies can be removed, and Add account / Sign in start the tool's own sign-in.
-    assert.deepEqual(accountPanel.buttons, ["First account", "Second account", "Add account", "Sign in", "alice@example.com", hostile, "×", "Add account"]);
+    assert.deepEqual(accountPanel.buttons, ["First account", "Second account", "Add account", "Sign in", "alice@example.com", hostile, "×", "Add account", "Keep current sign-in"]);
+    assert.match(await win.webContents.executeJavaScript(`document.querySelector('#accounts .account-keep .hint').textContent`), /^2 saved for quick switching · last saved /);
     assert.match(accountPanel.instructions, /grok login/);
     assert.deepEqual(await win.webContents.executeJavaScript(`[...document.querySelectorAll('#accounts .account-tab')].map(b => b.getAttribute('aria-pressed'))`), ["true", "false", "true", "false"]);
     await win.webContents.executeJavaScript(`document.querySelectorAll('#accounts .account-tab')[1].click()`);
@@ -427,6 +447,10 @@ async function checkSettings() {
     await win.webContents.executeJavaScript(`document.querySelector('#accounts .account-remove').click()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(accountActions.at(-1), { forget: "claude", accountId: "bob@example.com" });
+    await win.webContents.executeJavaScript(`document.querySelector('#accounts .account-keep .text-btn').click()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(accountActions.at(-1), { keep: "claude" });
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('toast').textContent`), "Kept for the test");
     await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('threshold'); s.value = '70'; s.dispatchEvent(new Event('change')); })()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(patches.at(-1), { alert_threshold: 70 });
