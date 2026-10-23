@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.2 — 2026-10-23
+
+- **Docked chips no longer jump.** The network chip's value box was narrower than its longest values ("1.5 MB/s", "999 KB/s") on the docked strip, so the chip changed width as traffic changed and every change resized the window and re-docked the strip: a jump beside the taskbar every second or two while anything was downloading. Every live value now has a fixed width, and the window is sized in 8px steps so a value that grows by a character cannot move the strip. Covered by the UI smoke test.
+
 ## 1.12.1 — 2026-10-23
 
 - **Chips: the remaining flicker.** The taskbar helper re-applied the strip's screen-capture exclusion every 8 seconds, which makes Windows redraw the window; it now sets it only when it differs. The strip's system and battery tooltips were rewritten on every sample, which hides and reshows an open tooltip; they are written only when they change.

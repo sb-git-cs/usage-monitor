@@ -204,6 +204,21 @@ async function check(file) {
       win.webContents.send("usage://snapshot", { providers: snapshot.providers.map((p) => p.id !== "codex" ? p : { ...p, windows: [{ ...p.windows[0], used_pct: 81 }] }) });
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.match(await win.webContents.executeJavaScript(`document.querySelector('.pct-icon[data-id="codex"]').textContent`), /81%/, "a changed reading still shows");
+      // Live values never change a chip's width: a network chip that grew with "1.5 MB/s" and shrank
+      // with "30 KB/s" resized and re-docked the strip on every reading, which showed as a jump.
+      const widths = [];
+      const resizesAtStart = resizes;
+      for (const [rx, tx] of [[30 * 1024, 2 * 1024], [1.5 * 1024 ** 2, 999 * 1024], [123 * 1024 ** 2, 0.4], [9.9 * 1024, 999.6 * 1024 ** 2]]) {
+        win.webContents.send("usage://net", { ...netSummary, rx_rate: rx, tx_rate: tx });
+        win.webContents.send("usage://system", { ...systemSummary, cpu: rx % 100, mem: 100, space: 9 });
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        widths.push(await win.webContents.executeJavaScript(`[document.getElementById('net').getBoundingClientRect().width, document.getElementById('system').getBoundingClientRect().width, document.getElementById('bar').getBoundingClientRect().width].join('x')`));
+      }
+      assert.equal(new Set(widths).size, 1, `chip widths must not follow their values: ${widths.join(" ")}`);
+      assert.equal(resizes, resizesAtStart, "live values must not resize the window");
+      win.webContents.send("usage://net", netSummary);
+      win.webContents.send("usage://system", systemSummary);
+      await new Promise((resolve) => setTimeout(resolve, 60));
     }
     for (const [reading, expected] of [
       [{ ...batteryView.latest, percent: 9, state: "discharging", seconds: null }, "Estimating"],

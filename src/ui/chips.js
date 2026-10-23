@@ -83,15 +83,20 @@ function askSize(w, h) {
   window.usage.resizeChips(w, h);
 }
 
+// The window is sized in 8px steps, so a value that grows by a character cannot move the docked
+// strip; the spare pixels are transparent.
+const WIDTH_STEP = 8;
+
 function fitBar() {
   const w = Math.ceil(Math.max(bar.scrollWidth, bar.offsetWidth));
+  const step = (px) => Math.ceil(px / WIDTH_STEP) * WIDTH_STEP;
   if (fillHeight) {
     // No transparent margin below the strip, so it sits flush with the taskbar edges.
-    askSize(w + 2, fillHeight);
+    askSize(step(w + 2), fillHeight);
     return;
   }
   const h = Math.ceil(Math.max(bar.scrollHeight, bar.offsetHeight, 24));
-  askSize(w + 4, h + 4);
+  askSize(step(w + 4), h + 4);
 }
 
 function showLoading() {
