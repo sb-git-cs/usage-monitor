@@ -53,8 +53,8 @@
     "node": ">=22.13.0"
   },
   "devDependencies": {
-    "electron": "44.7.0",
-    "electron-builder": "26.17.0"
+    "electron": "44.9.2",
+    "electron-builder": "26.18.0"
   },
   "build": {
     "appId": "local.usage-monitor",
@@ -174,8 +174,8 @@
     }
   },
   "dependencies": {
-    "electron-updater": "6.8.10",
+    "electron-updater": "6.8.11",
     "qrcode-generator": "2.0.4",
-    "systeminformation": "5.33.15"
+    "systeminformation": "5.33.16"
   }
 }
