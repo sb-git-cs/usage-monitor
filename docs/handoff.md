@@ -33,6 +33,15 @@ Release 1.14.0 (2026-10-26, branch `picker-on-demand`): the owner asked for Curs
   - a restart on the last model;
   - Esc at the first menu;
   - 8 rounds and 16 turns, then one line typed once.
+- **Owner report: "which opus will be used and with what effort", and "/model /model registered /model as a model".**
+  - **Aliases on this PC:** `opus` → claude-opus-5-5, `fable` → claude-fable-5-1, `sonnet` → claude-sonnet-5-5, `haiku` → claude-haiku-5-5 (from the Claude transcripts).
+  - **Effort before this change:** the picker passed none, so Claude ran its `~/.claude/settings.json` `modelSettings` effort (xhigh for claude-opus-5-5) and Codex its `config.toml` `model_reasoning_effort` (high).
+  - **How `/model` got saved:** it was typed under Other model and passed the old id regex.
+- **What changed:**
+  - **Ids:** `MODEL_ID_RE` needs a leading letter or digit. `knownModel(tool, id)` accepts list ids only, plus Claude's `CLAUDE_FULL_NAME_RE` and `[1m]`, and Cursor's `base[options]`. `readSettings` drops malformed saved ids. `main` drops saved ids a loaded list lacks; lists that failed to load are left alone.
+  - **Effort levels (`effortLevels`):** Claude and agy from `--help` (low…max). Codex from `models_cache.json` `supported_reasoning_levels`, with the default model taken from `config.toml`. Grok from `~/.grok/models_cache.json` `info.reasoning_efforts`, with the default model from `grok models`' "(default)". Cursor: `effortInModel`.
+  - **Effort flags (`buildArgv`):** `--effort`, `-c model_reasoning_effort=`, `--reasoning-effort` and `--effort`.
+  - **What ran (`usedBy`):** Claude's transcript assistant record (`effort`, `message.model`), Codex's rollout `turn_context`, Grok's `summary.json`. `lastRecord` widens its read window from 512 KB to 8 MB to 64 MB: one real rollout is 35 MB, with its last `turn_context` 6 MB from the end. Checked against this PC's newest real sessions of all three.
 - **Not yet verified:**
   - live turns through the real CLIs (the session's permission check refused to start them);
   - Windows Terminal, which hosts the console through ConPTY rather than conhost.

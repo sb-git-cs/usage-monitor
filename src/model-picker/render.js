@@ -125,12 +125,14 @@ function turnRule({ label, toolColor, columns = 0, color, basic } = {}) {
   return st.fg(toolColor, head + "─".repeat(Math.max(2, total - [...head].length)));
 }
 
-function turnFooter({ elapsedMs = 0, usage, costUsd, failed, stopped, color, basic } = {}) {
+// used: the model and effort the tool recorded for the turn, when it keeps such a record.
+function turnFooter({ elapsedMs = 0, usage, costUsd, failed, stopped, used, color, basic } = {}) {
   const st = styler({ color, basic });
   const time = `${(elapsedMs / 1000).toFixed(1)} s`;
   if (stopped) return st.dim(`■ Stopped · ${time}`);
   if (failed) return `${st.red(`✗ ${failed}`)}${st.dim(` · ${time}`)}`;
   const parts = [time];
+  if (used && used.model) parts.push(used.effort ? `${used.model} · effort ${used.effort}` : used.model);
   if (usage) parts.push(`${formatTokens(usage.input)} in`, `${formatTokens(usage.output)} out`);
   if (typeof costUsd === "number" && costUsd > 0) parts.push(formatCost(costUsd));
   return st.dim(`✓ ${parts.join(" · ")}`);

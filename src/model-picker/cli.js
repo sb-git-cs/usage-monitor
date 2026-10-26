@@ -26,13 +26,29 @@ function settingsFile() {
   return path.join(os.homedir(), ".config", "usage-monitor", "model-picker.json");
 }
 
+// Only well-formed entries survive: an id saved before ids were checked (such as "/model") is
+// dropped. effort maps a tool to its chosen level.
+function readSettings(data) {
+  const object = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+  const saved = Array.isArray(data.history) ? data.history.filter((x) => typeof x === "string" && x) : [];
+  const recent = {};
+  for (const [toolId, ids] of Object.entries(object(data.recent))) {
+    if (Array.isArray(ids)) recent[toolId] = ids.filter((id) => tools.validModelId(id));
+  }
+  const effort = {};
+  for (const [toolId, level] of Object.entries(object(data.effort))) {
+    if (typeof level === "string" && /^[a-z]+$/.test(level)) effort[toolId] = level;
+  }
+  const l = object(data.last);
+  const last = typeof l.toolId === "string" && (l.model == null || tools.validModelId(l.model)) ? { toolId: l.toolId, model: l.model || null } : null;
+  return { last, recent, effort, history: saved.slice(0, HISTORY_MAX) };
+}
+
 function loadSettings() {
   try {
-    const data = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
-    const saved = Array.isArray(data.history) ? data.history.filter((x) => typeof x === "string" && x) : [];
-    return { last: data.last || null, recent: data.recent && typeof data.recent === "object" ? data.recent : {}, history: saved.slice(0, HISTORY_MAX) };
+    return readSettings(JSON.parse(fs.readFileSync(settingsFile(), "utf8")));
   } catch {
-    return { last: null, recent: {}, history: [] };
+    return readSettings({});
   }
 }
 
@@ -264,7 +280,7 @@ function lineSplitter(onLine) {
   };
 }
 
-async function runTurn(tool, model, prompt, conversation) {
+async function runTurn(tool, model, effort, prompt, conversation) {
   const started = Date.now();
   const text = conversation.promptFor(tool.id, prompt);
   let promptFile = null;
@@ -275,7 +291,7 @@ async function runTurn(tool, model, prompt, conversation) {
   const run = { texts: [], printed: false, result: null, sessionId: null, stopped: false, spawnError: null, activity: "" };
   const tty = !!process.stdout.isTTY;
   const columns = process.stdout.columns || 0;
-  const label = `${tool.label} · ${model || "default"}`;
+  const label = `${tool.label} · ${model || "default"}${effort ? ` · effort ${effort}` : ""}`;
 
   // The status line shares the cursor row with output, so every write erases it first.
   let spinShown = false;
@@ -338,7 +354,7 @@ async function runTurn(tool, model, prompt, conversation) {
   const exit = await new Promise((resolve) => {
     let child;
     try {
-      const { args, stdin } = tools.buildArgv(tool.id, { model, sessionId: conversation.sessionFor(tool.id), prompt: text, promptFile });
+      const { args, stdin } = tools.buildArgv(tool.id, { model, effort, sessionId: conversation.sessionFor(tool.id), prompt: text, promptFile });
       const plan = tools.spawnPlan(tool.exe, args);
       child = spawn(plan.command, plan.args, { ...plan.options, cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] });
       child.stdin.on("error", () => {});
@@ -387,7 +403,9 @@ async function runTurn(tool, model, prompt, conversation) {
   else if (run.result && run.result.error) failed = `${tool.label} stopped: ${run.result.text || "error"}`;
   else if (!run.result && exit !== 0) failed = `${tool.label} stopped: exit code ${exit}`;
   const r = run.result || {};
-  line(render.turnFooter({ elapsedMs, usage: r.usage, costUsd: r.costUsd, failed, ...fmt }));
+  // What the tool says it ran, which settles what an alias such as "opus" and the effort became.
+  const used = failed ? null : tools.usedBy(tool.id, { sessionId: run.sessionId });
+  line(render.turnFooter({ elapsedMs, usage: r.usage, costUsd: r.costUsd, failed, used, ...fmt }));
   conversation.record({ toolId: tool.id, toolLabel: tool.label, model, prompt, reply, sessionId: run.sessionId });
 }
 
@@ -410,12 +428,18 @@ async function main() {
   const byId = Object.fromEntries(installed.map((t) => [t.id, t]));
   if (tty) process.stdout.write("\x1b[1A\r\x1b[J");
   console.log(dim(installed.map((t) => `${t.label} ${t.models.length}`).join(" · ")));
-  console.log(dim("Runs with skip-permissions · Ctrl+C stops a turn · /model [name] switches · /exit quits"));
+  console.log(dim("Runs with skip-permissions · Ctrl+C stops a turn · /model [name] switches · /effort [level] · /exit quits"));
 
   const settings = loadSettings();
   history.push(...settings.history);
   const conversation = createConversation();
-  let current = settings.last && byId[settings.last.toolId] ? settings.last : null;
+  // A model is checked against its tool's list; a list that could not be read checks nothing,
+  // so saved ids for that tool are kept until it can be.
+  const listed = (toolId, model) => !model || !byId[toolId].models.length || tools.knownModel(byId[toolId], model);
+  for (const tool of installed) {
+    if (settings.recent[tool.id]) settings.recent[tool.id] = settings.recent[tool.id].filter((id) => listed(tool.id, id));
+  }
+  let current = settings.last && byId[settings.last.toolId] && listed(settings.last.toolId, settings.last.model) ? settings.last : null;
 
   // Ctrl+C outside a turn must not leave a half-drawn menu or a hung process.
   process.on("SIGINT", () => {});
@@ -438,8 +462,8 @@ async function main() {
       if (typed === null) return null;
       const id = typed.trim();
       if (!id) continue;
-      if (!tools.validModelId(id)) {
-        console.log(red("That model id has characters that are not allowed."));
+      if (!tools.knownModel(byId[row.toolId], id)) {
+        console.log(red(notListed(byId[row.toolId], id)));
         continue;
       }
       remember(settings, row.toolId, id);
@@ -447,13 +471,48 @@ async function main() {
     }
   };
 
+  // The chosen effort for the current tool; null leaves it to the tool's own setting.
+  const effort = () => settings.effort[current.toolId] || null;
+  const describe = () => `${byId[current.toolId].label} · ${current.model || "default"}${effort() ? ` · effort ${effort()}` : ""}`;
+  const announce = () => console.log(tty ? st.fg(byId[current.toolId].color, `● ${describe()}`) : `Model: ${describe()}`);
+
   const use = (next) => {
     current = next;
     settings.last = current;
-    saveSettings(settings);
     const tool = byId[current.toolId];
-    const chosen = `${tool.label} · ${current.model || "default"}`;
-    console.log(tty ? st.fg(tool.color, `● ${chosen}`) : `Model: ${chosen}`);
+    const levels = tools.effortLevels(tool, current.model);
+    if (effort() && !(levels && levels.includes(effort()))) {
+      console.log(yellow(`${current.model || `${tool.label}'s default model`} has no effort ${effort()}, so ${tool.label}'s own setting is used.`));
+      delete settings.effort[tool.id];
+    }
+    saveSettings(settings);
+    announce();
+  };
+
+  // /effort shows the choice, /effort <level> sets it for the current tool, /effort default
+  // goes back to the tool's own setting.
+  const setEffort = (arg) => {
+    const tool = byId[current.toolId];
+    const levels = tools.effortLevels(tool, current.model);
+    if (!levels) {
+      console.log(yellow(tool.effortInModel
+        ? `${tool.label} has no effort setting: the effort is part of the model (for example …-high). Choose one with /model.`
+        : `The effort levels of ${current.model || `${tool.label}'s default model`} are not known, so ${tool.label}'s own setting is used.`));
+      return;
+    }
+    if (!arg) {
+      console.log(`${describe()}${effort() ? "" : ` · effort: ${tool.label}'s own setting`}`);
+      console.log(dim(`Levels: ${levels.join(", ")}. /effort <level> sets it, /effort default goes back to ${tool.label}'s own setting.`));
+      return;
+    }
+    if (arg === "default") delete settings.effort[tool.id];
+    else if (levels.includes(arg)) settings.effort[tool.id] = arg;
+    else {
+      console.log(red(`“${arg}” is not an effort level of ${current.model || `${tool.label}'s default model`}. Levels: ${levels.join(", ")}.`));
+      return;
+    }
+    saveSettings(settings);
+    announce();
   };
 
   // Start on the last model; the menu opens only when there is none, or on /model.
@@ -466,16 +525,24 @@ async function main() {
 
   for (;;) {
     const tool = byId[current.toolId];
-    const head = `${st.fg(tool.color, `● ${current.model || "default"}`)} › `;
+    const head = `${st.fg(tool.color, `● ${current.model || "default"}${effort() ? ` · ${effort()}` : ""}`)} › `;
     let prompt;
     do prompt = await readPrompt(head);
     while (prompt === "");
     if (prompt === null) return;
     const command = parseCommand(prompt);
     if (command.kind === "exit") return;
+    if (command.kind === "effort") {
+      setEffort(command.arg);
+      continue;
+    }
     if (command.kind === "model") {
       const rows = menuRows(installed, settings.recent);
       const hit = matchRow(rows, command.arg, current);
+      if (hit < 0 && command.arg && !render.filterRows(rows, command.arg).length) {
+        console.log(red(`No model matches “${command.arg}”.`));
+        continue;
+      }
       const next = hit >= 0 ? { toolId: rows[hit].toolId, model: rows[hit].model } : await choose(command.arg);
       if (next) use(next);
       continue;
@@ -484,17 +551,26 @@ async function main() {
       settings.history = history.slice(0, HISTORY_MAX);
       saveSettings(settings);
     }
-    await runTurn(tool, current.model, prompt, conversation);
+    await runTurn(tool, current.model, effort(), prompt, conversation);
   }
 }
 
-// "/model" opens the menu and "/model <name>" switches straight to that model. Only a
-// one-line prompt is a command.
+// Why a typed id is refused: it is not one of the tool's models.
+function notListed(tool, id) {
+  if (tool.id === "claude") return `“${id}” is not a Claude Code model. Use ${tool.models.map((m) => m.id).join(", ")} or a full name such as claude-opus-5-5.`;
+  if (!tool.models.length) return `“${id}” cannot be checked: ${tool.label}'s model list could not be read.`;
+  return `“${id}” is not in ${tool.label}'s model list.`;
+}
+
+// "/model" opens the menu and "/model <name>" switches straight to that model; "/effort"
+// shows the effort and "/effort <level>" sets it. Only a one-line prompt is a command.
 function parseCommand(line) {
   const t = String(line).trim();
   if (t === "/exit" || t === "/quit") return { kind: "exit" };
   const m = /^\/model(?:[ \t]+(.+))?$/.exec(t);
   if (m) return { kind: "model", arg: (m[1] || "").trim() };
+  const e = /^\/effort(?:[ \t]+(.+))?$/.exec(t);
+  if (e) return { kind: "effort", arg: (e[1] || "").trim().toLowerCase() };
   return { kind: "prompt" };
 }
 
@@ -508,4 +584,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { main, parseCommand, askTerminal };
+module.exports = { main, parseCommand, askTerminal, readSettings, notListed };

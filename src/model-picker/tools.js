@@ -3,8 +3,11 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 
-// Ids reach a cmd.exe command line for .cmd tools, so only plain characters are accepted.
-const MODEL_ID_RE = /^[A-Za-z0-9._:\-[\]=,/ ]+$/;
+// Ids reach a cmd.exe command line for .cmd tools, so only plain characters are accepted. An id
+// starts with a letter or digit, so a command such as /model is never taken for one.
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]=,/ ]*$/;
+// Claude Code also takes full model names (claude-opus-5-5), optionally with [1m].
+const CLAUDE_FULL_NAME_RE = /^claude-[a-z0-9]+(?:[.-][a-z0-9]+)*(?:\[1m\])?$/;
 const MODEL_LIST_TIMEOUT_MS = 15000;
 const TOOL_LINE_MAX = 100;
 
@@ -17,6 +20,8 @@ const TOOLS = [
     parser: "anthropic",
     stdin: true,
     staticModels: ["fable", "opus", "sonnet", "haiku"],
+    // claude --help: --effort (low, medium, high, xhigh, max)
+    efforts: ["low", "medium", "high", "xhigh", "max"],
     extraDirs: (ctx) => [ctx.join(ctx.home, ".local", "bin")],
   },
   {
@@ -45,6 +50,8 @@ const TOOLS = [
     file: "agy",
     parser: "agy",
     stdin: false,
+    // agy --help: --effort (low|medium|high|xhigh|max)
+    efforts: ["low", "medium", "high", "xhigh", "max"],
     extraDirs: (ctx) => (ctx.local ? [ctx.join(ctx.local, "agy", "bin")] : []),
   },
   {
@@ -54,6 +61,8 @@ const TOOLS = [
     file: "cursor-agent",
     parser: "cursor",
     stdin: true,
+    // Cursor has no effort option: each effort is its own model (gpt-5.3-codex-high).
+    effortInModel: true,
     extraDirs: (ctx) => (ctx.local ? [ctx.join(ctx.local, "cursor-agent")] : []),
   },
 ];
@@ -64,6 +73,26 @@ function toolById(id) {
 
 function validModelId(id) {
   return typeof id === "string" && id.length <= 200 && MODEL_ID_RE.test(id.trim()) && id.trim() === id;
+}
+
+// Whether an id names one of an installed tool's models ({ id, models } as loaded). Claude Code
+// lists its aliases and also takes full names; Cursor takes a listed model with [options].
+function knownModel(tool, id) {
+  if (!tool || !validModelId(id)) return false;
+  const ids = (tool.models || []).map((m) => m.id);
+  if (tool.id === "claude") return CLAUDE_FULL_NAME_RE.test(id) || ids.includes(id.replace(/\[1m\]$/, ""));
+  if (tool.id === "cursor") return ids.includes(id.split("[")[0]);
+  return ids.includes(id);
+}
+
+// The effort levels a tool takes for a model (null: the tool's default model), or null when it
+// has no effort option or that model's levels are not known.
+function effortLevels(tool, model = null) {
+  if (!tool || tool.effortInModel) return null;
+  if (tool.efforts) return tool.efforts;
+  const list = tool.models || [];
+  const m = model ? list.find((x) => x.id === model) : list.find((x) => x.isDefault);
+  return m && m.efforts && m.efforts.length ? m.efforts : null;
 }
 
 // ---- executables ----
@@ -114,11 +143,13 @@ function spawnPlan(exe, args, platform = process.platform) {
 // ---- argv ----
 
 // Returns the argv and what to write to stdin (null when the tool takes the prompt another way).
-function buildArgv(toolId, { model = null, sessionId = null, prompt = "", promptFile = null } = {}) {
+// effort is passed only when chosen; otherwise each tool uses its own setting.
+function buildArgv(toolId, { model = null, effort = null, sessionId = null, prompt = "", promptFile = null } = {}) {
   switch (toolId) {
     case "claude": {
       const args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--dangerously-skip-permissions"];
       if (model) args.push("--model", model);
+      if (effort) args.push("--effort", effort);
       if (sessionId) args.push("--resume", sessionId);
       return { args, stdin: prompt };
     }
@@ -126,18 +157,21 @@ function buildArgv(toolId, { model = null, sessionId = null, prompt = "", prompt
       const head = sessionId ? ["exec", "resume", sessionId] : ["exec"];
       const args = [...head, "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"];
       if (model) args.push("-m", model);
+      if (effort) args.push("-c", `model_reasoning_effort=${effort}`);
       args.push("-");
       return { args, stdin: prompt };
     }
     case "grok": {
       const args = ["--always-approve", "--output-format", "streaming-messages-json", "--include-partial-messages", "--prompt-file", promptFile];
       if (model) args.push("-m", model);
+      if (effort) args.push("--reasoning-effort", effort);
       if (sessionId) args.push("-r", sessionId);
       return { args, stdin: null };
     }
     case "gemini": {
       const args = ["-p", prompt, "--output-format", "stream-json", "--dangerously-skip-permissions"];
       if (model) args.push("--model", model);
+      if (effort) args.push("--effort", effort);
       if (sessionId) args.push("--conversation", sessionId);
       return { args, stdin: null };
     }
@@ -154,16 +188,44 @@ function buildArgv(toolId, { model = null, sessionId = null, prompt = "", prompt
 
 // ---- model lists ----
 
+// Effort levels as plain strings, from a list of strings or of { effort } / { value } objects.
+function levelList(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((x) => (typeof x === "string" ? x : x && (x.effort || x.value))).filter((x) => typeof x === "string" && /^[a-z]+$/.test(x));
+}
+
 function parseCodexCache(text) {
   try {
     const list = JSON.parse(String(text).replace(/^\uFEFF/, "")).models;
     if (!Array.isArray(list)) return [];
     return list
       .filter((m) => m && m.visibility === "list" && typeof m.slug === "string" && m.slug)
-      .map((m) => ({ id: m.slug, label: typeof m.display_name === "string" && m.display_name ? m.display_name : undefined }));
+      .map((m) => {
+        const efforts = levelList(m.supported_reasoning_levels);
+        return {
+          id: m.slug,
+          label: typeof m.display_name === "string" && m.display_name ? m.display_name : undefined,
+          ...(efforts.length ? { efforts } : {}),
+        };
+      });
   } catch {
     return [];
   }
+}
+
+// ~/.grok/models_cache.json: { models: { <id>: { info: { reasoning_efforts: [{ value }] } } } }
+function parseGrokCache(text) {
+  const efforts = {};
+  try {
+    const models = JSON.parse(String(text).replace(/^\uFEFF/, "")).models;
+    for (const [id, m] of Object.entries(models && typeof models === "object" ? models : {})) {
+      const list = levelList(m && m.info && m.info.reasoning_efforts);
+      if (list.length) efforts[id] = list;
+    }
+  } catch {
+    /* no cache: Grok models carry no effort levels */
+  }
+  return efforts;
 }
 
 function parseCodexConfigModel(text) {
@@ -175,8 +237,8 @@ function parseCodexConfigModel(text) {
 function parseGrokModels(out) {
   const models = [];
   for (const line of String(out).split(/\r?\n/)) {
-    const m = /^\s*[-*]\s+(\S+)/.exec(line);
-    if (m) models.push({ id: m[1] });
+    const m = /^\s*[-*]\s+(\S+)(\s+\(default\))?/.exec(line);
+    if (m) models.push(m[2] ? { id: m[1], isDefault: true } : { id: m[1] });
   }
   return models;
 }
@@ -219,7 +281,15 @@ function codexModels(env, home, readFile) {
   const models = parseCodexCache(readFile(path.join(dir, "models_cache.json")));
   const configured = parseCodexConfigModel(readFile(path.join(dir, "config.toml")));
   if (configured && !models.some((m) => m.id === configured)) models.push({ id: configured });
+  // The configured model is what Codex runs when no model is passed.
+  const chosen = models.find((m) => m.id === configured);
+  if (chosen) chosen.isDefault = true;
   return models;
+}
+
+function grokModels(out, home, readFile) {
+  const efforts = parseGrokCache(readFile(path.join(home, ".grok", "models_cache.json")));
+  return parseGrokModels(out).map((m) => (efforts[m.id] ? { ...m, efforts: efforts[m.id] } : m));
 }
 
 function runCapture(exe, args) {
@@ -246,7 +316,7 @@ async function loadModels(toolId, { exe, env = process.env, home = os.homedir(),
     let models = [];
     if (toolId === "claude") models = toolById("claude").staticModels.map((id) => ({ id }));
     else if (toolId === "codex") models = codexModels(env, home, readFile);
-    else if (toolId === "grok") models = parseGrokModels(await run(exe, ["models"]));
+    else if (toolId === "grok") models = grokModels(await run(exe, ["models"]), home, readFile);
     else if (toolId === "gemini") models = parseAgyModels(await run(exe, ["models"]));
     else if (toolId === "cursor") models = parseCursorModels(await run(exe, ["models"]));
     const seen = new Set();
@@ -254,6 +324,104 @@ async function loadModels(toolId, { exe, env = process.env, home = os.homedir(),
   } catch {
     return [];
   }
+}
+
+// ---- what a turn used ----
+
+// The last JSON record of a .jsonl file that pick accepts. Only the end of the file is read at
+// first; one turn's tool output can push its record megabytes back, so the window then grows.
+function lastRecord(file, pick, windows = [512 * 1024, 8 * 1024 * 1024, 64 * 1024 * 1024]) {
+  const fd = fs.openSync(file, "r");
+  try {
+    const size = fs.fstatSync(fd).size;
+    for (const bytes of windows) {
+      const start = Math.max(0, size - bytes);
+      const buf = Buffer.alloc(size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      const lines = buf.toString("utf8").split("\n");
+      if (start > 0) lines.shift();
+      for (let i = lines.length - 1; i >= 0; i--) {
+        let record;
+        try {
+          record = JSON.parse(lines[i]);
+        } catch {
+          continue;
+        }
+        const hit = record && pick(record);
+        if (hit) return hit;
+      }
+      if (start === 0) break;
+    }
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+const nonEmpty = (v) => (typeof v === "string" && v ? v : null);
+
+// Claude Code: ~/.claude/projects/<folder>/<session>.jsonl, each reply with its model and effort.
+function claudeUsed(sessionId, env, home) {
+  const projects = path.join(env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"), "projects");
+  for (const dir of fs.readdirSync(projects)) {
+    const file = path.join(projects, dir, `${sessionId}.jsonl`);
+    if (!fs.existsSync(file)) continue;
+    return lastRecord(file, (r) => {
+      const model = r.type === "assistant" && r.message && nonEmpty(r.message.model);
+      return model && !model.startsWith("<") ? { model, effort: nonEmpty(r.effort) } : null;
+    });
+  }
+  return null;
+}
+
+// Codex: ~/.codex/sessions/YYYY/MM/DD/rollout-…-<thread>.jsonl, a turn_context per turn. The
+// folder is the day the session started, so only the newest days are searched.
+function codexUsed(threadId, env, home) {
+  const root = path.join(env.CODEX_HOME || path.join(home, ".codex"), "sessions");
+  const newest = (dir) => fs.readdirSync(dir).filter((n) => /^\d+$/.test(n)).sort().reverse().map((n) => path.join(dir, n));
+  const days = [];
+  for (const year of newest(root)) {
+    for (const month of newest(year)) {
+      days.push(...newest(month));
+      if (days.length >= 7) break;
+    }
+    if (days.length >= 7) break;
+  }
+  for (const day of days.slice(0, 7)) {
+    const name = fs.readdirSync(day).find((n) => n.endsWith(`-${threadId}.jsonl`));
+    if (!name) continue;
+    return lastRecord(path.join(day, name), (r) => {
+      const p = r.type === "turn_context" && r.payload;
+      return p && nonEmpty(p.model) ? { model: p.model, effort: nonEmpty(p.effort) } : null;
+    });
+  }
+  return null;
+}
+
+// Grok Build: ~/.grok/sessions/<folder>/<session>/summary.json.
+function grokUsed(sessionId, home) {
+  const root = path.join(home, ".grok", "sessions");
+  for (const dir of fs.readdirSync(root)) {
+    const file = path.join(root, dir, sessionId, "summary.json");
+    if (!fs.existsSync(file)) continue;
+    const s = JSON.parse(fs.readFileSync(file, "utf8"));
+    return nonEmpty(s.current_model_id) ? { model: s.current_model_id, effort: nonEmpty(s.reasoning_effort) } : null;
+  }
+  return null;
+}
+
+// The model and effort a tool recorded for the session's latest turn, or null when it keeps no
+// such record (Antigravity, Cursor) or the record cannot be read.
+function usedBy(toolId, { sessionId, env = process.env, home = os.homedir() } = {}) {
+  if (typeof sessionId !== "string" || !/^[\w.-]+$/.test(sessionId)) return null;
+  try {
+    if (toolId === "claude") return claudeUsed(sessionId, env, home);
+    if (toolId === "codex") return codexUsed(sessionId, env, home);
+    if (toolId === "grok") return grokUsed(sessionId, home);
+  } catch {
+    /* not readable: nothing to report */
+  }
+  return null;
 }
 
 // ---- stream parsing ----
@@ -487,12 +655,16 @@ module.exports = {
   MODEL_ID_RE,
   toolById,
   validModelId,
+  knownModel,
+  effortLevels,
   findExecutable,
   spawnPlan,
   buildArgv,
   parseCodexCache,
   parseCodexConfigModel,
   parseGrokModels,
+  parseGrokCache,
+  usedBy,
   parseAgyModels,
   parseCursorModels,
   loadModels,

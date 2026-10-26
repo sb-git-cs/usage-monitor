@@ -18,7 +18,15 @@ const {
   parseGrokModels,
   parseAgyModels,
   parseCursorModels,
+  parseGrokCache,
+  knownModel,
+  effortLevels,
+  usedBy,
 } = tools;
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { readSettings, notListed } = require("../src/model-picker/cli");
 
 function parse(toolId, lines) {
   const p = createParser(toolId);
@@ -210,7 +218,7 @@ test("model list parsers read the CLI outputs", () => {
   assert.deepEqual(parseCodexCache("{bad"), []);
   assert.equal(parseCodexConfigModel('model = "m-cfg"\n[profiles.x]\nmodel = "other"\n'), "m-cfg");
   assert.equal(parseCodexConfigModel('[profiles.x]\nmodel = "other"\n'), null);
-  assert.deepEqual(parseGrokModels("Models:\n  - grok-a\n  * grok-b-fast (default)\n"), [{ id: "grok-a" }, { id: "grok-b-fast" }]);
+  assert.deepEqual(parseGrokModels("Models:\n  - grok-a\n  * grok-b-fast (default)\n"), [{ id: "grok-a" }, { id: "grok-b-fast", isDefault: true }]);
   assert.deepEqual(parseAgyModels("Fetching available models...\nflash-low\tFlash (Low)\n"), [{ id: "flash-low", label: "Flash (Low)" }]);
   assert.deepEqual(parseCursorModels("Available models\n\nauto - Auto (current, default)\ncode-x - Code\u200b X\n"), [
     { id: "auto", label: "Auto (current, default)" },
@@ -323,6 +331,129 @@ test("/model <name> finds a model by id or label, a tool's default by name, and 
   assert.equal(matchRow(rows, ""), -1);
 });
 
+test("a model id starts with a letter or digit, so commands are never ids", () => {
+  for (const id of ["opus", "claude-opus-5-5", "opus[1m]", "gpt-6-astra", "claude-opus-4-8[context=1m,effort=high]"]) assert.equal(validModelId(id), true, id);
+  for (const id of ["/model", "/exit", "-x", " opus", "[1m]", ""]) assert.equal(validModelId(id), false, id);
+});
+
+test("a typed id must be one of the tool's models", () => {
+  const claude = { id: "claude", models: ["fable", "opus", "sonnet", "haiku"].map((id) => ({ id })) };
+  for (const id of ["opus", "opus[1m]", "claude-opus-5-5", "claude-fable-5-1[1m]", "claude-3.7-sonnet"]) assert.equal(knownModel(claude, id), true, id);
+  for (const id of ["/model", "opsu", "claude-", "claude-Opus", "gpt-6-astra", "opus[2m]"]) assert.equal(knownModel(claude, id), false, id);
+  const codex = { id: "codex", models: [{ id: "gpt-6-astra" }, { id: "gpt-reserve" }] };
+  assert.equal(knownModel(codex, "gpt-6-astra"), true);
+  assert.equal(knownModel(codex, "gpt-7"), false);
+  assert.equal(knownModel({ id: "codex", models: [] }, "gpt-6-astra"), false);
+  const cursor = { id: "cursor", models: [{ id: "claude-opus-4-8" }] };
+  assert.equal(knownModel(cursor, "claude-opus-4-8[context=1m,effort=high]"), true);
+  assert.equal(knownModel(cursor, "claude-opus-9[effort=high]"), false);
+  assert.match(notListed({ id: "claude", label: "Claude Code", models: claude.models }, "/model"), /“\/model” is not a Claude Code model\. Use fable, opus, sonnet, haiku or a full name/);
+  assert.equal(notListed({ id: "codex", label: "Codex", models: codex.models }, "gpt-7"), "“gpt-7” is not in Codex's model list.");
+  assert.equal(notListed({ id: "grok", label: "Grok Build", models: [] }, "x"), "“x” cannot be checked: Grok Build's model list could not be read.");
+});
+
+test("effort levels come from the CLI for Claude Code and Antigravity, from each model for Codex and Grok, never for Cursor", () => {
+  const claude = { ...tools.toolById("claude"), models: [{ id: "opus" }] };
+  assert.deepEqual(effortLevels(claude, "opus"), ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(effortLevels({ ...tools.toolById("gemini"), models: [] }, null), ["low", "medium", "high", "xhigh", "max"]);
+  const codex = { ...tools.toolById("codex"), models: [{ id: "a", efforts: ["low", "ultra"], isDefault: true }, { id: "b", efforts: ["low", "high"] }, { id: "c" }] };
+  assert.deepEqual(effortLevels(codex, null), ["low", "ultra"]);
+  assert.deepEqual(effortLevels(codex, "b"), ["low", "high"]);
+  assert.equal(effortLevels(codex, "c"), null);
+  assert.equal(effortLevels(codex, "gone"), null);
+  assert.equal(effortLevels({ ...tools.toolById("cursor"), models: [{ id: "x", efforts: ["high"] }] }, "x"), null);
+});
+
+test("the chosen effort reaches each CLI's own flag", () => {
+  const at = (args, flag) => args[args.indexOf(flag) + 1];
+  assert.equal(at(buildArgv("claude", { model: "opus", effort: "xhigh" }).args, "--effort"), "xhigh");
+  const codex = buildArgv("codex", { effort: "high", sessionId: "t-1" }).args;
+  assert.equal(at(codex, "-c"), "model_reasoning_effort=high");
+  assert.equal(codex.at(-1), "-");
+  assert.equal(at(buildArgv("grok", { effort: "xhigh", promptFile: "p.txt" }).args, "--reasoning-effort"), "xhigh");
+  assert.equal(at(buildArgv("gemini", { effort: "low", prompt: "q" }).args, "--effort"), "low");
+  assert.equal(buildArgv("cursor", { effort: "high" }).args.some((a) => /effort/.test(a)), false);
+  for (const id of ["claude", "codex", "grok", "gemini"]) {
+    assert.equal(buildArgv(id, { prompt: "q", promptFile: "p" }).args.some((a) => /effort/.test(a)), false, id);
+  }
+});
+
+test("Codex and Grok caches give each model's effort levels; the configured and marked models are the defaults", async () => {
+  const codexCache = JSON.stringify({
+    models: [
+      { slug: "gpt-6-astra", visibility: "list", supported_reasoning_levels: [{ effort: "low" }, { effort: "ultra" }] },
+      { slug: "gpt-reserve", visibility: "list", supported_reasoning_levels: [{ effort: "medium" }] },
+    ],
+  });
+  const files = { "/h/.codex/models_cache.json": codexCache, "/h/.codex/config.toml": 'model = "gpt-reserve"\n' };
+  const readFile = (f) => files[f.replace(/\\/g, "/")] || "";
+  const codex = await loadModels("codex", { home: "/h", env: {}, readFile });
+  assert.deepEqual(codex, [
+    { id: "gpt-6-astra", label: undefined, efforts: ["low", "ultra"] },
+    { id: "gpt-reserve", label: undefined, efforts: ["medium"], isDefault: true },
+  ]);
+  const grokCache = JSON.stringify({ models: { "grok-a": { info: { reasoning_efforts: [{ id: "xhigh", value: "xhigh" }, { id: "high", value: "high" }] } }, "grok-b": { info: {} } } });
+  assert.deepEqual(parseGrokCache(grokCache), { "grok-a": ["xhigh", "high"] });
+  assert.deepEqual(parseGrokCache("{bad"), {});
+  files["/h/.grok/models_cache.json"] = grokCache;
+  const grok = await loadModels("grok", { exe: "g", home: "/h", readFile, run: async () => "  - grok-a\n  * grok-b (default)\n" });
+  assert.deepEqual(grok, [{ id: "grok-a", efforts: ["xhigh", "high"] }, { id: "grok-b", isDefault: true }]);
+});
+
+test("what a turn used is read from each tool's own record of the session", (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "um-used-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const write = (rel, text) => {
+    const file = path.join(home, ...rel.split("/"));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  };
+  const lines = (...records) => records.map((r) => JSON.stringify(r)).join("\n") + "\n";
+  write(".claude/projects/D--work/s-1.jsonl", lines(
+    { type: "assistant", effort: "high", message: { model: "claude-sonnet-5-5" } },
+    { type: "assistant", effort: "xhigh", message: { model: "claude-opus-5-5" } },
+    { type: "assistant", message: { model: "<synthetic>" } },
+    { type: "user", message: {} },
+  ));
+  assert.deepEqual(usedBy("claude", { sessionId: "s-1", home, env: {} }), { model: "claude-opus-5-5", effort: "xhigh" });
+  write("cfg/projects/D--work/s-2.jsonl", lines({ type: "assistant", message: { model: "claude-haiku-5-5" } }));
+  assert.deepEqual(usedBy("claude", { sessionId: "s-2", home, env: { CLAUDE_CONFIG_DIR: path.join(home, "cfg") } }), { model: "claude-haiku-5-5", effort: null });
+  write(".codex/sessions/2026/10/25/rollout-2026-10-25T10-00-00-t-old.jsonl", lines({ type: "turn_context", payload: { model: "m-old", effort: "low" } }));
+  write(".codex/sessions/2026/10/26/rollout-2026-10-26T10-00-00-t-1.jsonl", lines(
+    { type: "turn_context", payload: { model: "gpt-6-astra", effort: "low" } },
+    { type: "turn_context", payload: { model: "gpt-6-astra", effort: "high" } },
+    { type: "event_msg", payload: {} },
+  ));
+  assert.deepEqual(usedBy("codex", { sessionId: "t-1", home, env: {} }), { model: "gpt-6-astra", effort: "high" });
+  assert.deepEqual(usedBy("codex", { sessionId: "t-old", home, env: {} }), { model: "m-old", effort: "low" });
+  // A turn's tool output can leave its turn_context far from the end of the rollout.
+  const filler = JSON.stringify({ type: "response_item", payload: { output: "x".repeat(4000) } });
+  write(".codex/sessions/2026/10/26/rollout-2026-10-26T11-00-00-t-big.jsonl",
+    lines({ type: "turn_context", payload: { model: "gpt-6-astra", effort: "xhigh" } }) + `${filler}\n`.repeat(200));
+  assert.deepEqual(usedBy("codex", { sessionId: "t-big", home, env: {} }), { model: "gpt-6-astra", effort: "xhigh" });
+  write(".grok/sessions/C%3A%5Cwork/g-1/summary.json", JSON.stringify({ current_model_id: "grok-4.7", reasoning_effort: "xhigh" }));
+  assert.deepEqual(usedBy("grok", { sessionId: "g-1", home }), { model: "grok-4.7", effort: "xhigh" });
+  assert.equal(usedBy("claude", { sessionId: "missing", home, env: {} }), null);
+  assert.equal(usedBy("claude", { sessionId: "../x", home, env: {} }), null);
+  assert.equal(usedBy("cursor", { sessionId: "c-1", home }), null);
+  assert.equal(usedBy("codex", { sessionId: null, home, env: {} }), null);
+});
+
+test("saved settings drop ids that are not well formed, such as a typed /model", () => {
+  const s = readSettings({
+    last: { toolId: "claude", model: "/model" },
+    recent: { claude: ["/model", "claude-opus-5-5"], codex: "bad" },
+    effort: { claude: "xhigh", codex: 3, grok: "x y" },
+    history: ["a", 1, ""],
+  });
+  assert.equal(s.last, null);
+  assert.deepEqual(s.recent, { claude: ["claude-opus-5-5"] });
+  assert.deepEqual(s.effort, { claude: "xhigh" });
+  assert.deepEqual(s.history, ["a"]);
+  assert.deepEqual(readSettings({ last: { toolId: "codex" } }).last, { toolId: "codex", model: null });
+  assert.deepEqual(readSettings({}), { last: null, recent: {}, effort: {}, history: [] });
+});
+
 test("each terminal question lets go of the input, so a typed key is echoed once", async () => {
   const input = new PassThrough();
   const output = new PassThrough();
@@ -351,6 +482,9 @@ test("only a one-line /model or /exit is a command", () => {
   assert.deepEqual(parseCommand("/models"), { kind: "prompt" });
   assert.deepEqual(parseCommand("/model opus\nand explain"), { kind: "prompt" });
   assert.deepEqual(parseCommand("use /model later"), { kind: "prompt" });
+  assert.deepEqual(parseCommand("/effort"), { kind: "effort", arg: "" });
+  assert.deepEqual(parseCommand("/effort  XHigh "), { kind: "effort", arg: "xhigh" });
+  assert.deepEqual(parseCommand("/efforts"), { kind: "prompt" });
 });
 
 test("executable lookup searches PATH then the tool's own install folders", () => {
@@ -599,6 +733,12 @@ test("status line, rule and footer formatting", () => {
   assert.equal([...rule].length, 80);
   assert.equal(render.turnFooter({ elapsedMs: 12300, usage: { input: 30200, output: 740 }, costUsd: 0.0612, ...plainOpts }), "✓ 12.3 s · 30.2k in · 740 out · ≈$0.06");
   assert.equal(render.turnFooter({ elapsedMs: 1000, ...plainOpts }), "✓ 1.0 s");
+  assert.equal(
+    render.turnFooter({ elapsedMs: 2100, used: { model: "claude-opus-5-5", effort: "xhigh" }, usage: { input: 1200, output: 80 }, ...plainOpts }),
+    "✓ 2.1 s · claude-opus-5-5 · effort xhigh · 1.2k in · 80 out"
+  );
+  assert.equal(render.turnFooter({ elapsedMs: 1000, used: { model: "claude-haiku-5-5", effort: null }, ...plainOpts }), "✓ 1.0 s · claude-haiku-5-5");
+  assert.equal(render.turnFooter({ elapsedMs: 1000, failed: "boom", used: { model: "x" }, ...plainOpts }), "✗ boom · 1.0 s");
   assert.equal(render.turnFooter({ elapsedMs: 1000, failed: "boom", ...plainOpts }), "✗ boom · 1.0 s");
   assert.equal(render.turnFooter({ elapsedMs: 1000, stopped: true, ...plainOpts }), "■ Stopped · 1.0 s");
   assert.ok(render.turnFooter({ elapsedMs: 1, failed: "x", ...on }).includes("\x1b[31m"));
