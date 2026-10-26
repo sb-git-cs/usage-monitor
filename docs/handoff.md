@@ -2,7 +2,31 @@
 
 ## Objective
 
-Release 1.12.2 (2026-10-23): the owner still saw the docked strip flicker after 1.12.1. Cause: `.chips .net-chip .net-val { min-width: 6ch }` (docked) was narrower than `formatRateShort` output such as "1.5 MB/s", so the network chip's width followed its value; `renderNet` saw the width change, `fitBar` asked for a resize, and `usage://chips-resize` moved and re-docked the window (`setPosition(cx + cw - width)`, `placeChipsDocked`) on every reading with traffic. Fix: fixed widths for `.net-val` (8.6ch) and `.system-value` (4.6ch) in `src/ui/shared.css`, and `fitBar` sizes the window in 8px steps. The chips UI smoke test now renders four rate/metric combinations and asserts the chip and strip widths and the resize count do not change. Also in 1.12.2 at the owner's request: the battery chip shrank to two short lines (`shortBattery` in `chips.js`, 7.5ch docked) and the system group got 8px labels, 4.4ch values and a compact disk rate (`compactRate`); about 70 px saved. `docs/screenshots` were not regenerated here (Linux fonts differ from the Windows renders); run `npm run screenshots` on Windows to refresh them.
+1.13.0 (2026-10-26, branch `feature/model-picker`, not released): the owner asked for a terminal that asks which model to use at the start and after every reply, covering every tool the app integrates. It replaces the godmode folder menu.
+
+- **Picker:** `src/model-picker/` (`tools.js`, `conversation.js`, `cli.js`), plain Node with built-ins only, unpacked from the asar (`asarUnpack`). The `runAsNode: false` fuse means the system `node` runs it.
+- **One turn = one headless run:**
+  - `claude -p --output-format stream-json --verbose`
+  - `codex exec [resume ID] --json … -`
+  - `grok --prompt-file … --output-format streaming-messages-json [-r ID]`
+  - `agy -p PROMPT --output-format stream-json [--conversation ID]`
+  - `cursor-agent -p --trust --force --output-format stream-json [--resume ID]`
+  
+  Every turn carries the tool's skip-permissions flag. These flags, the JSON shapes and resume-with-another-model were checked against the installed CLIs on 2026-10-26: Claude Code 2.1.310, Codex 0.164.0, agy 1.4.7, plus grok and cursor-agent. Copilot is not installed here and is not offered.
+- **Context:** same tool resumes its session. Another tool gets the missed turns as a preamble, capped at 20k characters.
+- **Folder menu:**
+  - `src/folder-menu.js` writes `%LOCALAPPDATA%\UsageMonitor\shell\model-picker.cmd` and deletes the old `godmode-commands.txt`. The classic verb is `UsageMonitor.ModelPicker`, and the old `UsageMonitor.Godmode*` keys are deleted.
+  - `GodmodeMenu.c` is now a single command with no submenu. It starts `cmd /d /s /k ""<launcher>""` with `CREATE_NEW_CONSOLE`, and the folder is passed as the current directory.
+  - The folder, DLL name, CLSID and verb id keep their godmode names, so the package updates in place. The manifest is at 1.1.0.0.
+- **Terminal launcher:** `src/godmode-launch.js` → `src/terminal-launch.js`, used only for sign-in terminals now.
+- **Menu DLL build:** compiled with TinyCC 0.9.27 win64:
+  1. `tcc -impdef C:\Windows\System32\ole32.dll -o ole32.def`
+  2. `tcc -Wall -shared -o GodmodeMenu.dll GodmodeMenu.c ole32.def`
+  3. `register.ps1 -RebuildBundle`, which signs with the owner's `CN=Usage Monitor` key.
+- **register.ps1 bug fixed:** `$stamp` (the file's text) is the same variable as `$Stamp` (its path), because PowerShell names ignore case. So every upgrade of an installed package failed with "Illegal characters in path" and fell back to the classic menu.
+- **Verified on the owner's PC:** package 1.1.0.0 installed, stamp matches, and the classic key was removed. The launcher runs through `cmd /d /s /c ""<launcher>""`. Stand-in CLIs covered a 3-turn run (Claude sonnet → Codex → Claude opus with `--resume`). The flyout app still running 1.12.2 re-registers its old menu when it next starts, so that app needs updating to 1.13.0.
+
+Previous: release 1.12.2 (2026-10-23): the owner still saw the docked strip flicker after 1.12.1. Cause: `.chips .net-chip .net-val { min-width: 6ch }` (docked) was narrower than `formatRateShort` output such as "1.5 MB/s", so the network chip's width followed its value; `renderNet` saw the width change, `fitBar` asked for a resize, and `usage://chips-resize` moved and re-docked the window (`setPosition(cx + cw - width)`, `placeChipsDocked`) on every reading with traffic. Fix: fixed widths for `.net-val` (8.6ch) and `.system-value` (4.6ch) in `src/ui/shared.css`, and `fitBar` sizes the window in 8px steps. The chips UI smoke test now renders four rate/metric combinations and asserts the chip and strip widths and the resize count do not change. Also in 1.12.2 at the owner's request: the battery chip shrank to two short lines (`shortBattery` in `chips.js`, 7.5ch docked) and the system group got 8px labels, 4.4ch values and a compact disk rate (`compactRate`); about 70 px saved. `docs/screenshots` were not regenerated here (Linux fonts differ from the Windows renders); run `npm run screenshots` on Windows to refresh them.
 
 Release 1.12.1 (2026-10-23): after 1.12.0 the owner still saw a flicker beside the chips and a second Gemini account did not show. Flicker: `scripts/taskbar-layout.ps1` called `SetWindowDisplayAffinity` on the strip on every 8-second layout pass (DWM redraws the window on each call); it now reads the affinity first and sets it only when it differs. The strip's `renderSystem`/`renderBattery` rewrote tooltips on every sample; they now write only changes. Gemini: Antigravity on Windows keeps its sign-in in Credential Manager (`gemini:antigravity`) without an ID token, so `accounts.readGemini` had no identity and the vault had no file to copy. `adapters/gemini.identityOf` asks Google's userinfo once per access token and the reading carries `account`/`account_id`; `accounts.geminiIdentity` uses `knownIdentity(token)`; `account-vault` takes a Credential Manager source for Gemini (`readCredential`/`writeCredential`, `wincred.writeGenericCredential` via CredWrite) and `main` calls `gemini.forgetCredentials()` after a switch. Vault `capture`/`activate` are now async.
 

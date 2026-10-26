@@ -24,7 +24,7 @@ const { PhoneLink } = require("./phone");
 const accounts = require("./accounts");
 const accountVault = require("./account-vault");
 const { cliOnPath } = require("./paths");
-const godmodeLaunch = require("./godmode-launch");
+const terminalLaunch = require("./terminal-launch");
 const folderMenu = require("./folder-menu");
 const claude = require("./adapters/claude");
 const codex = require("./adapters/codex");
@@ -1000,7 +1000,7 @@ async function beginAccountSwitch(provider, accountId) {
   let launched = { ok: false };
   if (cliOnPath(spec.file)) {
     try {
-      launched = godmodeLaunch.open(provider, { command });
+      launched = terminalLaunch.open(provider, { command });
     } catch (err) {
       launched = { ok: false, error: err && err.message };
     }
@@ -1647,7 +1647,7 @@ if (!gotLock) {
               log.info("folder menu waiting for administrator approval:", menu.error || "");
               if (menu.notify && Notification.isSupported()) {
                 new Notification({
-                  title: "Open in terminal (godmode)",
+                  title: folderMenu.MENU_LABEL,
                   body: "Allow the administrator prompt to add it to the main right-click menu.",
                   silent: true,
                 }).show();
@@ -1656,7 +1656,7 @@ if (!gotLock) {
               log.info("folder menu is under Show more options:", menu.error || "the main Windows 11 menu was not installed");
               if (menu.notify && Notification.isSupported()) {
                 new Notification({
-                  title: "Open in terminal (godmode)",
+                  title: folderMenu.MENU_LABEL,
                   body: "The main right-click menu could not be installed. The item is under Show more options for now.",
                   silent: true,
                 }).show();

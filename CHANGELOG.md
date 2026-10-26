@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.13.0 — 2026-10-26
+
+- **Open model picker here replaces Open in terminal (godmode).** Right-click empty space in a folder (Windows) and a terminal opens there. At the start and after every reply it asks which tool and model answers next. The list covers the installed tools: Claude Code (Fable, Opus, Sonnet, Haiku), Codex (the models in its cache and config), and Grok Build, Gemini (Antigravity) and Cursor (each one's `models` list), plus any model id you type. Enter keeps the current one, and typing filters the list.
+  - **Context:** switching models in the same tool resumes that tool's own session. A tool you switch to is given the turns it missed, then keeps its own session.
+  - **Running turns:** each turn runs that CLI headless in the folder with its skip-permissions flag, as godmode did. Tool calls show as one line each, and Ctrl+C stops a turn.
+  - **Windows 11 menu:** the menu is one item instead of a cascade of five CLIs. Its package is rebuilt, so the first launch after the update may ask once more for administrator approval.
+  - **Needs Node.js 18+ on PATH.** The terminal says so if it is missing.
+- **Menu updates install again.** Updating an already installed Windows 11 menu package failed with "Illegal characters in path" and fell back to Show more options, because the menu script's stamp text overwrote the stamp file's path.
+
 ## 1.12.2 — 2026-10-23
 
 - **Docked chips no longer jump.** The network chip's value box was narrower than its longest values ("1.5 MB/s", "999 KB/s") on the docked strip, so the chip changed width as traffic changed and every change resized the window and re-docked the strip: a jump beside the taskbar every second or two while anything was downloading. Every live value now has a fixed width, and the window is sized in 8px steps so a value that grows by a character cannot move the strip. Covered by the UI smoke test.

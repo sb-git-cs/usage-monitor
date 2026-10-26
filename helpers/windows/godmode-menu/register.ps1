@@ -61,6 +61,7 @@ function Exit-Ok {
 
 function Remove-ClassicMenu {
     $keys = @(
+        "HKCU\Software\Classes\Directory\Background\shell\UsageMonitor.ModelPicker",
         "HKCU\Software\Classes\Directory\Background\shell\UsageMonitor.Godmode",
         "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\UsageMonitor.Godmode.claude",
         "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\UsageMonitor.Godmode.codex",
@@ -201,8 +202,9 @@ try {
     $hash = (Get-FileHash -Algorithm SHA256 -Path $dll).Hash
     $installed = Get-AppxPackage -Name $Name -ErrorAction SilentlyContinue
     if ($installed -and (Test-Path $Stamp)) {
-        $stamp = (Get-Content -Raw -Path $Stamp).Trim()
-        if ($stamp -eq "$($installed.Version)|$hash") {
+        # PowerShell names ignore case, so this must not be called $stamp: that is $Stamp, the path.
+        $stampText = (Get-Content -Raw -Path $Stamp).Trim()
+        if ($stampText -eq "$($installed.Version)|$hash") {
             Remove-ClassicMenu
             Write-Log "already installed $($installed.Version)"
             Exit-Ok

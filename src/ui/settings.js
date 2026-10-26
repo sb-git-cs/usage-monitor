@@ -184,7 +184,7 @@ function render(next) {
   $("autoResume").disabled = next.platform !== "win32";
   if (next.platform !== "win32") {
     $("autoResumeHint").textContent = "Claude Code sessions running in a terminal are listed on the flyout and the chips. Listing the other CLIs and resuming sessions automatically needs Windows; here a session stopped by a usage limit waits for you.";
-    $("folderMenuHint").textContent = "The folder menu that starts a CLI in the right-clicked folder is registered on Windows.";
+    $("folderMenuHint").textContent = "The folder menu that opens the model picker in the right-clicked folder is registered on Windows.";
   }
   renderDisplay(next.display);
   setValue($("quiet"), s.quiet_hours.enabled);
