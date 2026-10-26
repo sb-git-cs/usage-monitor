@@ -2,7 +2,7 @@
 
 ## Objective
 
-1.13.0 (2026-10-26, branch `feature/model-picker`, not released): the owner asked for a terminal that asks which model to use at the start and after every reply, covering every tool the app integrates. It replaces the godmode folder menu.
+Release 1.13.0 (2026-10-26, tag `v1.13.0` on `c1086f1`, Release run 40291278333, 18 assets incl. `latest*.yml`): the owner asked for a terminal that asks which model to use at the start and after every reply, covering every tool the app integrates. It replaces the godmode folder menu.
 
 - **Picker:** `src/model-picker/` (`tools.js`, `conversation.js`, `cli.js`), plain Node with built-ins only, unpacked from the asar (`asarUnpack`). The `runAsNode: false` fuse means the system `node` runs it.
 - **One turn = one headless run:**
@@ -24,7 +24,8 @@
   2. `tcc -Wall -shared -o GodmodeMenu.dll GodmodeMenu.c ole32.def`
   3. `register.ps1 -RebuildBundle`, which signs with the owner's `CN=Usage Monitor` key.
 - **register.ps1 bug fixed:** `$stamp` (the file's text) is the same variable as `$Stamp` (its path), because PowerShell names ignore case. So every upgrade of an installed package failed with "Illegal characters in path" and fell back to the classic menu.
-- **Verified on the owner's PC:** package 1.1.0.0 installed, stamp matches, and the classic key was removed. The launcher runs through `cmd /d /s /c ""<launcher>""`. Stand-in CLIs covered a 3-turn run (Claude sonnet → Codex → Claude opus with `--resume`). The flyout app still running 1.12.2 re-registers its old menu when it next starts, so that app needs updating to 1.13.0.
+- **Verified on the owner's PC:** package 1.1.0.0 installed, stamp matches, and the classic key was removed. The launcher runs through `cmd /d /s /c ""<launcher>""`. Stand-in CLIs covered a 3-turn run (Claude sonnet → Codex → Claude opus with `--resume`). The owner's app (the git checkout, started by the Startup `Usage Monitor.vbs`) was updated to 1.13.0 and restarted. It found the menu current and did not re-register it. Still unverified: the interactive arrow-key menu in a real console, and live model turns through the picker.
+- **CI audit fix:** CI's `npm audit --audit-level=high` step began failing on new advisories, so `c1086f1` moves Electron 44.7.0 → 44.9.3 plus undici and fast-uri, lockfile only. Dependabot PR #12 (a broader npm group bump) is still open.
 
 Previous: release 1.12.2 (2026-10-23): the owner still saw the docked strip flicker after 1.12.1. Cause: `.chips .net-chip .net-val { min-width: 6ch }` (docked) was narrower than `formatRateShort` output such as "1.5 MB/s", so the network chip's width followed its value; `renderNet` saw the width change, `fitBar` asked for a resize, and `usage://chips-resize` moved and re-docked the window (`setPosition(cx + cw - width)`, `placeChipsDocked`) on every reading with traffic. Fix: fixed widths for `.net-val` (8.6ch) and `.system-value` (4.6ch) in `src/ui/shared.css`, and `fitBar` sizes the window in 8px steps. The chips UI smoke test now renders four rate/metric combinations and asserts the chip and strip widths and the resize count do not change. Also in 1.12.2 at the owner's request: the battery chip shrank to two short lines (`shortBattery` in `chips.js`, 7.5ch docked) and the system group got 8px labels, 4.4ch values and a compact disk rate (`compactRate`); about 70 px saved. `docs/screenshots` were not regenerated here (Linux fonts differ from the Windows renders); run `npm run screenshots` on Windows to refresh them.
 
