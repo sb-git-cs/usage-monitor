@@ -15,6 +15,8 @@ public class TaskbarLayout {
   [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
   [DllImport("user32.dll")] public static extern bool GetWindowDisplayAffinity(IntPtr h, out uint affinity);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
   public struct RECT { public int L; public int T; public int R; public int B; }
   public struct MONITORINFO {
     public int cbSize;
@@ -109,6 +111,30 @@ function Get-Layout($hwnd, $own, $apppid, $capture) {
   }
 }
 
+# Windows 11 restacks the taskbar above the docked strip whenever the taskbar loses activation,
+# although the strip is owned by it and always on top, so the chips showed only while the
+# taskbar was clicked. Put the strip back above the taskbar only when it is below it:
+# restacking it on every pass made it flicker. Only a window of the calling process is touched.
+function Lift-Chips($hwnd, $apppid) {
+  if ("$hwnd" -notmatch '^\d+$' -or $apppid -le 0) { return }
+  $chips = [IntPtr]::new([Int64]$hwnd)
+  $windowPid = [uint32]0
+  [void][TaskbarLayout]::GetWindowThreadProcessId($chips, [ref]$windowPid)
+  if ($windowPid -ne $apppid -or -not [TaskbarLayout]::IsWindowVisible($chips)) { return }
+  $tray = [TaskbarLayout]::FindWindow("Shell_TrayWnd", $null)
+  if ($tray -eq [IntPtr]::Zero) { return }
+  # GW_HWNDPREV (3) walks toward the top of the z-order.
+  $above = [TaskbarLayout]::GetWindow($chips, 3)
+  while ($above -ne [IntPtr]::Zero) {
+    if ($above -eq $tray) {
+      # HWND_TOPMOST, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+      [void][TaskbarLayout]::SetWindowPos($chips, [IntPtr]::new(-1), 0, 0, 0, 0, 0x0013)
+      return
+    }
+    $above = [TaskbarLayout]::GetWindow($above, 3)
+  }
+}
+
 if ($Watch) {
   # The one long-lived process also answers layout requests, so steady state spawns no new
   # PowerShell. Owner changes arrive on stdin ("own <hwnd> <own> <capture> <apppid>", "probe");
@@ -131,6 +157,7 @@ if ($Watch) {
         $force = $true
       } elseif ($parts[0] -eq 'probe') { $force = $true }
     }
+    if ($curOwn -eq 1) { Lift-Chips $curHwnd $curPid }
     $shown = Get-TaskbarShown
     if ($shown -ne $previous) {
       [Console]::Out.WriteLine($(if ($shown) { "shown=1" } else { "shown=0" }))
