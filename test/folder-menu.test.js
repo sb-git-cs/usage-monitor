@@ -4,38 +4,25 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { MENU_LABEL, MENU_KEY, LEGACY_KEYS, STORE, pickerScript, launcherText, explorerCommand, install } = require("../src/folder-menu");
+const { MENU_KEY, PICKER_KEY, STORE, commands, install } = require("../src/folder-menu");
 
-test("the launcher runs the unpacked picker on the system node", () => {
-  assert.equal(MENU_LABEL, "Open model picker here");
-  assert.equal(
-    pickerScript("C:\\Program Files\\Usage Monitor\\resources\\app.asar\\src"),
-    path.join("C:\\Program Files\\Usage Monitor\\resources\\app.asar.unpacked\\src", "model-picker", "cli.js")
-  );
-  assert.equal(pickerScript("/repo/src"), path.join("/repo/src", "model-picker", "cli.js"));
-  const text = launcherText("C:\\Users\\100% me\\cli.js");
-  assert.match(text, /^@echo off\r\n/);
-  assert.match(text, /where node >nul 2>&1 \|\| \(echo .*Node\.js.* & exit \/b 1\)\r\n/);
-  assert.match(text, /\r\nnode "C:\\Users\\100%% me\\cli\.js" %\*\r\n$/);
-  assert.equal(
-    explorerCommand("C:\\Users\\a & b\\shell\\model-picker.cmd"),
-    'cmd.exe /d /s /k "pushd "%V." && "C:\\Users\\a & b\\shell\\model-picker.cmd""'
-  );
-  assert.equal(LEGACY_KEYS.includes(`${STORE}\\UsageMonitor.Godmode.cursor`), true);
+test("the folder menu lists each CLI in order with its own flag", () => {
+  const items = commands();
+  assert.deepEqual(items.map((item) => item.label), ["Claude Code", "Codex", "Grok Build", "Gemini", "Cursor"]);
+  assert.equal(items[3].tail, "agy --dangerously-skip-permissions");
+  assert.equal(items[4].tail, "cursor-agent --force");
+  assert.equal(items.some((item) => /[&|<>^%!]/.test(item.tail)), false);
 });
 
-test("install writes the launcher, registers the package, then removes the classic and godmode menus", async () => {
+test("install writes the command file, registers the package, then removes the classic menu", async () => {
   const writes = [];
-  const removed = [];
   const calls = [];
   const result = await install({
     platform: "win32",
     shellDir: "C:\\temp\\shell",
     script: "C:\\app\\register.ps1",
-    picker: "C:\\app\\cli.js",
     writeFile: (file, text) => writes.push([file, text]),
     rename: (from, to) => writes.push(["rename", from, to]),
-    remove: (file) => removed.push(file),
     execFile: (file, args) => {
       calls.push([file, args.slice()]);
       if (args[0] === "delete") {
@@ -46,18 +33,20 @@ test("install writes the launcher, registers the package, then removes the class
     },
   });
   assert.equal(result.ok, true);
-  assert.equal(writes[0][0], "C:\\temp\\shell\\model-picker.cmd.tmp");
-  assert.equal(writes[0][1], launcherText("C:\\app\\cli.js"));
+  assert.equal(writes[0][0], "C:\\temp\\shell\\godmode-commands.txt.tmp");
+  assert.match(writes[0][1], /Claude Code\tclaude --dangerously-skip-permissions/);
+  assert.match(writes[0][1], /Gemini\tagy --dangerously-skip-permissions/);
   assert.equal(writes[1][0], "rename");
-  assert.equal(writes[1][2], "C:\\temp\\shell\\model-picker.cmd");
-  assert.deepEqual(removed, ["C:\\temp\\shell\\godmode-commands.txt"]);
+  assert.equal(writes[1][2], "C:\\temp\\shell\\godmode-commands.txt");
   assert.equal(calls[0][0], "powershell.exe");
   assert.equal(calls[0][1].at(-1), "C:\\app\\register.ps1");
   assert.equal(calls[1][0], "reg.exe");
   assert.equal(calls[1][1][1], MENU_KEY);
-  const deleted = calls.filter((call) => call[0] === "reg.exe").map((call) => call[1][1]);
-  for (const key of LEGACY_KEYS) assert.equal(deleted.includes(key), true);
-  assert.equal(calls.some((call) => call[1][0] === "add"), false);
+  const verbs = calls.filter((call) => call[0] === "reg.exe").map((call) => call[1][1]);
+  assert.equal(verbs.includes(`${STORE}\\UsageMonitor.Godmode.claude`), true);
+  assert.equal(verbs.includes(`${STORE}\\UsageMonitor.Godmode.cursor`), true);
+  assert.equal(verbs.includes(PICKER_KEY), true);
+  assert.equal(calls.some((call) => call[1].includes("SubCommands")), false);
 });
 
 test("a failed package registration still adds the classic folder menu", async () => {
@@ -81,10 +70,10 @@ test("a failed package registration still adds the classic folder menu", async (
   assert.equal(result.classic, true);
   assert.match(result.error, /install failed/);
   const added = calls.filter((call) => call[0] === "reg.exe" && call[1][0] === "add");
-  assert.equal(added.some((call) => call[1][1] === MENU_KEY && call[1].includes(MENU_LABEL)), true);
-  // Only the godmode keys are cleared; the new item stays.
+  assert.equal(added.some((call) => call[1][1] === MENU_KEY && call[1].includes("SubCommands")), true);
+  // Only the 1.13 model picker item is removed; the godmode menu just added stays.
   const deleted = calls.filter((call) => call[0] === "reg.exe" && call[1][0] === "delete").map((call) => call[1][1]);
-  assert.deepEqual(deleted, [...LEGACY_KEYS]);
+  assert.deepEqual(deleted, [PICKER_KEY]);
 });
 
 test("a PC without the packaging tools gets the classic menu instead of nothing", async () => {
@@ -111,9 +100,11 @@ test("a PC without the packaging tools gets the classic menu instead of nothing"
   assert.equal(result.notify, false);
   assert.equal(result.error, "the Windows SDK packaging tools are not installed");
   const added = calls.filter((call) => call[0] === "reg.exe" && call[1][0] === "add");
-  assert.equal(added.some((call) => call[1].includes("SubCommands")), false);
-  const command = added.find((call) => call[1][1] === `${MENU_KEY}\\command`);
-  assert.equal(command[1].at(-2), explorerCommand("C:\\temp\\shell\\model-picker.cmd"));
+  const parent = added.find((call) => call[1][1] === MENU_KEY && call[1].includes("SubCommands"));
+  assert.match(parent[1].at(-2), /UsageMonitor\.Godmode\.claude/);
+  assert.match(parent[1].at(-2), /UsageMonitor\.Godmode\.cursor/);
+  const command = added.find((call) => String(call[1][1]).endsWith("UsageMonitor.Godmode.grok\\command"));
+  assert.match(command[1].at(-2), /grok --always-approve/);
   const icon = added.find((call) => call[1][1] === MENU_KEY && call[1].includes("Icon"));
   assert.equal(icon[1].at(-2), "C:\\app\\icon.ico");
 });

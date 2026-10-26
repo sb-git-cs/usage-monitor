@@ -1,26 +1,21 @@
-// Right-click the empty space in a folder for Open model picker here. Windows 11 shows
-// that item on the main menu for the signed package shipped with
-// helpers/windows/godmode-menu. install writes the launcher the item runs and lets
-// register.ps1 put that package in place. Trusting its certificate asks for
-// administrator approval once; a declined prompt is asked again next launch and does
-// not file the item under Show more options. The classic registry verb is removed after
-// the package is installed. Registration runs in the background and is skipped while
-// the installed package matches the bundled DLL.
+// Right-click the empty space in a folder. Windows 11 shows that item on the main
+// menu for the signed package shipped with helpers/windows/godmode-menu. install writes
+// the command list and lets register.ps1 put that package in place. Trusting its
+// certificate asks for administrator approval once; a declined prompt is asked again
+// next launch and does not file the item under Show more options. The classic registry
+// verb is removed after the package is installed. Registration runs in the background
+// and is skipped while the installed package matches the bundled DLL.
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const childProcess = require("node:child_process");
+const godmode = require("./godmode-launch");
 
-const MENU_LABEL = "Open model picker here";
-const MENU_KEY = "HKCU\\Software\\Classes\\Directory\\Background\\shell\\UsageMonitor.ModelPicker";
+const MENU_KEY = "HKCU\\Software\\Classes\\Directory\\Background\\shell\\UsageMonitor.Godmode";
 const STORE = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CommandStore\\shell";
-// The godmode menu this replaces: one cascade with a verb per CLI.
-const LEGACY_KEYS = Object.freeze([
-  "HKCU\\Software\\Classes\\Directory\\Background\\shell\\UsageMonitor.Godmode",
-  ...["claude", "codex", "grok", "gemini", "cursor"].map((id) => `${STORE}\\UsageMonitor.Godmode.${id}`),
-]);
+// 1.13.0 and 1.13.1 put a model picker item here; the script it ran is gone.
+const PICKER_KEY = "HKCU\\Software\\Classes\\Directory\\Background\\shell\\UsageMonitor.ModelPicker";
 const SCRIPT = path.join(__dirname, "..", "helpers", "windows", "godmode-menu", "register.ps1");
-const LAUNCHER = "model-picker.cmd";
 
 function scriptPath() {
   const packaged = process.resourcesPath && path.join(process.resourcesPath, "godmode-menu", "register.ps1");
@@ -28,28 +23,21 @@ function scriptPath() {
   return SCRIPT;
 }
 
-// The picker runs on the system node, which cannot read inside app.asar, so the
-// packaged copy is the one electron-builder unpacks next to it.
-function pickerScript(dir = __dirname) {
-  return path.join(dir, "model-picker", "cli.js").replace(/([\\/])app\.asar([\\/])/, "$1app.asar.unpacked$2");
+function verb(id) {
+  return `UsageMonitor.Godmode.${id}`;
 }
 
-// cmd reads a .cmd file line by line in the console code page, so switch to UTF-8 first
-// for a profile path outside ASCII, and double % so cmd does not expand it.
-function launcherText(script = pickerScript()) {
-  return [
-    "@echo off",
-    "chcp 65001 >nul",
-    "title Model picker",
-    "where node >nul 2>&1 || (echo The model picker needs Node.js 18 or later on PATH: https://nodejs.org & exit /b 1)",
-    `node "${String(script).replaceAll("%", "%%")}" %*`,
-    "",
-  ].join("\r\n");
+function commands() {
+  return godmode.CLIS.map((cli) => ({
+    id: cli.id,
+    verb: verb(cli.id),
+    label: cli.label,
+    tail: `${cli.file} ${cli.args.join(" ")}`,
+  }));
 }
 
-// /s strips only the outer quotes, so the folder and the launcher stay quoted.
-function explorerCommand(launcher) {
-  return `cmd.exe /d /s /k "pushd "%V." && "${launcher}""`;
+function commandFileText() {
+  return commands().map((item) => `${item.label}\t${item.tail}`).join("\r\n") + "\r\n";
 }
 
 function shellDir() {
@@ -70,18 +58,28 @@ function reg(exec, args) {
   return exec("reg.exe", args, { windowsHide: true });
 }
 
-async function removeKeys(exec, keys) {
-  for (const key of keys) {
-    try {
-      await reg(exec, ["delete", key, "/f"]);
-    } catch {
-      /* this key is not registered */
-    }
+async function removePicker(exec) {
+  try {
+    await reg(exec, ["delete", PICKER_KEY, "/f"]);
+  } catch {
+    /* the model picker item is not registered */
   }
 }
 
-function removeClassic(exec) {
-  return removeKeys(exec, [MENU_KEY, ...LEGACY_KEYS]);
+async function removeClassic(exec) {
+  try {
+    await reg(exec, ["delete", MENU_KEY, "/f"]);
+  } catch {
+    /* the classic menu is not registered */
+  }
+  await removePicker(exec);
+  for (const item of commands()) {
+    try {
+      await reg(exec, ["delete", `${STORE}\\${item.verb}`, "/f"]);
+    } catch {
+      /* this CLI is not registered */
+    }
+  }
 }
 
 function regAdd(exec, key, name, data) {
@@ -92,14 +90,21 @@ function regAdd(exec, key, name, data) {
   return reg(exec, args);
 }
 
-// The item Windows shows on Windows 10, and under Show more options on Windows 11.
-async function registerClassic(exec, icon, launcher) {
-  await removeKeys(exec, LEGACY_KEYS);
-  await regAdd(exec, MENU_KEY, "", MENU_LABEL);
-  await regAdd(exec, MENU_KEY, "MUIVerb", MENU_LABEL);
+// The cascading menu Windows shows on Windows 10, and under Show more options on Windows 11.
+async function registerClassic(exec, icon) {
+  await removePicker(exec);
+  const verbs = commands().map((item) => item.verb).join(";");
+  await regAdd(exec, MENU_KEY, "", godmode.MENU_LABEL);
+  await regAdd(exec, MENU_KEY, "MUIVerb", godmode.MENU_LABEL);
+  await regAdd(exec, MENU_KEY, "SubCommands", verbs);
   await regAdd(exec, MENU_KEY, "Position", "Top");
   if (icon) await regAdd(exec, MENU_KEY, "Icon", String(icon));
-  await regAdd(exec, `${MENU_KEY}\\command`, "", explorerCommand(launcher));
+  for (const item of commands()) {
+    const key = `${STORE}\\${item.verb}`;
+    await regAdd(exec, key, "", item.label);
+    await regAdd(exec, key, "MUIVerb", item.label);
+    await regAdd(exec, `${key}\\command`, "", godmode.explorerCommand(item.id));
+  }
   try {
     // Tell Explorer the folder association changed, so the new item shows without a restart.
     await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
@@ -141,30 +146,22 @@ async function install({
   shellDir: dir,
   script = scriptPath(),
   execFile = run,
-  picker = pickerScript(),
   writeFile,
   rename,
-  remove,
 } = {}) {
   if (platform !== "win32") return { ok: false, error: "Windows only" };
   // Windows only (install returns above elsewhere), so the paths are Windows paths on any host.
   const folder = dir || shellDir();
-  const file = path.win32.join(folder, LAUNCHER);
+  const file = path.win32.join(folder, "godmode-commands.txt");
+  const text = commandFileText();
   const injectedWrite = typeof writeFile === "function";
   const write = writeFile || ((target, body) => {
     fs.mkdirSync(folder, { recursive: true });
     fs.writeFileSync(target, body, "utf8");
   });
   const move = rename || ((from, to) => fs.renameSync(from, to));
-  const drop = remove || (injectedWrite ? () => {} : (target) => fs.rmSync(target, { force: true }));
-  write(`${file}.tmp`, launcherText(picker));
+  write(`${file}.tmp`, text);
   move(`${file}.tmp`, file);
-  try {
-    // The godmode menu read its CLI list from here.
-    drop(path.win32.join(folder, "godmode-commands.txt"));
-  } catch {
-    /* already gone */
-  }
   if (icon && !String(icon).includes(",") && !writeFile) {
     try {
       fs.copyFileSync(icon, path.win32.join(folder, "icon.ico"));
@@ -196,7 +193,7 @@ async function install({
       };
     }
     try {
-      await registerClassic(execFile, icon, file);
+      await registerClassic(execFile, icon);
     } catch (regErr) {
       const why = [detail, regErr && (regErr.stderr || regErr.message)].filter(Boolean).join("\n");
       return { ok: false, skipped, error: why || "Could not register the folder menu" };
@@ -207,4 +204,4 @@ async function install({
   return { ok: true };
 }
 
-module.exports = { MENU_LABEL, MENU_KEY, LEGACY_KEYS, STORE, pickerScript, launcherText, explorerCommand, install, shellDir };
+module.exports = { MENU_KEY, PICKER_KEY, STORE, commands, commandFileText, install, verb, shellDir };

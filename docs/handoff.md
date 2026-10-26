@@ -2,7 +2,14 @@
 
 ## Objective
 
-Release 1.13.1 (2026-10-26): two changes.
+Release 1.13.2 (2026-10-26): the owner asked to go back to 1.12.2 after their installed app updated itself to 1.13.1. A lower version number would not reach installed copies, because electron-updater does not downgrade, so 1.12.2's tree (tag `v1.12.2`, `8726f33`) ships as 1.13.2.
+
+- **Kept from 1.13.0:** Electron 44.9.3 plus undici and fast-uri (`c1086f1`). 44.7.0 fails CI's `npm audit --audit-level=high`.
+- **Added:** `folder-menu.js` deletes the 1.13 classic key `UsageMonitor.ModelPicker` (`PICKER_KEY`) when the package installs and before the classic godmode menu is registered. Otherwise a classic-menu PC keeps an item that runs the removed `src/model-picker/cli.js`. The orphaned `%LOCALAPPDATA%\UsageMonitor\shell\model-picker.cmd` is left in place (harmless).
+- **Withdrawn with 1.13.1:** the `Lift-Chips` watch in `scripts/taskbar-layout.ps1`. The docked strip can slip behind the Windows 11 taskbar again (see the 1.13.1 notes below). The model picker and that fix remain at tag `v1.13.1` if either is wanted back.
+- The Windows 11 menu package returns to 1.0.0.0. `register.ps1` installs with `-ForceUpdateFromAnyVersion`, and the owner's PC already shows 1.0.0.0.
+
+Previous: release 1.13.1 (2026-10-26): two changes.
 
 - **Chips bug:** the owner reported that docked chips showed only while the taskbar was clicked. A 250 ms z-order log (`IsWindowVisible`, `EnumWindows` order) showed the strip stayed visible. Whenever another window became foreground, Windows 11 (build 26300) restacked `Shell_TrayWnd` above it, although the strip is owned by the taskbar and topmost.
   - Before `d57b1c6` (1.12.1) the 800 ms `setAlwaysOnTop` re-assert hid this. `isAlwaysOnTop()` only reads `WS_EX_TOPMOST`, so the app never noticed.

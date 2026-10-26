@@ -1,8 +1,26 @@
-// Starts a fixed command, such as a CLI's sign-in, in a visible terminal. Nothing the
-// user types is inserted into it, and the app does not type into a terminal that is
-// already open.
+// Starts one of the coding CLIs the app already tracks, in a visible terminal, with that
+// CLI's own skip-permissions flag. The command table is fixed. Nothing the user types is
+// inserted into it. File Explorer launches these; the app does not type into a terminal
+// that is already open.
 const { spawn, execFileSync } = require("node:child_process");
 const os = require("node:os");
+
+const MENU_LABEL = "Open in terminal (godmode)";
+
+// Flags checked against the installed CLIs' --help (Claude, Codex 0.162.1, Grok 1.0.52,
+// agy 1.3.5, cursor-agent). Codex --yolo is accepted here and is the short form of the
+// bypass flag below. Grok is started with --always-approve, the flag its help prints.
+const CLIS = Object.freeze([
+  Object.freeze({ id: "claude", label: "Claude Code", file: "claude", args: Object.freeze(["--dangerously-skip-permissions"]) }),
+  Object.freeze({ id: "codex", label: "Codex", file: "codex", args: Object.freeze(["--dangerously-bypass-approvals-and-sandbox"]) }),
+  Object.freeze({ id: "grok", label: "Grok Build", file: "grok", args: Object.freeze(["--always-approve"]) }),
+  Object.freeze({ id: "gemini", label: "Gemini", file: "agy", args: Object.freeze(["--dangerously-skip-permissions"]) }),
+  Object.freeze({ id: "cursor", label: "Cursor", file: "cursor-agent", args: Object.freeze(["--force"]) }),
+]);
+
+function cliById(id) {
+  return CLIS.find((cli) => cli.id === id) || null;
+}
 
 function defaultWhich(name) {
   try {
@@ -35,22 +53,22 @@ function hidden(cwd) {
 }
 
 // cmd.exe parses the starter command line itself. Quote the title and folder so a
-// space or & in the home directory stays one argument. The command name and flags are fixed.
+// space or & in the home directory stays one argument. The CLI name and flags are fixed.
 function cmdQuote(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
 }
 
-// The fixed command to run: { label, file, args, title }.
-function commandOf(command) {
+// A fixed command to run in a terminal instead of a godmode CLI: { label, file, args, title }.
+function commandOf(id, command) {
   if (command && typeof command === "object" && typeof command.file === "string" && Array.isArray(command.args)) {
     return { label: String(command.label || command.file), file: command.file, args: command.args.map(String), title: String(command.title || command.label || command.file) };
   }
-  return null;
+  const cli = cliById(id);
+  return cli ? { ...cli, title: `${cli.label} (godmode)` } : null;
 }
 
-// id names the tool the command is for; the command itself decides what runs.
 function plan(id, { platform = process.platform, cwd = os.homedir(), terminal = platform === "win32" ? "cmd" : platform === "darwin" ? "osascript" : "x-terminal-emulator", command = null } = {}) {
-  const cli = commandOf(command);
+  const cli = commandOf(id, command);
   if (!cli) return null;
   const dir = cwd || os.homedir();
   const title = cli.title;
@@ -87,8 +105,17 @@ function plan(id, { platform = process.platform, cwd = os.homedir(), terminal = 
   return { command: terminal || "x-terminal-emulator", args: ["-e", cli.file, ...cli.args], options };
 }
 
+// Explorer fills %V with the folder that was right-clicked. The trailing dot keeps a
+// drive root such as C:\ from eating the closing quote; Windows treats that dot as the folder.
+function explorerCommand(id) {
+  const cli = cliById(id);
+  if (!cli) return null;
+  const title = cmdQuote(`${cli.label} (godmode)`);
+  return `cmd.exe /d /c start ${title} /D "%V." cmd.exe /d /k ${cli.file} ${cli.args.join(" ")}`;
+}
+
 function open(id, deps = {}) {
-  if (!commandOf(deps.command)) return { ok: false, error: "Unknown tool" };
+  if (!commandOf(id, deps.command)) return { ok: false, error: "Unknown tool" };
   const platform = deps.platform || process.platform;
   const which = deps.which || defaultWhich;
   const spec = plan(id, {
@@ -114,4 +141,4 @@ function open(id, deps = {}) {
   return { ok: true, command: spec.command, args: spec.args };
 }
 
-module.exports = { plan, terminalFor, open };
+module.exports = { CLIS, MENU_LABEL, plan, terminalFor, open, explorerCommand };

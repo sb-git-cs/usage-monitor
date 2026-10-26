@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.2 — 2026-10-26
+
+- **Back to 1.12.2.** This release withdraws 1.13.0 and 1.13.1: the app is 1.12.2 again, apart from the Electron 44.9.3 security update, which stays.
+  - **Folder menu:** **Open in terminal (godmode)** is back on the folder right-click menu in place of Open model picker here, and the model picker is removed. Where the menu sits under Show more options, the model picker item is deleted.
+  - **Docked chips:** the 1.13.1 change that put the strip back above the taskbar is withdrawn too, so on Windows 11 the chips can again slip behind the taskbar while another window is active.
+
 ## 1.13.1 — 2026-10-26
 
 - **Docked chips stay visible.** Since 1.12.1, Windows 11 put the taskbar back above the docked strip whenever another window became active, so the chips showed only while the taskbar was clicked. The taskbar helper now puts the strip back above the taskbar within a fifth of a second, and only when the taskbar is above it, so the flicker fixed in 1.12.1 does not return.
