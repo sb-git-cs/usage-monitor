@@ -43,6 +43,8 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 ## What you see
 
+**New in 1.13.1:** docked chips no longer slip behind the Windows 11 taskbar when another window is active. The model picker groups models by tool, shows progress while a turn runs, streams replies as they are written and formats them.
+
 **New in 1.13.0:** **Open model picker here** replaces Open in terminal (godmode) on the folder right-click menu (Windows). It opens a terminal in that folder that asks, at the start and after every reply, which tool and model answers next: Claude Code, Codex, Grok Build, Gemini (Antigravity) or Cursor, with the models each one offers. Switching models keeps the conversation. A tool you switch to gets the turns it missed, and its own session carries on from there. Each turn runs with that CLI's skip-permissions flag. Needs Node.js 18+ on PATH. You can also run it anywhere with `node src/model-picker/cli.js`.
 
 **New in 1.11.0:** a redesigned panel, Settings and Insights. The panel has a toolbar with labelled icons (refresh, Insights, network, pair a phone, keep open, settings, close), a summary that names the plans at risk and the next reset, cards that show **% used** with the exact reset time on hover, and the network and battery cards grouped under **This computer**. Settings has a section list and a new **Appearance** section with the theme, text size, compact cards and which plans to show, in which order; the chips now follow that order too. The theme applies to every window. Insights uses plain names (Models, Overview, History, Pace & runway, …). Pace, runway, health and recommendations read only the current reset cycle, so a window rising fast just after its reset is no longer reported as cooling.

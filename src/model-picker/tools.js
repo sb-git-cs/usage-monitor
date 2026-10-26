@@ -11,6 +11,7 @@ const TOOL_LINE_MAX = 100;
 const TOOLS = [
   {
     id: "claude",
+    color: 173,
     label: "Claude Code",
     file: "claude",
     parser: "anthropic",
@@ -20,6 +21,7 @@ const TOOLS = [
   },
   {
     id: "codex",
+    color: 114,
     label: "Codex",
     file: "codex",
     parser: "codex",
@@ -28,6 +30,7 @@ const TOOLS = [
   },
   {
     id: "grok",
+    color: 252,
     label: "Grok Build",
     file: "grok",
     parser: "anthropic",
@@ -37,6 +40,7 @@ const TOOLS = [
   },
   {
     id: "gemini",
+    color: 75,
     label: "Gemini",
     file: "agy",
     parser: "agy",
@@ -45,6 +49,7 @@ const TOOLS = [
   },
   {
     id: "cursor",
+    color: 141,
     label: "Cursor",
     file: "cursor-agent",
     parser: "cursor",
@@ -112,7 +117,7 @@ function spawnPlan(exe, args, platform = process.platform) {
 function buildArgv(toolId, { model = null, sessionId = null, prompt = "", promptFile = null } = {}) {
   switch (toolId) {
     case "claude": {
-      const args = ["-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"];
+      const args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--dangerously-skip-permissions"];
       if (model) args.push("--model", model);
       if (sessionId) args.push("--resume", sessionId);
       return { args, stdin: prompt };
@@ -125,7 +130,7 @@ function buildArgv(toolId, { model = null, sessionId = null, prompt = "", prompt
       return { args, stdin: prompt };
     }
     case "grok": {
-      const args = ["--always-approve", "--output-format", "streaming-messages-json", "--prompt-file", promptFile];
+      const args = ["--always-approve", "--output-format", "streaming-messages-json", "--include-partial-messages", "--prompt-file", promptFile];
       if (model) args.push("-m", model);
       if (sessionId) args.push("-r", sessionId);
       return { args, stdin: null };
@@ -137,7 +142,7 @@ function buildArgv(toolId, { model = null, sessionId = null, prompt = "", prompt
       return { args, stdin: null };
     }
     case "cursor": {
-      const args = ["-p", "--trust", "--force", "--output-format", "stream-json"];
+      const args = ["-p", "--trust", "--force", "--output-format", "stream-json", "--stream-partial-output"];
       if (model) args.push("--model", model);
       if (sessionId) args.push("--resume", sessionId);
       return { args, stdin: prompt };
@@ -307,20 +312,67 @@ function resultText(v) {
   return typeof v.result === "string" ? v.result : "";
 }
 
+// One shape for every tool. Cached input counts as input where the tool reports it separately.
+function normUsage(u) {
+  if (!u || typeof u !== "object") return undefined;
+  const n = (k) => (typeof u[k] === "number" ? u[k] : 0);
+  const input = n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens") + n("inputTokens") + n("cacheReadTokens") + n("cacheWriteTokens");
+  const output = n("output_tokens") + n("outputTokens");
+  return input || output ? { input, output } : undefined;
+}
+
+function withUsage(event, usage, costUsd) {
+  const u = normUsage(usage);
+  if (u) event.usage = u;
+  if (typeof costUsd === "number") event.costUsd = costUsd;
+  return event;
+}
+
+// Reports changes only, so a run of thinking deltas is one event.
+function activity(state, text) {
+  if (state.activity === text) return [];
+  state.activity = text;
+  return [{ kind: "activity", text }];
+}
+
+function streamEvent(state, ev) {
+  if (ev.type === "content_block_start" && ev.content_block) {
+    if (ev.content_block.type === "text") {
+      state.newBlock = true;
+      return activity(state, "writing");
+    }
+    if (ev.content_block.type === "thinking") return activity(state, "thinking");
+  } else if (ev.type === "content_block_delta" && ev.delta) {
+    if (ev.delta.type === "text_delta") {
+      const joined = !state.newBlock;
+      state.newBlock = false;
+      state.deltas = true;
+      return textEvent(state, ev.delta.text, joined);
+    }
+    if (ev.delta.type === "thinking_delta") return activity(state, "thinking");
+  } else if (ev.type === "content_block_stop") state.activity = null;
+  return [];
+}
+
 function anthropicLike(state, v) {
   const events = [];
   if (v.type === "system" && v.subtype === "init" && v.session_id) events.push({ kind: "session", id: v.session_id });
+  else if (v.type === "stream_event" && v.event) events.push(...streamEvent(state, v.event));
   else if (v.type === "assistant") {
     const content = v.message && Array.isArray(v.message.content) ? v.message.content : [];
     for (const block of content) {
       if (!block) continue;
-      if (block.type === "text") events.push(...textEvent(state, block.text));
-      else if (block.type === "tool_use") events.push({ kind: "tool", text: summarizeTool(block.name || "tool", block.input) });
+      // Once deltas streamed, the whole-text block only repeats them.
+      if (block.type === "text" && !state.deltas) events.push(...textEvent(state, block.text));
+      else if (block.type === "tool_use") {
+        state.activity = null;
+        events.push({ kind: "tool", text: summarizeTool(block.name || "tool", block.input) });
+      }
     }
   } else if (v.type === "result") {
     if (v.session_id) events.push({ kind: "session", id: v.session_id });
     const error = v.is_error === true;
-    events.push({ kind: "result", text: resultText(v) || (error ? String(v.subtype || "error") : ""), error });
+    events.push(withUsage({ kind: "result", text: resultText(v) || (error ? String(v.subtype || "error") : ""), error }, v.usage, v.total_cost_usd));
   }
   return events;
 }
@@ -330,7 +382,23 @@ function cursorEvents(state, v) {
     const key = Object.keys(v.tool_call).find((k) => k.endsWith("ToolCall"));
     if (!key) return [];
     const call = v.tool_call[key];
+    state.activity = null;
     return [{ kind: "tool", text: summarizeTool(key.slice(0, -"ToolCall".length), call && call.args) }];
+  }
+  if (v.type === "thinking") return v.subtype === "delta" ? activity(state, "thinking") : [];
+  if (v.type === "assistant" && v.message && Array.isArray(v.message.content)) {
+    // With partial output, events with timestamp_ms are deltas and one later event repeats the whole text.
+    if (typeof v.timestamp_ms === "number") {
+      const joined = state.cursorRun === true;
+      state.cursorRun = true;
+      const text = v.message.content.map((b) => (b && b.type === "text" && typeof b.text === "string" ? b.text : "")).join("");
+      return [...activity(state, "writing"), ...textEvent(state, text, joined)];
+    }
+    if (state.cursorRun) {
+      state.cursorRun = false;
+      state.activity = null;
+      return [];
+    }
   }
   return anthropicLike(state, v);
 }
@@ -357,7 +425,7 @@ function codexEvents(state, v) {
       if (item.type === "error") return [{ kind: "note", text: String(item.message || "error") }];
       return [];
     case "turn.completed":
-      return [{ kind: "result", text: state.last || "", error: false }];
+      return [withUsage({ kind: "result", text: state.last || "", error: false }, v.usage)];
     case "turn.failed":
       return [{ kind: "result", text: String((v.error && v.error.message) || "turn failed"), error: true }];
     // Codex also reports a dropped stream it is retrying this way; turn.failed is the end.
@@ -394,7 +462,7 @@ function agyEvents(state, v) {
     const r = v.result;
     const events = r.conversation_id ? [{ kind: "session", id: r.conversation_id }] : [];
     const error = r.status !== "SUCCESS";
-    events.push({ kind: "result", text: typeof r.response === "string" ? r.response : error ? String(r.status || "error") : "", error });
+    events.push(withUsage({ kind: "result", text: typeof r.response === "string" ? r.response : error ? String(r.status || "error") : "", error }, r.usage));
     return events;
   }
   return [];
@@ -404,7 +472,7 @@ function agyEvents(state, v) {
 function createParser(toolId) {
   const tool = toolById(toolId);
   if (!tool) throw new Error(`Unknown tool: ${toolId}`);
-  const state = { wrote: false, endsNewline: false, last: "", tools: new Set() };
+  const state = { wrote: false, endsNewline: false, last: "", tools: new Set(), deltas: false, newBlock: false, activity: null, cursorRun: false };
   const handler = { anthropic: anthropicLike, cursor: cursorEvents, codex: codexEvents, agy: agyEvents }[tool.parser];
   return (line) => {
     const parsed = parseJson(line);
@@ -429,5 +497,6 @@ module.exports = {
   parseCursorModels,
   loadModels,
   summarizeTool,
+  normUsage,
   createParser,
 };

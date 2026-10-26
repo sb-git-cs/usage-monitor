@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const tools = require("../src/model-picker/tools");
 const { createConversation, menuRows, currentIndex, CONTEXT_CAP } = require("../src/model-picker/conversation");
+const render = require("../src/model-picker/render");
 
 const {
   buildArgv,
@@ -24,7 +25,7 @@ function parse(toolId, lines) {
 
 test("claude argv resumes a session, omits the model flag for default and keeps the permission flag", () => {
   const fresh = buildArgv("claude", { model: null, prompt: "hi" });
-  assert.deepEqual(fresh.args, ["-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]);
+  assert.deepEqual(fresh.args, ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--dangerously-skip-permissions"]);
   assert.equal(fresh.stdin, "hi");
   const resumed = buildArgv("claude", { model: "opus", sessionId: "s-1", prompt: "hi" });
   assert.deepEqual(resumed.args.slice(-4), ["--model", "opus", "--resume", "s-1"]);
@@ -40,7 +41,7 @@ test("codex argv differs for new and resumed sessions and reads the prompt from 
 
 test("grok takes the prompt from a file and gemini as an argv element", () => {
   const grok = buildArgv("grok", { model: "g-1", sessionId: "s-1", prompt: "hi", promptFile: "/tmp/p.txt" });
-  assert.deepEqual(grok.args, ["--always-approve", "--output-format", "streaming-messages-json", "--prompt-file", "/tmp/p.txt", "-m", "g-1", "-r", "s-1"]);
+  assert.deepEqual(grok.args, ["--always-approve", "--output-format", "streaming-messages-json", "--include-partial-messages", "--prompt-file", "/tmp/p.txt", "-m", "g-1", "-r", "s-1"]);
   assert.equal(grok.stdin, null);
   const gemini = buildArgv("gemini", { model: "x-low", sessionId: "c-1", prompt: "hi there" });
   assert.deepEqual(gemini.args, ["-p", "hi there", "--output-format", "stream-json", "--dangerously-skip-permissions", "--model", "x-low", "--conversation", "c-1"]);
@@ -50,7 +51,7 @@ test("grok takes the prompt from a file and gemini as an argv element", () => {
 
 test("cursor argv trusts the folder, forces and reads stdin", () => {
   const cursor = buildArgv("cursor", { model: "auto", sessionId: "u-1", prompt: "hi" });
-  assert.deepEqual(cursor.args, ["-p", "--trust", "--force", "--output-format", "stream-json", "--model", "auto", "--resume", "u-1"]);
+  assert.deepEqual(cursor.args, ["-p", "--trust", "--force", "--output-format", "stream-json", "--stream-partial-output", "--model", "auto", "--resume", "u-1"]);
   assert.equal(cursor.stdin, "hi");
 });
 
@@ -176,7 +177,7 @@ test("agy deltas of one step join as is; a later step starts on a new line", () 
   assert.deepEqual(texts, ["m", "ango", "\nDone"]);
 });
 
-test("cursor parser names tool calls by their key and ignores thinking", () => {
+test("cursor parser names tool calls by their key and reports thinking as activity", () => {
   const events = parse("cursor", [
     { type: "system", subtype: "init", session_id: "u-1", model: "Composer 2.5" },
     { type: "thinking", subtype: "delta" },
@@ -188,6 +189,7 @@ test("cursor parser names tool calls by their key and ignores thinking", () => {
   ]);
   assert.deepEqual(events, [
     { kind: "session", id: "u-1" },
+    { kind: "activity", text: "thinking" },
     { kind: "tool", text: "glob *" },
     { kind: "text", text: "done" },
     { kind: "session", id: "u-1" },
@@ -315,4 +317,236 @@ test("executable lookup searches PATH then the tool's own install folders", () =
   assert.equal(findExecutable("grok", { platform: "win32", env, home, exists: () => false }), null);
   assert.equal(findExecutable("claude", { platform: "linux", env: { PATH: "/usr/bin" }, home: "/home/u", exists: has(["/home/u/.local/bin/claude"]) }), "/home/u/.local/bin/claude");
   assert.equal(findExecutable("codex", { platform: "linux", env: { PATH: "/usr/bin", LOCALAPPDATA: "/x" }, home: "/home/u", exists: has(["/x/Programs/OpenAI/Codex/bin/codex"]) }), null);
+});
+
+const stream = (event) => ({ type: "stream_event", event });
+const block = (type) => stream({ type: "content_block_start", index: 0, content_block: { type, text: "" } });
+const delta = (d) => stream({ type: "content_block_delta", index: 0, delta: d });
+const textDelta = (text) => delta({ type: "text_delta", text });
+
+for (const toolId of ["claude", "grok"]) {
+  test(`${toolId} deltas stream as text, thinking is activity and the repeated assistant text is skipped`, () => {
+    const events = parse(toolId, [
+      { type: "system", subtype: "init", session_id: "s-1" },
+      stream({ type: "message_start" }),
+      block("thinking"),
+      delta({ type: "thinking_delta", thinking: "hm" }),
+      delta({ type: "thinking_delta", thinking: "mm" }),
+      stream({ type: "content_block_stop", index: 0 }),
+      block("text"),
+      textDelta("Hel"),
+      textDelta("lo"),
+      { type: "assistant", message: { content: [{ type: "text", text: "Hello" }, { type: "tool_use", name: "Glob", input: { pattern: "*" } }] } },
+      stream({ type: "content_block_stop", index: 0 }),
+      block("text"),
+      textDelta("Bye"),
+      stream({ type: "message_stop" }),
+      { type: "result", is_error: false, result: "Hello\nBye" },
+    ]);
+    assert.deepEqual(events, [
+      { kind: "session", id: "s-1" },
+      { kind: "activity", text: "thinking" },
+      { kind: "activity", text: "writing" },
+      { kind: "text", text: "Hel" },
+      { kind: "text", text: "lo" },
+      { kind: "tool", text: "Glob *" },
+      { kind: "activity", text: "writing" },
+      { kind: "text", text: "\nBye" },
+      { kind: "result", text: "Hello\nBye", error: false },
+    ]);
+  });
+}
+
+test("without deltas the assistant text is still emitted", () => {
+  const events = parse("claude", [{ type: "assistant", message: { content: [{ type: "text", text: "whole" }] } }]);
+  assert.deepEqual(events, [{ kind: "text", text: "whole" }]);
+});
+
+test("cursor deltas carry timestamp_ms and the closing full message is skipped", () => {
+  const part = (text) => ({ type: "assistant", message: { content: [{ type: "text", text }] }, timestamp_ms: 1 });
+  const full = (text) => ({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  const events = parse("cursor", [
+    { type: "thinking", subtype: "delta" },
+    { type: "thinking", subtype: "delta" },
+    part("Hel"),
+    part("lo"),
+    full("Hello"),
+    part("Next"),
+    full("Next"),
+    full("Whole, never streamed"),
+  ]);
+  assert.deepEqual(events, [
+    { kind: "activity", text: "thinking" },
+    { kind: "activity", text: "writing" },
+    { kind: "text", text: "Hel" },
+    { kind: "text", text: "lo" },
+    { kind: "activity", text: "writing" },
+    { kind: "text", text: "\nNext" },
+    { kind: "text", text: "\nWhole, never streamed" },
+  ]);
+});
+
+test("usage is normalised per tool on the result event", () => {
+  const result = (toolId, line) => parse(toolId, [line]).find((e) => e.kind === "result");
+  const claude = result("claude", { type: "result", result: "x", usage: { input_tokens: 10, cache_creation_input_tokens: 20, cache_read_input_tokens: 30, output_tokens: 5 }, total_cost_usd: 0.0612 });
+  assert.deepEqual(claude.usage, { input: 60, output: 5 });
+  assert.equal(claude.costUsd, 0.0612);
+  assert.deepEqual(result("grok", { type: "result", result: "x", usage: { input_tokens: 3, output_tokens: 4 } }).usage, { input: 3, output: 4 });
+  assert.deepEqual(result("codex", { type: "turn.completed", usage: { input_tokens: 100, cached_input_tokens: 90, output_tokens: 7 } }).usage, { input: 100, output: 7 });
+  assert.deepEqual(result("cursor", { type: "result", result: "x", usage: { inputTokens: 1, outputTokens: 2, cacheReadTokens: 30, cacheWriteTokens: 400 } }).usage, { input: 431, output: 2 });
+  assert.deepEqual(result("gemini", { event: "result", result: { status: "SUCCESS", response: "x", usage: { input_tokens: 8, output_tokens: 9 } } }).usage, { input: 8, output: 9 });
+  assert.equal("usage" in result("codex", { type: "turn.completed", usage: {} }), false);
+});
+
+test("tools carry their menu color", () => {
+  assert.deepEqual(tools.TOOLS.map((t) => t.color), [173, 114, 252, 75, 141]);
+});
+
+// ---- render.js ----
+
+const plainOpts = { color: false };
+const on = { color: true, basic: false };
+const strip = (s) => require("node:util").stripVTControlCharacters(s);
+
+function menuFixture() {
+  return menuRows(
+    [
+      { id: "claude", label: "Claude Code", color: 173, models: [{ id: "opus" }, { id: "sonnet" }] },
+      { id: "codex", label: "Codex", color: 114, models: [{ id: "gpt-5.6-sol", label: "GPT-5.6-Sol" }, { id: "gpt-5.5" }] },
+    ],
+    {}
+  );
+}
+
+test("menu lines group rows under a tool header with the id in a second column", () => {
+  const lines = render.menuLines(menuFixture(), { pos: 0, width: 80, height: 30, current: { toolId: "codex", model: "gpt-5.5" }, ...plainOpts });
+  assert.equal(lines[0], "Claude Code  2 models");
+  assert.match(lines[1], /^ {2}› +default +tool's own default$/);
+  assert.equal(lines[2], "      opus");
+  assert.equal(lines.indexOf("Codex  2 models"), 5);
+  assert.match(lines[7], /^ {6}GPT-5.6-Sol +gpt-5\.6-sol$/);
+  assert.match(lines[8], /^ {4}● gpt-5\.5$/);
+  assert.equal(lines[9], "      Other model…");
+  assert.equal(lines[lines.length - 1], render.HINT);
+  assert.ok(lines.every((l) => !l.includes("\x1b")));
+});
+
+test("menu filter is case-insensitive over tool, label and id, hides empty groups and shows a filter line", () => {
+  const rows = menuFixture();
+  const sol = render.menuLines(rows, { filter: "SOL", pos: 0, width: 80, height: 30, ...plainOpts });
+  assert.equal(sol[0], "Filter SOL");
+  assert.ok(sol.some((l) => l.startsWith("Codex")));
+  assert.ok(!sol.some((l) => l.startsWith("Claude Code")));
+  assert.ok(sol.some((l) => l.includes("gpt-5.6-sol")));
+  assert.ok(render.menuLines(rows, { filter: "5.5", width: 80, height: 30, ...plainOpts }).some((l) => l.includes("gpt-5.5")));
+  assert.ok(render.menuLines(rows, { filter: "claude code", width: 80, height: 30, ...plainOpts }).some((l) => l.includes("sonnet")));
+  const none = render.menuLines(rows, { filter: "zzz", width: 80, height: 30, ...plainOpts });
+  assert.deepEqual(none, ["Filter zzz", "  (no match)", render.HINT]);
+  assert.equal(render.menuLines(rows, { width: 80, height: 30, ...plainOpts })[0].startsWith("Filter"), false);
+});
+
+test("menu viewport keeps the highlighted row visible within the height", () => {
+  const rows = menuFixture();
+  const total = render.filterRows(rows, "").length;
+  for (const pos of [0, 3, total - 1]) {
+    const lines = render.menuLines(rows, { pos, width: 80, height: 6, ...plainOpts });
+    assert.ok(lines.length <= 6);
+    assert.equal(lines.filter((l) => l.startsWith("  ›")).length, 1);
+  }
+  const first = render.menuLines(rows, { pos: 5, width: 80, height: 5, ...plainOpts });
+  assert.ok(first.includes("Codex  2 models"));
+});
+
+test("menu colors the current marker in the tool color and bolds the highlight", () => {
+  const lines = render.menuLines(menuFixture(), { pos: 0, width: 80, height: 30, current: { toolId: "claude", model: null }, ...on });
+  assert.ok(lines[0].includes("\x1b[38;5;173m"));
+  assert.ok(lines[1].includes("\x1b[38;5;173m●"));
+  const basic = render.menuLines(menuFixture(), { pos: 0, width: 80, height: 30, color: true, basic: true });
+  assert.ok(basic[0].includes("\x1b[33m"));
+});
+
+test("tab jumps to the next and previous tool group and wraps", () => {
+  const rows = menuFixture();
+  const list = render.filterRows(rows, "");
+  assert.equal(render.jumpGroup(rows, list, 1, 1), 4);
+  assert.equal(render.jumpGroup(rows, list, 5, 1), 0);
+  assert.equal(render.jumpGroup(rows, list, 5, -1), 0);
+  assert.equal(render.jumpGroup(rows, list, 0, -1), 4);
+});
+
+test("markdown lines: headings, emphasis, code, lists, quotes and links", () => {
+  const st = { fence: false };
+  const r = (line) => render.renderLine(line, st, on);
+  assert.equal(strip(r("## Title")), "Title");
+  assert.ok(r("## Title").includes("\x1b[1m"));
+  assert.equal(r("a **bold** b"), "a \x1b[1mbold\x1b[22m b");
+  assert.equal(r("an *it* and _it2_ ok"), "an \x1b[3mit\x1b[23m and \x1b[3mit2\x1b[23m ok");
+  assert.equal(strip(r("run `ls -la` now")), "run ls -la now");
+  assert.ok(r("run `ls`").includes("\x1b[36mls\x1b[39m"));
+  assert.equal(strip(r("  - item")), "  • item");
+  assert.equal(strip(r("* item")), "• item");
+  assert.equal(r("1. first"), "1. first");
+  assert.equal(strip(r("> quoted")), "│ quoted");
+  assert.equal(strip(r("see [docs](https://x.io/a_b)")), "see docs (https://x.io/a_b)");
+  assert.equal(r("use snake_case_name and a * b * c"), "use snake_case_name and a * b * c");
+});
+
+test("markdown fences render a rule with the language, a gutter inside and no inline formatting", () => {
+  const st = { fence: false };
+  const r = (line) => strip(render.renderLine(line, st, { ...on, width: 20 }));
+  assert.equal(r("```js"), "─── js " + "─".repeat(13));
+  assert.equal(st.fence, true);
+  assert.equal(r("const **a** = `b`;"), "│ const **a** = `b`;");
+  assert.equal(r("```"), "─".repeat(20));
+  assert.equal(st.fence, false);
+  assert.equal(r("**after**"), "after");
+});
+
+test("NO_COLOR passes markdown through untouched", () => {
+  const st = { fence: false };
+  for (const line of ["# H", "**b** `c`", "- x", "```js", "> q"]) assert.equal(render.renderLine(line, st, plainOpts), line);
+});
+
+test("stream renderer rewrites a finished line in place and buffers without a column count", () => {
+  const out = [];
+  const live = render.createStreamRenderer({ write: (s) => out.push(s), columns: 10, overwrite: true, ...on });
+  live.push("**ab");
+  assert.equal(live.atLineStart(), false);
+  live.push("c**\n");
+  assert.equal(live.atLineStart(), true);
+  assert.deepEqual(out, ["**ab", "\r\x1b[J", "\x1b[1mabc\x1b[22m\n"]);
+  out.length = 0;
+  live.push("x".repeat(25));
+  live.push("\n");
+  assert.equal(out[1], "\x1b[2A\r\x1b[J");
+
+  const buffered = [];
+  const b = render.createStreamRenderer({ write: (s) => buffered.push(s), columns: 0, overwrite: true, ...on });
+  b.push("**x**");
+  assert.deepEqual(buffered, []);
+  b.endLine();
+  assert.deepEqual(buffered, ["\x1b[1mx\x1b[22m\n"]);
+
+  const raw = [];
+  const p = render.createStreamRenderer({ write: (s) => raw.push(s), columns: 10, overwrite: true, ...plainOpts });
+  p.push("**a");
+  p.endLine();
+  assert.deepEqual(raw, ["**a", "\n"]);
+});
+
+test("status line, rule and footer formatting", () => {
+  assert.equal(render.statusLine({ frame: 0, label: "Claude Code · opus", elapsed: 4.23, activity: "thinking", ...plainOpts }), "⠋ Claude Code · opus · thinking… · 4.2s");
+  assert.equal(render.statusLine({ frame: 11, label: "L", elapsed: 7.9, activity: "running Glob *", ...plainOpts }), "⠙ L · running Glob * · 7.9s");
+  assert.equal(render.formatTokens(740), "740");
+  assert.equal(render.formatTokens(30200), "30.2k");
+  assert.equal(render.formatCost(0.0612), "≈$0.06");
+  assert.equal(render.formatCost(0.001), "<$0.01");
+  const rule = render.turnRule({ label: "Claude Code · opus", columns: 200, ...plainOpts });
+  assert.ok(rule.startsWith("── Claude Code · opus ─"));
+  assert.equal([...rule].length, 80);
+  assert.equal(render.turnFooter({ elapsedMs: 12300, usage: { input: 30200, output: 740 }, costUsd: 0.0612, ...plainOpts }), "✓ 12.3 s · 30.2k in · 740 out · ≈$0.06");
+  assert.equal(render.turnFooter({ elapsedMs: 1000, ...plainOpts }), "✓ 1.0 s");
+  assert.equal(render.turnFooter({ elapsedMs: 1000, failed: "boom", ...plainOpts }), "✗ boom · 1.0 s");
+  assert.equal(render.turnFooter({ elapsedMs: 1000, stopped: true, ...plainOpts }), "■ Stopped · 1.0 s");
+  assert.ok(render.turnFooter({ elapsedMs: 1, failed: "x", ...on }).includes("\x1b[31m"));
 });

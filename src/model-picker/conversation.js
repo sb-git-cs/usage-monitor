@@ -52,23 +52,25 @@ function createConversation() {
 }
 
 // Rows for the model menu: per tool a default row, its models, recent typed ids, then "Other".
+// text and search feed the numbered list and the filter; label, id and note feed the grouped menu.
 function menuRows(tools, recent = {}) {
   const rows = [];
   for (const tool of tools) {
-    const add = (row) => rows.push({ toolId: tool.id, toolLabel: tool.label, ...row });
-    add({ kind: "model", model: null, text: `${tool.label} · default`, search: `${tool.label} default` });
+    const add = (row) => rows.push({ toolId: tool.id, toolLabel: tool.label, color: tool.color, ...row });
+    add({ kind: "model", model: null, text: `${tool.label} · default`, search: `${tool.label} default`, label: "default", id: "", note: "tool's own default" });
     const seen = new Set();
     for (const m of tool.models || []) {
       if (seen.has(m.id)) continue;
       seen.add(m.id);
-      add({ kind: "model", model: m.id, text: `${tool.label} · ${m.label || m.id}`, search: `${tool.label} ${m.label || ""} ${m.id}` });
+      const label = m.label || m.id;
+      add({ kind: "model", model: m.id, text: `${tool.label} · ${label}`, search: `${tool.label} ${m.label || ""} ${m.id}`, label, id: label === m.id ? "" : m.id });
     }
     for (const id of (recent && recent[tool.id]) || []) {
       if (seen.has(id)) continue;
       seen.add(id);
-      add({ kind: "model", model: id, text: `${tool.label} · ${id}`, search: `${tool.label} ${id}` });
+      add({ kind: "model", model: id, text: `${tool.label} · ${id}`, search: `${tool.label} ${id}`, label: id, id: "" });
     }
-    add({ kind: "other", model: null, text: `${tool.label} · Other model…`, search: `${tool.label} other model` });
+    add({ kind: "other", model: null, text: `${tool.label} · Other model…`, search: `${tool.label} other model`, label: "Other model…", id: "" });
   }
   return rows;
 }

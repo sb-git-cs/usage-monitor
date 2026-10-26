@@ -5,15 +5,16 @@ const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 const tools = require("./tools");
 const { createConversation, menuRows, currentIndex } = require("./conversation");
+const render = require("./render");
 
 const RECENT_MAX = 10;
-const useColor = !process.env.NO_COLOR;
-const paint = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
-const dim = paint("2");
-const red = paint("31");
-const dimRed = paint("2;31");
-const yellow = paint("33");
-const bold = paint("1");
+const HISTORY_MAX = 50;
+const st = render.styler();
+const fmt = { color: st.on, basic: st.basic };
+const { dim, red, yellow, bold } = st;
+const dimRed = (s) => dim(red(s));
+// Shared across prompts: the readline interface is re-created per question.
+const history = [];
 
 // ---- persistence (best effort) ----
 
@@ -28,9 +29,10 @@ function settingsFile() {
 function loadSettings() {
   try {
     const data = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
-    return { last: data.last || null, recent: data.recent && typeof data.recent === "object" ? data.recent : {} };
+    const saved = Array.isArray(data.history) ? data.history.filter((x) => typeof x === "string" && x) : [];
+    return { last: data.last || null, recent: data.recent && typeof data.recent === "object" ? data.recent : {}, history: saved.slice(0, HISTORY_MAX) };
   } catch {
-    return { last: null, recent: {} };
+    return { last: null, recent: {}, history: [] };
   }
 }
 
@@ -91,21 +93,24 @@ function ask(text) {
     return readPiped(text);
   }
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true, history, historySize: 100, removeHistoryDuplicates: true });
     rl.on("SIGINT", () => rl.close());
     rl.on("close", () => resolve(null));
     rl.question(text, (answer) => {
       rl.removeAllListeners("close");
       rl.close();
+      // The interface may hold its own copy of the list, so make sure this line is in ours.
+      if (answer.trim() && history[0] !== answer) history.unshift(answer);
+      history.length = Math.min(history.length, 100);
       resolve(answer);
     });
   });
 }
 
-async function readPrompt() {
+async function readPrompt(head) {
   const lines = [];
   for (;;) {
-    const line = await ask(lines.length ? "  " : "› ");
+    const line = await ask(lines.length ? "    " : head);
     if (line === null) return lines.length ? lines.join("\n") : null;
     if (line.endsWith("\\")) {
       lines.push(line.slice(0, -1));
@@ -118,36 +123,27 @@ async function readPrompt() {
 
 // ---- menu ----
 
-function clip(text, width) {
-  return text.length > width ? `${text.slice(0, Math.max(0, width - 1))}…` : text;
-}
-
 // Returns the chosen row index, or null to quit.
-function pickInteractive(rows, startIndex) {
+function pickInteractive(rows, startIndex, current) {
   return new Promise((resolve) => {
     const stdin = process.stdin;
     let filter = "";
     let pos = 0;
     let drawn = 0;
-    const visible = () => {
-      const f = filter.toLowerCase();
-      return rows.map((_, i) => i).filter((i) => rows[i].search.toLowerCase().includes(f));
-    };
+    const visible = () => render.filterRows(rows, filter);
     pos = Math.max(0, visible().indexOf(startIndex));
 
     const draw = () => {
       const list = visible();
       pos = Math.min(pos, Math.max(0, list.length - 1));
-      const width = (process.stdout.columns || 80) - 1;
-      const height = Math.max(3, Math.min(list.length || 1, (process.stdout.rows || 24) - 4));
-      const top = Math.max(0, Math.min(pos - Math.floor(height / 2), list.length - height));
-      const lines = [dim(clip(`Pick a model · type to filter · Enter selects · Esc quits`, width))];
-      lines.push(`Filter: ${filter}`);
-      if (!list.length) lines.push(dim("  (no match)"));
-      for (let k = top; k < Math.min(list.length, top + height); k++) {
-        const text = clip(rows[list[k]].text, width - 2);
-        lines.push(k === pos ? bold(`› ${text}`) : `  ${text}`);
-      }
+      const lines = render.menuLines(rows, {
+        filter,
+        pos,
+        width: (process.stdout.columns || 80) - 1,
+        height: Math.max(5, (process.stdout.rows || 24) - 2),
+        current,
+        ...fmt,
+      });
       process.stdout.write((drawn ? `\x1b[${drawn}A` : "") + "\r\x1b[J" + lines.join("\n") + "\n");
       drawn = lines.length;
     };
@@ -176,6 +172,9 @@ function pickInteractive(rows, startIndex) {
           break;
         case "pagedown":
           pos = Math.min(list.length - 1, pos + page);
+          break;
+        case "tab":
+          pos = render.jumpGroup(rows, list, pos, key.shift ? -1 : 1);
           break;
         case "home":
           pos = 0;
@@ -264,16 +263,42 @@ async function runTurn(tool, model, prompt, conversation) {
     promptFile = path.join(os.tmpdir(), `model-picker-${process.pid}-${Date.now()}.txt`);
     fs.writeFileSync(promptFile, text, "utf8");
   }
-  const run = { texts: [], printed: false, result: null, sessionId: null, atLineStart: true, stopped: false, spawnError: null };
-  const write = (s, style) => {
-    if (!s) return;
-    process.stdout.write(style ? style(s) : s);
-    run.atLineStart = s.endsWith("\n");
+  const run = { texts: [], printed: false, result: null, sessionId: null, stopped: false, spawnError: null, activity: "" };
+  const tty = !!process.stdout.isTTY;
+  const columns = process.stdout.columns || 0;
+  const label = `${tool.label} · ${model || "default"}`;
+
+  // The status line shares the cursor row with output, so every write erases it first.
+  let spinShown = false;
+  let frame = 0;
+  let timer = null;
+  const clearSpin = () => {
+    if (spinShown) {
+      process.stdout.write("\r\x1b[K");
+      spinShown = false;
+    }
+  };
+  const write = (s) => {
+    clearSpin();
+    process.stdout.write(s);
+  };
+  const answer = render.createStreamRenderer({ write, columns, overwrite: tty, ...fmt });
+  const drawSpin = () => {
+    if (!answer.atLineStart()) return;
+    const status = render.statusLine({ frame: frame++, label, elapsed: (Date.now() - started) / 1000, activity: run.activity, width: (columns || 80) - 1, toolColor: tool.color, ...fmt });
+    process.stdout.write(`\r\x1b[K${status}`);
+    spinShown = true;
+  };
+  const stopSpin = () => {
+    if (timer) clearInterval(timer);
+    timer = null;
+    clearSpin();
   };
   const line = (s, style) => {
-    if (!run.atLineStart) write("\n");
-    write(`${s}\n`, style);
+    answer.endLine();
+    write(`${style ? style(s) : s}\n`);
   };
+
   const parse = tools.createParser(tool.id);
   const handle = (l) => {
     for (const ev of parse(l)) {
@@ -281,13 +306,25 @@ async function runTurn(tool, model, prompt, conversation) {
       else if (ev.kind === "text") {
         run.texts.push(ev.text);
         run.printed = true;
-        write(ev.text);
-      } else if (ev.kind === "tool") line(`  • ${ev.text}`, dim);
+        run.activity = "writing";
+        answer.push(ev.text);
+      } else if (ev.kind === "tool") {
+        line(`  • ${ev.text}`, dim);
+        run.activity = `running ${ev.text.replace(/^Run /, "")}`;
+      } else if (ev.kind === "activity") run.activity = ev.text;
       else if (ev.kind === "note") line(ev.text, yellow);
       else if (ev.kind === "raw") line(ev.text, dim);
       else if (ev.kind === "result") run.result = ev;
     }
   };
+
+  // Piped input is not echoed, so the prompt has no newline after it.
+  write(`${tty ? "" : "\n"}${render.turnRule({ label, toolColor: tool.color, columns, ...fmt })}\n`);
+  if (tty) {
+    run.activity = "thinking";
+    timer = setInterval(drawSpin, 80);
+    drawSpin();
+  }
 
   const exit = await new Promise((resolve) => {
     let child;
@@ -310,6 +347,7 @@ async function runTurn(tool, model, prompt, conversation) {
     child.stderr.on("data", (d) => errs.push(d));
     const onSigint = () => {
       run.stopped = true;
+      stopSpin();
       killTree(child);
     };
     process.on("SIGINT", onSigint);
@@ -324,17 +362,23 @@ async function runTurn(tool, model, prompt, conversation) {
     });
   });
   if (promptFile) fs.rm(promptFile, { force: true }, () => {});
+  stopSpin();
 
+  const elapsedMs = Date.now() - started;
   if (run.stopped) {
-    line("Stopped.", dim);
+    answer.endLine();
+    line(render.turnFooter({ elapsedMs, stopped: true, ...fmt }));
     return;
   }
   const reply = (run.result && run.result.text) || run.texts.join("");
-  if (!run.printed && run.result && run.result.text) line(run.result.text);
-  if (run.spawnError && !run.result) line(`${tool.label} stopped: ${run.spawnError}`, red);
-  else if (run.result && run.result.error) line(`${tool.label} stopped: ${run.result.text || "error"}`, red);
-  else if (!run.result && exit !== 0) line(`${tool.label} stopped: exit code ${exit}`, red);
-  line(`— ${tool.label} · ${model || "default"} · ${((Date.now() - started) / 1000).toFixed(1)} s`, dim);
+  if (!run.printed && run.result && run.result.text) answer.push(run.result.text);
+  answer.endLine();
+  let failed = null;
+  if (run.spawnError && !run.result) failed = `${tool.label} stopped: ${run.spawnError}`;
+  else if (run.result && run.result.error) failed = `${tool.label} stopped: ${run.result.text || "error"}`;
+  else if (!run.result && exit !== 0) failed = `${tool.label} stopped: exit code ${exit}`;
+  const r = run.result || {};
+  line(render.turnFooter({ elapsedMs, usage: r.usage, costUsd: r.costUsd, failed, ...fmt }));
   conversation.record({ toolId: tool.id, toolLabel: tool.label, model, prompt, reply, sessionId: run.sessionId });
 }
 
@@ -342,8 +386,8 @@ async function runTurn(tool, model, prompt, conversation) {
 
 async function main() {
   const cwd = process.cwd();
-  console.log(`${bold("Model picker")} · ${cwd}`);
-  console.log(dim("Each turn runs with the tool's skip-permissions flag. Ctrl+C stops a turn; Esc quits from the menu."));
+  const tty = !!process.stdout.isTTY;
+  console.log(`${bold("◆ Model picker")}  ${dim(cwd)}`);
 
   const found = tools.TOOLS.map((t) => ({ ...t, exe: tools.findExecutable(t.id) })).filter((t) => t.exe);
   if (!found.length) {
@@ -355,8 +399,12 @@ async function main() {
   const lists = await Promise.all(found.map((t) => tools.loadModels(t.id, { exe: t.exe })));
   const installed = found.map((t, i) => ({ ...t, models: lists[i] }));
   const byId = Object.fromEntries(installed.map((t) => [t.id, t]));
+  if (tty) process.stdout.write("\x1b[1A\r\x1b[J");
+  console.log(dim(installed.map((t) => `${t.label} ${t.models.length}`).join(" · ")));
+  console.log(dim("Runs with skip-permissions · Ctrl+C stops a turn · /model switches · /exit quits"));
 
   const settings = loadSettings();
+  history.push(...settings.history);
   const conversation = createConversation();
   let current = settings.last && byId[settings.last.toolId] ? settings.last : { toolId: installed[0].id, model: null };
 
@@ -366,7 +414,7 @@ async function main() {
   for (;;) {
     const rows = menuRows(installed, settings.recent);
     const start = currentIndex(rows, current);
-    const picked = interactive ? await pickInteractive(rows, start) : await pickNumbered(rows, start);
+    const picked = interactive ? await pickInteractive(rows, start, current) : await pickNumbered(rows, start);
     if (picked === null) return;
     const row = rows[picked];
     let model = row.model;
@@ -385,14 +433,20 @@ async function main() {
     current = { toolId: row.toolId, model };
     settings.last = current;
     saveSettings(settings);
-    console.log(`Model: ${row.toolLabel} · ${model || "default"}`);
+    const chosen = `${row.toolLabel} · ${model || "default"}`;
+    console.log(tty ? st.fg(row.color, `● ${chosen}`) : `Model: ${chosen}`);
 
     let prompt;
-    do prompt = await readPrompt();
+    const head = `${st.fg(row.color, "●")} › `;
+    do prompt = await readPrompt(head);
     while (prompt === "");
     if (prompt === null) return;
     if (prompt === "/exit" || prompt === "/quit") return;
     if (prompt === "/model") continue;
+    if (interactive) {
+      settings.history = history.slice(0, HISTORY_MAX);
+      saveSettings(settings);
+    }
     await runTurn(byId[row.toolId], model, prompt, conversation);
   }
 }

@@ -2,6 +2,17 @@
 
 ## Objective
 
+Release 1.13.1 (2026-10-26): two changes.
+
+- **Chips bug:** the owner reported that docked chips showed only while the taskbar was clicked. A 250 ms z-order log (`IsWindowVisible`, `EnumWindows` order) showed the strip stayed visible. Whenever another window became foreground, Windows 11 (build 26300) restacked `Shell_TrayWnd` above it, although the strip is owned by the taskbar and topmost.
+  - Before `d57b1c6` (1.12.1) the 800 ms `setAlwaysOnTop` re-assert hid this. `isAlwaysOnTop()` only reads `WS_EX_TOPMOST`, so the app never noticed.
+  - Fix: the `-Watch` loop in `scripts/taskbar-layout.ps1` (`Lift-Chips`, every 200 ms, docked and owned only, own-process window only) walks `GW_HWNDPREV` from the strip. If it meets the taskbar it calls `SetWindowPos(HWND_TOPMOST, NOMOVE|NOSIZE|NOACTIVATE)`, so nothing is restacked in steady state.
+  - Verified by pushing the strip under the taskbar: it was back on top within 500 ms. Before the fix it was hidden for up to 35 s.
+- **Picker UI:** `src/model-picker/render.js` (menu layout, status line, turn rule and footer, Markdown line renderer, stream renderer), used by `cli.js`.
+  - Partial output: `--include-partial-messages` for Claude and Grok, `--stream-partial-output` for Cursor. Repeated full-message text is skipped.
+  - Usage and cost are normalised on the `result` event.
+  - Unverified in a real console: the spinner, the in-place menu and the rewrite of streamed lines (only tested as pure functions plus piped runs).
+
 Release 1.13.0 (2026-10-26, tag `v1.13.0` on `c1086f1`, Release run 40291278333, 18 assets incl. `latest*.yml`): the owner asked for a terminal that asks which model to use at the start and after every reply, covering every tool the app integrates. It replaces the godmode folder menu.
 
 - **Picker:** `src/model-picker/` (`tools.js`, `conversation.js`, `cli.js`), plain Node with built-ins only, unpacked from the asar (`asarUnpack`). The `runAsNode: false` fuse means the system `node` runs it.

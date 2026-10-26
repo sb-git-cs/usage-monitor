@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.13.1 — 2026-10-26
+
+- **Docked chips stay visible.** Since 1.12.1, Windows 11 put the taskbar back above the docked strip whenever another window became active, so the chips showed only while the taskbar was clicked. The taskbar helper now puts the strip back above the taskbar within a fifth of a second, and only when the taskbar is above it, so the flicker fixed in 1.12.1 does not return.
+- **A clearer model picker.**
+  - **Menu:** models are grouped under each tool, in its color, with the model name and id in two columns and ● on the current one. Tab and Shift+Tab jump between tools, and typing filters the list.
+  - **While a turn runs:** a status line shows what the tool is doing and for how long. Claude Code, Grok Build and Cursor replies appear as they are written.
+  - **Answers:** headings, bold, inline code, code blocks, lists, quotes and links are formatted.
+  - **Each turn:** a colored rule names the tool and model, and the footer gives the time, tokens and, where the tool reports it, the cost. ↑ recalls earlier prompts.
+
 ## 1.13.0 — 2026-10-26
 
 - **Open model picker here replaces Open in terminal (godmode).** Right-click empty space in a folder (Windows) and a terminal opens there. At the start and after every reply it asks which tool and model answers next. The list covers the installed tools: Claude Code (Fable, Opus, Sonnet, Haiku), Codex (the models in its cache and config), and Grok Build, Gemini (Antigravity) and Cursor (each one's `models` list), plus any model id you type. Enter keeps the current one, and typing filters the list.
