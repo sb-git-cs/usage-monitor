@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.13.3 — 2026-10-26
+
+- **Folder menu updates install again.** 1.13.2 brought back a fault in the menu script: on a PC that had the 1.13 menu, the update put the godmode menu back but could not save its install stamp. The app then also added the classic menu under Show more options and re-ran the script in a minimized PowerShell window at every launch. The script saves its stamp again, and the classic items are removed once the menu is installed.
+- **Docked chips stay visible again.** The 1.13.1 fix is back: when Windows 11 puts the taskbar above the docked strip because another window became active, the strip is put back above the taskbar within a fifth of a second.
+
 ## 1.13.2 — 2026-10-26
 
 - **Back to 1.12.2.** This release withdraws 1.13.0 and 1.13.1: the app is 1.12.2 again, apart from the Electron 44.9.3 security update, which stays.

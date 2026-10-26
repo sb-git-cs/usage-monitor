@@ -2,6 +2,15 @@
 
 ## Objective
 
+Next: 1.14.0. The model picker comes back, but switches model only on `/model` (or `/model <name>`) instead of after every reply. The folder menu gets two items, **Open in terminal (godmode)** plus **Open model picker here** (second CLSID in `GodmodeMenu.c`, package 1.2.0.0). The 1.13.1 picker code is at tag `v1.13.1`.
+
+Release 1.13.3 (2026-10-26): hotfix for 1.13.2.
+
+- **`register.ps1`:** 1.13.2 restored 1.12.2's script with the `$stamp`/`$Stamp` bug (PowerShell names ignore case, so the stamp text overwrote the stamp path). 1.13.0's `$stampText` fix and its `UsageMonitor.ModelPicker` entry in `Remove-ClassicMenu` are back.
+  - The owner's PC hit the bug at 15:05:10 (`register.log`).
+  - Running the fixed script there at 15:44 installed 1.0.0.0, wrote a stamp matching the bundled DLL, and removed both classic keys.
+- **`scripts/taskbar-layout.ps1`:** `Lift-Chips` is back (`7d4837c`).
+
 Release 1.13.2 (2026-10-26): the owner asked to go back to 1.12.2 after their installed app updated itself to 1.13.1. A lower version number would not reach installed copies, because electron-updater does not downgrade, so 1.12.2's tree (tag `v1.12.2`, `8726f33`) ships as 1.13.2.
 
 - **Kept from 1.13.0:** Electron 44.9.3 plus undici and fast-uri (`c1086f1`). 44.7.0 fails CI's `npm audit --audit-level=high`.
