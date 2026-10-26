@@ -2,7 +2,7 @@
 
 ## Objective
 
-Release 1.14.0 (2026-10-26, branch `picker-on-demand`): the owner asked for Cursor-style switching: change model mid-conversation and have the new one carry on. The 1.13.1 picker (`src/model-picker/`, restored from tag `v1.13.1`) now switches only on request.
+Release 1.14.0 (2026-10-26, tag `v1.14.0` on `e06da9f`, Release run 40314773314, 18 assets, `latest*.yml` at 1.14.0): the owner asked for Cursor-style switching: change model mid-conversation and have the new one carry on. The 1.13.1 picker (`src/model-picker/`, restored from tag `v1.13.1`) now switches only on request.
 
 - **`cli.js` `main()`:**
   - Starts on `settings.last` (menu only when there is none) and loops prompt → turn.
@@ -46,7 +46,7 @@ Release 1.14.0 (2026-10-26, branch `picker-on-demand`): the owner asked for Curs
   - live turns through the real CLIs (the session's permission check refused to start them);
   - Windows Terminal, which hosts the console through ConPTY rather than conhost.
 
-Release 1.13.3 (2026-10-26): hotfix for 1.13.2.
+Release 1.13.3 (2026-10-26, tag `v1.13.3` on `ccce3b4`, Release run 40314125511, 18 assets): hotfix for 1.13.2.
 
 - **`register.ps1`:** 1.13.2 restored 1.12.2's script with the `$stamp`/`$Stamp` bug (PowerShell names ignore case, so the stamp text overwrote the stamp path). 1.13.0's `$stampText` fix and its `UsageMonitor.ModelPicker` entry in `Remove-ClassicMenu` are back.
   - The owner's PC hit the bug at 15:05:10 (`register.log`).
