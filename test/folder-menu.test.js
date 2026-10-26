@@ -4,7 +4,34 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { MENU_KEY, PICKER_KEY, STORE, commands, install } = require("../src/folder-menu");
+const {
+  MENU_KEY,
+  PICKER_KEY,
+  PICKER_LABEL,
+  STORE,
+  commands,
+  pickerScript,
+  launcherText,
+  explorerCommand,
+  install,
+} = require("../src/folder-menu");
+
+test("the picker launcher runs the unpacked picker on the system node", () => {
+  assert.equal(PICKER_LABEL, "Open model picker here");
+  assert.equal(
+    pickerScript("C:\\Program Files\\Usage Monitor\\resources\\app.asar\\src"),
+    path.join("C:\\Program Files\\Usage Monitor\\resources\\app.asar.unpacked\\src", "model-picker", "cli.js")
+  );
+  assert.equal(pickerScript("/repo/src"), path.join("/repo/src", "model-picker", "cli.js"));
+  const text = launcherText("C:\\Users\\100% me\\cli.js");
+  assert.match(text, /^@echo off\r\n/);
+  assert.match(text, /where node >nul 2>&1 \|\| \(echo .*Node\.js.* & exit \/b 1\)\r\n/);
+  assert.match(text, /\r\nnode "C:\\Users\\100%% me\\cli\.js" %\*\r\n$/);
+  assert.equal(
+    explorerCommand("C:\\Users\\a & b\\shell\\model-picker.cmd"),
+    'cmd.exe /d /s /k "pushd "%V." && "C:\\Users\\a & b\\shell\\model-picker.cmd""'
+  );
+});
 
 test("the folder menu lists each CLI in order with its own flag", () => {
   const items = commands();
@@ -14,13 +41,14 @@ test("the folder menu lists each CLI in order with its own flag", () => {
   assert.equal(items.some((item) => /[&|<>^%!]/.test(item.tail)), false);
 });
 
-test("install writes the command file, registers the package, then removes the classic menu", async () => {
+test("install writes the command file and the picker launcher, registers the package, then removes the classic menu", async () => {
   const writes = [];
   const calls = [];
   const result = await install({
     platform: "win32",
     shellDir: "C:\\temp\\shell",
     script: "C:\\app\\register.ps1",
+    picker: "C:\\app\\cli.js",
     writeFile: (file, text) => writes.push([file, text]),
     rename: (from, to) => writes.push(["rename", from, to]),
     execFile: (file, args) => {
@@ -38,6 +66,8 @@ test("install writes the command file, registers the package, then removes the c
   assert.match(writes[0][1], /Gemini\tagy --dangerously-skip-permissions/);
   assert.equal(writes[1][0], "rename");
   assert.equal(writes[1][2], "C:\\temp\\shell\\godmode-commands.txt");
+  assert.deepEqual(writes[2], ["C:\\temp\\shell\\model-picker.cmd.tmp", launcherText("C:\\app\\cli.js")]);
+  assert.deepEqual(writes[3], ["rename", "C:\\temp\\shell\\model-picker.cmd.tmp", "C:\\temp\\shell\\model-picker.cmd"]);
   assert.equal(calls[0][0], "powershell.exe");
   assert.equal(calls[0][1].at(-1), "C:\\app\\register.ps1");
   assert.equal(calls[1][0], "reg.exe");
@@ -71,9 +101,8 @@ test("a failed package registration still adds the classic folder menu", async (
   assert.match(result.error, /install failed/);
   const added = calls.filter((call) => call[0] === "reg.exe" && call[1][0] === "add");
   assert.equal(added.some((call) => call[1][1] === MENU_KEY && call[1].includes("SubCommands")), true);
-  // Only the 1.13 model picker item is removed; the godmode menu just added stays.
-  const deleted = calls.filter((call) => call[0] === "reg.exe" && call[1][0] === "delete").map((call) => call[1][1]);
-  assert.deepEqual(deleted, [PICKER_KEY]);
+  assert.equal(added.some((call) => call[1][1] === PICKER_KEY && call[1].includes("MUIVerb")), true);
+  assert.equal(calls.some((call) => call[0] === "reg.exe" && call[1][0] === "delete"), false);
 });
 
 test("a PC without the packaging tools gets the classic menu instead of nothing", async () => {
@@ -107,6 +136,10 @@ test("a PC without the packaging tools gets the classic menu instead of nothing"
   assert.match(command[1].at(-2), /grok --always-approve/);
   const icon = added.find((call) => call[1][1] === MENU_KEY && call[1].includes("Icon"));
   assert.equal(icon[1].at(-2), "C:\\app\\icon.ico");
+  const picker = added.find((call) => call[1][1] === `${PICKER_KEY}\\command`);
+  assert.equal(picker[1].at(-2), explorerCommand("C:\\temp\\shell\\model-picker.cmd"));
+  const pickerIcon = added.find((call) => call[1][1] === PICKER_KEY && call[1].includes("Icon"));
+  assert.equal(pickerIcon[1].at(-2), "C:\\app\\icon.ico");
 });
 
 test("a declined administrator prompt is asked again and is not filed under Show more options", async () => {

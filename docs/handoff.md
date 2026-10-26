@@ -2,7 +2,27 @@
 
 ## Objective
 
-Next: 1.14.0. The model picker comes back, but switches model only on `/model` (or `/model <name>`) instead of after every reply. The folder menu gets two items, **Open in terminal (godmode)** plus **Open model picker here** (second CLSID in `GodmodeMenu.c`, package 1.2.0.0). The 1.13.1 picker code is at tag `v1.13.1`.
+Release 1.14.0 (2026-10-26, branch `picker-on-demand`): the owner asked for Cursor-style switching: change model mid-conversation and have the new one carry on. The 1.13.1 picker (`src/model-picker/`, restored from tag `v1.13.1`) now switches only on request.
+
+- **`cli.js` `main()`:**
+  - Starts on `settings.last` (menu only when there is none) and loops prompt → turn.
+  - `parseCommand` reads one-line `/model`, `/model <name>`, `/exit` and `/quit`.
+  - `/model` opens the menu; Esc returns to the prompt.
+  - `/model <name>` uses `conversation.matchRow`: model id or label, tool id or label, or "default". Ties are narrowed to the current tool; otherwise the menu opens filtered to `<name>` (`pickInteractive` `startFilter`).
+  - The prompt head shows the model in the tool color.
+- **Context:** handed over by `conversation.promptFor`, unchanged.
+- **Folder menu, two items:**
+  - `GodmodeMenu.c` serves two classes. `CLSID_GodmodeMenu` is the cascade, unchanged. `CLSID_ModelPicker` (`9A62378F-B3ED-482D-84D9-3C5DA294B6C0`) is one item that runs `model-picker.cmd` in a new console, with the folder as current directory. It is hidden until that launcher exists.
+  - `AppxManifest.xml` has both classes and verbs, version 1.2.0.0.
+  - DLL built with TinyCC 0.9.27 win64 (`tcc -impdef ole32.dll`, then `tcc -Wall -shared`), then `register.ps1 -RebuildBundle`, signed with `CN=Usage Monitor`. A LoadLibrary harness checked titles, flags, state with and without the launcher, the five sub-items, an unknown CLSID refused and `DllCanUnloadNow`.
+  - `folder-menu.js` writes `godmode-commands.txt` and `model-picker.cmd`. The classic fallback registers both `UsageMonitor.Godmode` and `UsageMonitor.ModelPicker`.
+- **Verified:** unit tests. A piped run with stand-in `claude`/`codex` in a scratch profile showed:
+  - no menu after a reply;
+  - `/model codex` and `/model sonnet` switched directly;
+  - a same-tool turn got `--resume`;
+  - Codex got both missed Claude turns, and Claude resumed its session with only the missed Codex turn;
+  - a second run started on the last model.
+- **Not yet verified:** the arrow-key menu, the spinner and streaming in a real console, and live model turns.
 
 Release 1.13.3 (2026-10-26): hotfix for 1.13.2.
 

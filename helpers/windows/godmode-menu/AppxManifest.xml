@@ -12,7 +12,7 @@
   <Identity
     Name="Shivam.UsageMonitor.Shell"
     Publisher="CN=Usage Monitor"
-    Version="1.0.0.0"
+    Version="1.2.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
@@ -47,6 +47,7 @@
           <com:ComServer>
             <com:SurrogateServer DisplayName="Usage Monitor Godmode Menu">
               <com:Class Id="4C0E9B2A-7F51-4D63-A18E-6B5C3D9F2704" Path="GodmodeMenu.dll" ThreadingModel="STA" />
+              <com:Class Id="9A62378F-B3ED-482D-84D9-3C5DA294B6C0" Path="GodmodeMenu.dll" ThreadingModel="STA" />
             </com:SurrogateServer>
           </com:ComServer>
         </com:Extension>
@@ -54,6 +55,7 @@
           <desktop4:FileExplorerContextMenus>
             <desktop5:ItemType Type="Directory\Background">
               <desktop5:Verb Id="UsageMonitorGodmode" Clsid="4C0E9B2A-7F51-4D63-A18E-6B5C3D9F2704" />
+              <desktop5:Verb Id="UsageMonitorModelPicker" Clsid="9A62378F-B3ED-482D-84D9-3C5DA294B6C0" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>

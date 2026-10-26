@@ -1,5 +1,8 @@
-/* Explorer command for the Windows 11 folder-background menu.
+/* Explorer commands for the Windows 11 folder-background menu.
    Loaded by a packaged COM surrogate (dllhost), not by explorer.exe.
+   Two classes: CLSID_GodmodeMenu is the "Open in terminal (godmode)" cascade, one CLI per
+   item; CLSID_ModelPicker is one item that opens a console in the right-clicked folder
+   and runs the model-picker launcher the app writes to %LOCALAPPDATA%\UsageMonitor\shell.
 
    Vtable slots below are the full slots, including IUnknown:
    IShellItem::GetDisplayName = 5, IShellItemArray::GetCount = 7,
@@ -38,6 +41,7 @@ static const GUID IID_IShellBrowser_ = { 0x000214E2, 0x0000, 0x0000, { 0xC0, 0x0
 static const GUID IID_IFolderView_ = { 0xCDE725B0, 0xCCC9, 0x4519, { 0x91, 0x7E, 0x32, 0x5D, 0x72, 0xFA, 0xB4, 0xCE } };
 static const GUID IID_IShellItem_ = { 0x43826D1E, 0xE718, 0x42EE, { 0xBC, 0x55, 0xA1, 0xE2, 0x61, 0xC3, 0x7B, 0xFE } };
 static const GUID CLSID_GodmodeMenu = { 0x4C0E9B2A, 0x7F51, 0x4D63, { 0xA1, 0x8E, 0x6B, 0x5C, 0x3D, 0x9F, 0x27, 0x04 } };
+static const GUID CLSID_ModelPicker = { 0x9A62378F, 0xB3ED, 0x482D, { 0x84, 0xD9, 0x3C, 0x5D, 0xA2, 0x94, 0xB6, 0xC0 } };
 
 static const char *DEFAULTS[] = {
     "Claude Code\tclaude --dangerously-skip-permissions",
@@ -60,6 +64,7 @@ struct Command {
     void *siteVtbl;
     LONG refs;
     int parent;
+    int picker;
     int index;
     wchar_t label[96];
     wchar_t tail[240];
@@ -233,6 +238,12 @@ static int icon_file(wchar_t *out, int cap) {
     wchar_t dir[700];
     if (!shell_dir(dir, 700)) return 0;
     return join2(out, cap, dir, L"\\icon.ico");
+}
+
+static int launcher_file(wchar_t *out, int cap) {
+    wchar_t dir[700];
+    if (!shell_dir(dir, 700)) return 0;
+    return join2(out, cap, dir, L"\\model-picker.cmd");
 }
 
 static int acceptable(const wchar_t *text, int spaces) {
@@ -424,6 +435,26 @@ static int build_launch(const wchar_t *folder, const wchar_t *label, const wchar
     return pos > 0;
 }
 
+/* The picker console starts in the folder itself (CreateProcess current directory), so no
+   folder text goes on the command line. /s strips only the outer pair of quotes, which
+   keeps the launcher path quoted even when the profile path has spaces, & or (). */
+static int build_picker_launch(wchar_t *out, int cap) {
+    wchar_t comspec[520];
+    wchar_t launcher[800];
+    DWORD n;
+    int pos;
+    if (!launcher_file(launcher, 800)) return 0;
+    n = GetEnvironmentVariableW(L"ComSpec", comspec, 520);
+    if (n == 0 || n >= 520) {
+        lstrcpynW(comspec, L"C:\\Windows\\System32\\cmd.exe", 520);
+    }
+    pos = append_quoted(out, cap, 0, comspec);
+    pos = append_text(out, cap, pos, L" /d /s /k \"");
+    pos = append_quoted(out, cap, pos, launcher);
+    pos = append_text(out, cap, pos, L"\"");
+    return pos > 0;
+}
+
 static HRESULT path_from_item(void *item, wchar_t *out, int cap) {
     void **vt;
     wchar_t *name = NULL;
@@ -568,6 +599,7 @@ static ULONG cmd_release(Command *self) {
 
 static HRESULT cmd_title(Command *self, void *items, wchar_t **out) {
     (void)items;
+    if (self->picker) return dup_wide(L"Open model picker here", out);
     if (self->parent) return dup_wide(L"Open in terminal (godmode)", out);
     return dup_wide(self->label, out);
 }
@@ -592,6 +624,10 @@ static HRESULT cmd_tip(Command *self, void *items, wchar_t **out) {
 
 static HRESULT cmd_name(Command *self, GUID *out) {
     if (!out) return E_POINTER;
+    if (self->picker) {
+        *out = CLSID_ModelPicker;
+        return S_OK;
+    }
     *out = CLSID_GodmodeMenu;
     if (!self->parent) out->Data4[5] = (unsigned char)(self->index + 1);
     return S_OK;
@@ -599,9 +635,14 @@ static HRESULT cmd_name(Command *self, GUID *out) {
 
 static HRESULT cmd_state(Command *self, void *items, BOOL slow, DWORD *out) {
     Entry entries[MAX_CMDS];
+    wchar_t launcher[800];
     (void)items;
     (void)slow;
     if (!out) return E_POINTER;
+    if (self->picker) {
+        *out = launcher_file(launcher, 800) && GetFileAttributesW(launcher) != INVALID_FILE_ATTRIBUTES ? ECS_ENABLED : ECS_HIDDEN;
+        return S_OK;
+    }
     if (!self->parent) {
         *out = ECS_ENABLED;
         return S_OK;
@@ -630,7 +671,7 @@ static HRESULT cmd_invoke(Command *self, void *items, void *bind) {
         log_line(L"invoke failed: no folder");
         return E_FAIL;
     }
-    if (!build_launch(folder, self->label, self->tail, line, 2048)) {
+    if (self->picker ? !build_picker_launch(line, 2048) : !build_launch(folder, self->label, self->tail, line, 2048)) {
         log_line(L"invoke failed: command");
         return E_FAIL;
     }
@@ -642,8 +683,11 @@ static HRESULT cmd_invoke(Command *self, void *items, void *bind) {
     memcpy(writable, line, (wcslen(line) + 1) * sizeof(wchar_t));
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
+    if (self->picker) si.lpTitle = L"Model picker";
     ZeroMemory(&pi, sizeof(pi));
-    ok = CreateProcessW(NULL, writable, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    /* The godmode line starts its own console through start; the picker gets one here. */
+    ok = CreateProcessW(NULL, writable, NULL, NULL, FALSE, self->picker ? CREATE_NEW_CONSOLE : CREATE_NO_WINDOW, NULL,
+        self->picker ? folder : NULL, &si, &pi);
     free(writable);
     if (!ok) {
         char err[80];
@@ -799,6 +843,7 @@ static HRESULT enum_clone(Enum *self, void **out) {
 typedef struct Factory {
     void *lpVtbl;
     LONG refs;
+    int picker;
 } Factory;
 
 static HRESULT factory_query(Factory *self, const GUID *iid, void **out);
@@ -808,7 +853,8 @@ static HRESULT factory_create(Factory *self, void *outer, const GUID *iid, void 
 static HRESULT factory_lock(Factory *self, BOOL lock);
 
 static const void *FACTORY_VTBL[] = { factory_query, factory_add, factory_release, factory_create, factory_lock };
-static Factory g_factory = { (void *)FACTORY_VTBL, 1 };
+static Factory g_factory = { (void *)FACTORY_VTBL, 1, 0 };
+static Factory g_picker_factory = { (void *)FACTORY_VTBL, 1, 1 };
 
 static HRESULT factory_query(Factory *self, const GUID *iid, void **out) {
     if (!out) return E_POINTER;
@@ -836,12 +882,12 @@ static ULONG factory_release(Factory *self) {
 static HRESULT factory_create(Factory *self, void *outer, const GUID *iid, void **out) {
     Command *cmd;
     HRESULT hr;
-    (void)self;
     if (!out) return E_POINTER;
     *out = NULL;
     if (outer) return CLASS_E_NOAGGREGATION;
-    cmd = command_new(1, -1, NULL, NULL, NULL);
+    cmd = command_new(self->picker ? 0 : 1, -1, NULL, NULL, NULL);
     if (!cmd) return E_OUTOFMEMORY;
+    cmd->picker = self->picker;
     hr = cmd_query(cmd, iid, out);
     cmd_release(cmd);
     return hr;
@@ -864,8 +910,10 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved) {
 __declspec(dllexport) HRESULT WINAPI DllGetClassObject(const GUID *clsid, const GUID *iid, void **out) {
     if (!out) return E_POINTER;
     *out = NULL;
-    if (!clsid || !guid_eq(clsid, &CLSID_GodmodeMenu)) return CLASS_E_CLASSNOTAVAILABLE;
-    return factory_query(&g_factory, iid, out);
+    if (!clsid) return CLASS_E_CLASSNOTAVAILABLE;
+    if (guid_eq(clsid, &CLSID_GodmodeMenu)) return factory_query(&g_factory, iid, out);
+    if (guid_eq(clsid, &CLSID_ModelPicker)) return factory_query(&g_picker_factory, iid, out);
+    return CLASS_E_CLASSNOTAVAILABLE;
 }
 
 __declspec(dllexport) HRESULT WINAPI DllCanUnloadNow(void) {
