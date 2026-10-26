@@ -8,6 +8,7 @@
   - **Windows 11 menu:** the menu is one item instead of a cascade of five CLIs. Its package is rebuilt, so the first launch after the update may ask once more for administrator approval.
   - **Needs Node.js 18+ on PATH.** The terminal says so if it is missing.
 - **Menu updates install again.** Updating an already installed Windows 11 menu package failed with "Illegal characters in path" and fell back to Show more options, because the menu script's stamp text overwrote the stamp file's path.
+- **Security updates.** Electron 44.9.3, which distrusts the compromised eMudhra intermediate certificates, plus undici and fast-uri fixes in the build tools.
 
 ## 1.12.2 — 2026-10-23
 
