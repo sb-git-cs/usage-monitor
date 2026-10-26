@@ -22,7 +22,20 @@ Release 1.14.0 (2026-10-26, branch `picker-on-demand`): the owner asked for Curs
   - a same-tool turn got `--resume`;
   - Codex got both missed Claude turns, and Claude resumed its session with only the missed Codex turn;
   - a second run started on the last model.
-- **Not yet verified:** the arrow-key menu, the spinner and streaming in a real console, and live model turns.
+- **Owner report: "letters are getting added every time i switch a model".** Two bugs, both reproduced in a real console before fixing:
+  - **Repeated letters:** `ask` called `rl.removeAllListeners("close")`, which also removed readline's own close listener that detaches it from stdin. Each answered prompt left a reader echoing every later key: 2× on the second prompt, 5× after two switches, with menu remnants on screen. Fixed in `askTerminal`: resolve, then close, and never remove readline's listeners. Unit test "each terminal question lets go of the input" fails with the old line (3 listeners leaked).
+  - **Stuck menu after Esc:** Esc is recognised by a timer while a console read is pending, and the menu's `finish` then paused stdin and left raw mode. On Windows, all later keys stopped arriving. `finish` now leaves raw mode and flow to the next readline prompt. `emitKeypressEvents(stdin, { escapeCodeTimeout: 100 })` at startup stops an Esc followed quickly by another key from merging into one unknown key. The footer says "Esc close".
+- **Real-console testing:** a driver compiled with TinyCC ran `cli.js` in a windowless console, typed with `WriteConsoleInput` and read the screen with `ReadConsoleOutputCharacter`. Ctrl+C was sent as a signal in processed mode and as a key in raw mode, with Ctrl+C enabled for the child: the tool shell disables it and children inherit that. It used stand-in `claude`/`codex` that stream with delays. Passing scenarios:
+  - two switches with typing checked;
+  - a conversation across tools: resume and missed turns checked from the stand-ins' argv and stdin;
+  - every menu key: filter, Tab, Esc twice, Ctrl+C, `/model haik`, Other model with a bad and a good id, a remembered id;
+  - Ctrl+C mid-turn, then a turn after it, then Ctrl+C to quit;
+  - a restart on the last model;
+  - Esc at the first menu;
+  - 8 rounds and 16 turns, then one line typed once.
+- **Not yet verified:**
+  - live turns through the real CLIs (the session's permission check refused to start them);
+  - Windows Terminal, which hosts the console through ConPTY rather than conhost.
 
 Release 1.13.3 (2026-10-26): hotfix for 1.13.2.
 

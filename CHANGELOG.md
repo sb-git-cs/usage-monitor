@@ -6,6 +6,7 @@
   - **Switching:** type `/model` to pick another tool or model from the menu, or `/model <name>` (for example `/model sonnet`, `/model codex`, `/model default`) to switch straight to it. A name that matches more than one tool or model opens the menu filtered to it.
   - **The new model carries on:** switching models in the same tool resumes that tool's own session. A tool you switch to is given the turns it missed, then keeps its own session.
   - **Shown in the prompt:** the current model sits in front of the prompt in its tool's color.
+  - **Typing fixed:** in 1.13, every prompt answered left a hidden reader behind, so each later letter appeared once more per earlier prompt and the menu left pieces of itself on screen. After Esc closed the menu, the next menu ignored all keys on Windows. Esc now closes the menu in a tenth of a second instead of half a second.
   - **Windows 11 menu:** the menu package is updated to 1.2.0.0 with both items on the main right-click menu. Where the package cannot be installed, both items are under Show more options.
   - **Needs Node.js 18+ on PATH.** The terminal says so if it is missing.
 

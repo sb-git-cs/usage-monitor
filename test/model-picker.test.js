@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 const tools = require("../src/model-picker/tools");
 const { createConversation, menuRows, currentIndex, matchRow, CONTEXT_CAP } = require("../src/model-picker/conversation");
 const render = require("../src/model-picker/render");
-const { parseCommand } = require("../src/model-picker/cli");
+const { parseCommand, askTerminal } = require("../src/model-picker/cli");
+const { PassThrough } = require("node:stream");
 
 const {
   buildArgv,
@@ -320,6 +321,26 @@ test("/model <name> finds a model by id or label, a tool's default by name, and 
   assert.equal(matchRow(rows, "other model…"), -1);
   assert.equal(matchRow(rows, "son"), -1);
   assert.equal(matchRow(rows, ""), -1);
+});
+
+test("each terminal question lets go of the input, so a typed key is echoed once", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let shown = "";
+  output.on("data", (d) => (shown += d));
+  for (const line of ["one", "two", "/model"]) {
+    const answer = askTerminal("> ", input, output);
+    input.write(`${line}\r`);
+    assert.equal(await answer, line);
+  }
+  assert.equal(input.listenerCount("keypress"), 0);
+  const next = askTerminal("> ", input, output);
+  shown = "";
+  input.write("z");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(shown.split("z").length - 1, 1);
+  input.end();
+  assert.equal(await next, null);
 });
 
 test("only a one-line /model or /exit is a command", () => {

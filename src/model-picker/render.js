@@ -1,7 +1,7 @@
 const { stripVTControlCharacters } = require("node:util");
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const HINT = "↑↓ move · Tab next tool · type to filter · Enter select · Esc quit";
+const HINT = "↑↓ move · Tab next tool · type to filter · Enter select · Esc close";
 // 256-color tool colors and their basic-terminal stand-ins.
 const BASIC = { 173: 33, 114: 32, 252: 37, 75: 34, 141: 35 };
 const ACCENT = 222;

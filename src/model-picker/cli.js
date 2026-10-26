@@ -92,17 +92,24 @@ function ask(text) {
     if (!readPiped) readPiped = pipedReader();
     return readPiped(text);
   }
+  return askTerminal(text);
+}
+
+// One line from the terminal, null on Ctrl+C or end of input. Each question gets its own
+// interface, which must close completely: readline detaches from the input in its own
+// close listener, and an interface left attached echoes every later keystroke again.
+function askTerminal(text, input = process.stdin, output = process.stdout) {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true, history, historySize: 100, removeHistoryDuplicates: true });
+    const rl = readline.createInterface({ input, output, terminal: true, history, historySize: 100, removeHistoryDuplicates: true });
     rl.on("SIGINT", () => rl.close());
     rl.on("close", () => resolve(null));
     rl.question(text, (answer) => {
-      rl.removeAllListeners("close");
-      rl.close();
       // The interface may hold its own copy of the list, so make sure this line is in ours.
       if (answer.trim() && history[0] !== answer) history.unshift(answer);
       history.length = Math.min(history.length, 100);
+      // Resolved first, so the null from the close listener is ignored.
       resolve(answer);
+      rl.close();
     });
   });
 }
@@ -150,8 +157,10 @@ function pickInteractive(rows, startIndex, current, startFilter = "") {
 
     const finish = (value) => {
       stdin.removeListener("keypress", onKey);
-      stdin.setRawMode(false);
-      stdin.pause();
+      // Raw mode and the flowing input stay as they are: a readline prompt always comes
+      // next and takes them over, and Node restores the console mode on exit. Esc is only
+      // recognised by a timer, while a console read is pending, and on Windows pausing or
+      // leaving raw mode at that moment stops all later keys from arriving.
       process.stdout.write(`\x1b[${drawn}A\r\x1b[J`);
       resolve(value);
     };
@@ -410,6 +419,10 @@ async function main() {
 
   // Ctrl+C outside a turn must not leave a half-drawn menu or a hung process.
   process.on("SIGINT", () => {});
+  // A lone Esc is known only once no other byte follows it. 100 ms instead of Node's 500 ms
+  // closes the menu promptly and keeps an Esc followed quickly by another key from merging
+  // into one unknown key. The first call sets this for the menu and readline alike.
+  if (interactive) readline.emitKeypressEvents(process.stdin, { escapeCodeTimeout: 100 });
 
   // The model menu; null when it is closed without a choice.
   const choose = async (filter = "") => {
@@ -495,4 +508,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { main, parseCommand };
+module.exports = { main, parseCommand, askTerminal };
