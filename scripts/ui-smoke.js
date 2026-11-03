@@ -17,17 +17,27 @@ app.on("window-all-closed", () => {});
 
 const hostile = '<img src="x" onerror="window.injected=true">';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-// Two animation frames, so a fit the panel scheduled has run. A hidden offscreen window can go about
-// a second without frames (seen on Linux), so a fixed wait does not tell whether the panel has fitted.
-const frames = (win) => win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error("no animation frame in 5 s")), 5000);
-  requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(timer); resolve(); }));
-})`);
+// One animation frame, so a fit the panel scheduled has run. A hidden offscreen window can go about a
+// second without frames (Linux), or paint only when something changes, so it is asked to repaint.
+async function frame(win) {
+  let done = false;
+  const seen = win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("no animation frame in 5 s")), 5000);
+    requestAnimationFrame(() => { clearTimeout(timer); resolve(); });
+  })`).finally(() => { done = true; });
+  while (!done) {
+    if (!win.isDestroyed()) win.webContents.invalidate();
+    await wait(16);
+  }
+  return seen;
+}
 // The panel's fit, the width it asks for, and the fit again at that width.
 async function settle(win) {
-  await frames(win);
+  await frame(win);
+  await frame(win);
   await wait(100);
-  await frames(win);
+  await frame(win);
+  await frame(win);
 }
 let resizes = 0;
 let flyoutResizes = 0;
@@ -70,9 +80,12 @@ const systemSummary = { cpu: 42, mem: 67, gpuPresent: true, gpu: 18, disk: 9, sp
 
 async function check(file) {
   // The panel is as tall as the work area; a short window would compact it and hide the account menus.
-  const win = new BrowserWindow({ show: false, width: 860, height: file === "flyout" ? 1000 : 600, webPreferences: {
+  // Tall enough for that with any system font (macOS and Linux lay the panel out taller than Windows).
+  const win = new BrowserWindow({ show: false, width: 860, height: file === "flyout" ? 1400 : 600, webPreferences: {
     preload: path.join(source, "preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
   } });
+  // A new window is kept within the screen (1024 px under xvfb); a resize is not.
+  if (file === "flyout") win.setSize(860, 1400);
   const errors = [];
   let renderedFrame = null;
   win.webContents.on("paint", (_event, _dirty, frame) => { renderedFrame = frame; });

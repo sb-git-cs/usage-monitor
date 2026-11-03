@@ -179,6 +179,6 @@
   "dependencies": {
     "electron-updater": "6.8.10",
     "qrcode-generator": "2.0.4",
-    "systeminformation": "5.33.15"
+    "systeminformation": "5.33.19"
   }
 }
