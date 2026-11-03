@@ -58,6 +58,8 @@ let fitting = false;
 let lastWidth = 0;
 let pendingWidth = 0; // a width asked of main that the window has not taken yet
 let pendingTimer = 0;
+let widthCap = 0; // the width a display too narrow gave instead of the one asked for
+let lastHeight = 0;
 
 function scheduleFit() {
   if (fitFrame) return;
@@ -144,8 +146,9 @@ function fit() {
       sizeRoot(1, PANEL_WIDTH, 0);
       const natural = root.scrollHeight;
       // A display too narrow for the width asked for gives less: past that zoom the panel would fold to one column.
-      const clamped = lastWidth && !pendingWidth && window.innerWidth < lastWidth
-        ? Math.max(0.85, Math.floor(window.innerWidth / PANEL_WIDTH * 20 + 1e-6) / 20) : Infinity;
+      // The cap stays, or the next fit would ask for the full width again and the panel would keep resizing.
+      if (lastWidth && !pendingWidth && window.innerWidth < lastWidth - 1) widthCap = window.innerWidth;
+      const clamped = widthCap ? Math.max(0.85, Math.floor(widthCap / PANEL_WIDTH * 20 + 1e-6) / 20) : Infinity;
       zoom = natural > 0 ? Math.min(1.3, clamped, Math.max(0.85, Math.floor(window.innerHeight / natural * 20 + 1e-6) / 20)) : 1;
     }
     const width = window.innerWidth / zoom;
@@ -167,7 +170,11 @@ function fit() {
       // Until the window has taken the new width (or had half a second to), its width says nothing.
       pendingWidth = request;
       clearTimeout(pendingTimer);
-      pendingTimer = setTimeout(() => { pendingWidth = 0; }, 500);
+      // A window still narrower then was given less than asked for, and the next fit caps the zoom to it.
+      pendingTimer = setTimeout(() => {
+        pendingWidth = 0;
+        scheduleFit();
+      }, 500);
       window.usage.resizeFlyout(window.innerHeight, request);
     }
   } finally {
@@ -175,7 +182,14 @@ function fit() {
   }
 }
 window.addEventListener("resize", () => {
-  pendingWidth = 0;
+  // Only the width asked for ends the wait: main also moves and heightens the panel on its own,
+  // and a resize from that, before the new width lands, would read as a display too narrow.
+  if (Math.abs(window.innerWidth - pendingWidth) <= 1) pendingWidth = 0;
+  // A new height is a new screen or work area, whose width is tried afresh.
+  if (window.innerHeight !== lastHeight) {
+    lastHeight = window.innerHeight;
+    widthCap = 0;
+  }
   scheduleFit();
 });
 document.fonts.ready.then(scheduleFit);

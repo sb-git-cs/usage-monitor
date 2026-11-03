@@ -17,6 +17,18 @@ app.on("window-all-closed", () => {});
 
 const hostile = '<img src="x" onerror="window.injected=true">';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Two animation frames, so a fit the panel scheduled has run. A hidden offscreen window can go about
+// a second without frames (seen on Linux), so a fixed wait does not tell whether the panel has fitted.
+const frames = (win) => win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error("no animation frame in 5 s")), 5000);
+  requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(timer); resolve(); }));
+})`);
+// The panel's fit, the width it asks for, and the fit again at that width.
+async function settle(win) {
+  await frames(win);
+  await wait(100);
+  await frames(win);
+}
 let resizes = 0;
 let flyoutResizes = 0;
 // The window whose width requests are applied, as main does for the real panel.
@@ -76,6 +88,7 @@ async function check(file) {
     win.webContents.send("usage://system", systemSummary);
     win.webContents.send("usage://sessions", sessionsView);
     await new Promise((resolve) => setTimeout(resolve, 200));
+    if (file === "flyout") await settle(win);
     const result = await win.webContents.executeJavaScript(`({
       sessions: (() => {
         const el = document.getElementById('sessions') || document.getElementById('sessionChip');
@@ -428,6 +441,7 @@ async function checkFit() {
       display: { theme: "dark", scale, compact: false, hidden: [], order: [] } });
     send();
     await wait(400);
+    await settle(win);
   };
   const measure = `(() => {
     const root = document.getElementById('root'), update = document.getElementById('update');
@@ -465,6 +479,7 @@ async function checkFit() {
       await wait(60);
     }
     await wait(300);
+    await settle(win);
     assert.ok(flyoutResizes - before.resizes <= 1, `repeated readings asked for ${flyoutResizes - before.resizes} resizes`);
     assert.equal((await js(measure)).className, before.className, "repeated readings keep the layout");
     assert.deepEqual(errors, []);
