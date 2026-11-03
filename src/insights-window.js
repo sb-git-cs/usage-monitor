@@ -123,6 +123,29 @@ function tokensFor(days) {
   return result;
 }
 
+// Closed sessions the panel offered to reopen, reduced to the fields the page shows.
+function recentSessions() {
+  try {
+    return (ctx.sessions ? ctx.sessions()?.recent || [] : []).map((s) => ({
+      key: s.key,
+      tool: s.tool,
+      cli: s.cli,
+      label: s.label,
+      name: s.name,
+      cwd: s.cwd,
+      id: s.id,
+      started: s.started,
+      last_active: s.last_active,
+      closed_at: s.closed_at,
+      godmode: s.godmode,
+      can_resume: s.can_resume,
+      reason: s.reason,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function view(days) {
   const series = ctx.insights.report(days);
   const burn = analyzeBurn(series);
@@ -162,6 +185,7 @@ async function view(days) {
     health,
     tokens,
     active_sessions: activeSessions,
+    recent_sessions: recentSessions(),
   };
 }
 
@@ -187,6 +211,8 @@ function init(context) {
       if (ctx.openNetwork) ctx.openNetwork();
     } else if (action === "settings") {
       if (ctx.openSettings) ctx.openSettings();
+    } else if (action === "resume" && typeof value === "string") {
+      if (ctx.resume) return ctx.resume(value);
     } else if (action === "login" && diagnostic().providers.some((p) => p.id === value)) {
       if (ctx.login) return ctx.login(value);
     }

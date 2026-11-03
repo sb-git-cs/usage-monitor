@@ -206,6 +206,7 @@ function parseCodexCache(text) {
           id: m.slug,
           label: typeof m.display_name === "string" && m.display_name ? m.display_name : undefined,
           ...(efforts.length ? { efforts } : {}),
+          ...(typeof m.description === "string" && m.description ? { description: m.description } : {}),
         };
       });
   } catch {
@@ -213,19 +214,24 @@ function parseCodexCache(text) {
   }
 }
 
-// ~/.grok/models_cache.json: { models: { <id>: { info: { reasoning_efforts: [{ value }] } } } }
+// ~/.grok/models_cache.json: { models: { <id>: { info: { name, description, reasoning_efforts: [{ value }] } } } }
 function parseGrokCache(text) {
-  const efforts = {};
+  const byId = {};
   try {
     const models = JSON.parse(String(text).replace(/^\uFEFF/, "")).models;
     for (const [id, m] of Object.entries(models && typeof models === "object" ? models : {})) {
-      const list = levelList(m && m.info && m.info.reasoning_efforts);
-      if (list.length) efforts[id] = list;
+      const info = (m && m.info) || {};
+      const entry = {};
+      const efforts = levelList(info.reasoning_efforts);
+      if (efforts.length) entry.efforts = efforts;
+      if (typeof info.name === "string" && info.name) entry.label = info.name;
+      if (typeof info.description === "string" && info.description) entry.description = info.description;
+      if (Object.keys(entry).length) byId[id] = entry;
     }
   } catch {
-    /* no cache: Grok models carry no effort levels */
+    /* no cache: Grok models carry only their ids */
   }
-  return efforts;
+  return byId;
 }
 
 function parseCodexConfigModel(text) {
@@ -288,8 +294,8 @@ function codexModels(env, home, readFile) {
 }
 
 function grokModels(out, home, readFile) {
-  const efforts = parseGrokCache(readFile(path.join(home, ".grok", "models_cache.json")));
-  return parseGrokModels(out).map((m) => (efforts[m.id] ? { ...m, efforts: efforts[m.id] } : m));
+  const cache = parseGrokCache(readFile(path.join(home, ".grok", "models_cache.json")));
+  return parseGrokModels(out).map((m) => (cache[m.id] ? { ...m, ...cache[m.id] } : m));
 }
 
 function runCapture(exe, args) {

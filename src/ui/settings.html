@@ -49,8 +49,9 @@
           </select>
         </div>
         <div class="setting">
-          <span class="setting-text"><label class="setting-name" for="scale">Panel text size</label><span class="setting-desc">Larger text also widens the panel.</span></span>
+          <span class="setting-text"><label class="setting-name" for="scale">Panel text size</label><span class="setting-desc">Auto fits the panel to the screen's height. A fixed size keeps that size and compacts the cards when the screen is short.</span></span>
           <select id="scale">
+            <option value="auto">Auto · fits the screen</option>
             <option value="100">100%</option>
             <option value="115">115%</option>
             <option value="130">130%</option>
@@ -112,6 +113,13 @@
           <span class="setting-text"><span class="setting-name">Resume sessions after a usage limit resets</span><span class="setting-desc" id="autoResumeHint">Types "continue" into the terminal where a limit stopped Claude Code, Codex, Grok Build, Antigravity, Gemini CLI, Cursor Agent or Copilot CLI, a minute after that limit resets. A 5-hour limit resumes when its 5-hour window resets, even if a weekly window is still full. Nothing is typed if the terminal was closed or no longer shows the limit message, while the session is busy, or while the meters still show that limit used up.</span></span>
           <input type="checkbox" class="toggle" id="autoResume" />
         </label>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Show recently closed sessions</span><span class="setting-desc">The panel and Insights list the sessions you closed, with a Resume button that reopens each one in a terminal in its folder, with the same permissions it ran with. Sessions are read from each tool's own records on this computer; nothing leaves it.</span></span>
+          <input type="checkbox" class="toggle" id="recentSessions" />
+        </label>
+        <div class="row-actions wrap">
+          <button class="btn" type="button" id="clearRecent">Clear recent sessions</button>
+        </div>
         <p class="note" id="folderMenuHint">In File Explorer, right-click empty space in a folder and choose <strong>Open in terminal (godmode)</strong> to start Claude Code, Codex, Grok Build, Gemini or Cursor there with that CLI's own skip-permissions flag, or <strong>Open model picker here</strong> for one conversation you can hand to another tool or model with <code>/model</code> (needs Node.js). On Windows 11 both are on the main right-click menu; the first launch asks once for administrator approval so Windows can trust them.</p>
       </section>
 

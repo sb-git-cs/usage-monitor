@@ -80,6 +80,67 @@ test("Insights IPC only accepts its own renderer and support reports omit sensit
   await handles["insights:action"](own, "retry"); assert.equal(retries, 1);
 });
 
+test("Insights lists closed sessions and forwards Resume only from its own renderer", async () => {
+  const handles = {};
+  let win;
+  const resumed = [];
+  class Window {
+    constructor() { win = this; this.webContents = { setWindowOpenHandler() {}, on() {} }; }
+    isDestroyed() { return false; }
+    setMenuBarVisibility() {} loadFile() {} on() {} show() {} focus() {}
+  }
+  const electron = { BrowserWindow: Window, app: { getVersion: () => "1.5.0", getPath: () => "." }, ipcMain: { handle: (name, fn) => { handles[name] = fn; } }, nativeTheme: { shouldUseDarkColors: true }, dialog: {} };
+  const closed = { key: "claude:abc", tool: "claude", cli: "claude", label: "Claude Code", name: "<img src=x onerror=1>", cwd: "D:\\work", id: "abc",
+    started: "2026-10-30T08:00:00.000Z", last_active: "2026-10-30T09:00:00.000Z", closed_at: "2026-10-30T09:05:00.000Z", godmode: true, can_resume: true, reason: null, pid: 42, secret: "x" };
+  const start = (sessions) => {
+    const module = { exports: {} };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../src/insights-window.js"), "utf8"), {
+      module, __dirname: path.join(__dirname, "../src"), process,
+      require: (id) => id === "electron" ? electron : id === "./insights" ? { displayPrefs } : id === "./tokens" ? require("../src/tokens") : require(id),
+    });
+    module.exports.init({ cfg: { display: displayPrefs() }, insights: { data: { events: [], snoozeUntil: 0, lastSuccess: {} }, report: () => [], budgetView: () => ({}), error: false },
+      sessions, resume: (key) => { resumed.push(key); return { ok: true, message: "Opening" }; }, save: () => true });
+    module.exports.open();
+    return { own: { sender: win.webContents }, other: { sender: {} } };
+  };
+  const { own, other } = start(() => ({ sessions: [], recent: [closed] }));
+  const view = await handles["insights:get"](own, 7);
+  // The page runs in its own realm, so compare plain data.
+  assert.deepEqual(JSON.parse(JSON.stringify(view.recent_sessions)), [{ key: "claude:abc", tool: "claude", cli: "claude", label: "Claude Code", name: "<img src=x onerror=1>", cwd: "D:\\work", id: "abc",
+    started: closed.started, last_active: closed.last_active, closed_at: closed.closed_at, godmode: true, can_resume: true, reason: null }], "only the displayed fields are sent");
+  assert.deepEqual(await handles["insights:action"](own, "resume", "claude:abc"), { ok: true, message: "Opening" });
+  assert.equal(await handles["insights:action"](other, "resume", "claude:abc"), null);
+  for (const value of [undefined, null, 5, { key: "claude:abc" }]) await handles["insights:action"](own, "resume", value);
+  assert.deepEqual(resumed, ["claude:abc"], "a value that is not a string never reaches the launcher");
+  const idle = start(() => null);
+  assert.equal((await handles["insights:get"](idle.own, 7)).recent_sessions.length, 0, "no watcher view means no rows");
+  const broken = start(() => { throw new Error("gone"); });
+  assert.equal((await handles["insights:get"](broken.own, 7)).recent_sessions.length, 0, "a failing watcher does not break the page");
+});
+
+test("Insights accepts the automatic text size", async () => {
+  const handles = {};
+  let win;
+  class Window {
+    constructor() { win = this; this.webContents = { setWindowOpenHandler() {}, on() {} }; }
+    isDestroyed() { return false; }
+    setMenuBarVisibility() {} loadFile() {} on() {} show() {} focus() {}
+  }
+  const module = load("src/insights-window.js", {
+    electron: { app: { getVersion: () => "test", getPath: () => "." }, BrowserWindow: Window, ipcMain: { handle: (name, fn) => { handles[name] = fn; } }, nativeTheme: { shouldUseDarkColors: false }, dialog: {} },
+    "./tokens": { scanTokens: () => null }, "./burn": { analyzeBurn: () => [], computeHealth: () => ({}) },
+  });
+  const cfg = { display: displayPrefs({ scale: 130 }) };
+  module.init({ cfg, insights: { data: { events: [], snoozeUntil: 0, lastSuccess: {} }, error: false }, save: () => true });
+  module.open();
+  const own = { sender: win.webContents };
+  assert.equal(cfg.display.scale, 130);
+  assert.deepEqual(await handles["insights:action"](own, "display", { ...cfg.display, scale: "auto" }), { ok: true });
+  assert.equal(cfg.display.scale, "auto");
+  await handles["insights:action"](own, "display", { ...cfg.display, scale: 1000 });
+  assert.equal(cfg.display.scale, "auto", "an unknown size is the automatic one");
+});
+
 test("the report names the requested period and omits the unit when no budget limit is set", () => {
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../src/insights-window.js"), "utf8"), {

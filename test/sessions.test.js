@@ -5,9 +5,10 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   createWatcher, claudeState, codexState, resumeStatus, matchCodex, isCodexTui, filetimeMs, clockAfter,
-  GRACE_MS, MAX_ATTEMPTS, RETRY_MS, LIMIT_ON_SCREEN,
+  GRACE_MS, MAX_ATTEMPTS, RETRY_MS, LIMIT_ON_SCREEN, SEED_MS,
   otherCli, isOtherTui, resetOnScreen, grokState, OTHER_CLIS, OTHER_LIMIT_ON_SCREEN, OTHER_LINES,
 } = require("../src/sessions");
+const { createSessionLog } = require("../src/session-log");
 const config = require("../src/config");
 
 const NOW = Date.parse("2026-10-15T12:00:00Z");
@@ -669,4 +670,132 @@ test("a codex resume id with no rollout is searched once, then skipped until the
   clock = NOW + 6 * 60_000;
   await w.scan();
   assert.equal(rootWalks, 2, "after the retry window it searches once more");
+});
+
+// ---- the recent-sessions log ---------------------------------------------------------------
+
+function fakeLog() {
+  const recorded = [];
+  const seeded = [];
+  return { recorded, seeded, record: (running) => recorded.push(running), seed: (rows) => seeded.push(rows), recent: () => [], flush() {} };
+}
+
+const logged = (log) => log.recorded.at(-1).map((s) => ({ key: s.key, tool: s.tool, cli: s.cli, id: s.id, godmode: s.godmode, name: s.name }));
+
+test("each scan logs the running sessions with the id and flags that reopen them", async () => {
+  // Claude: its record names the session; the command line skipped permissions.
+  const fx = claudeFixture({ entries: [{ type: "user" }] });
+  const claudeLog = fakeLog();
+  const helper = fakeHelper(() => [{ pid: fx.pid, name: "claude", start: fx.start, cmd: '"C:\\bin\\claude.exe" --dangerously-skip-permissions' }]);
+  await createWatcher({ platform: "win32", now: () => NOW, request: helper.request, sessionLog: claudeLog, records: { read: () => [] },
+    claudeDir: () => fx.dir, codexDir: () => path.join(fx.dir, "none") }).scan();
+  assert.deepEqual(logged(claudeLog), [{ key: "claude:dc08e9b8-c071-4f61-83f5-2ac3413ea0df", tool: "claude", cli: "claude",
+    id: "dc08e9b8-c071-4f61-83f5-2ac3413ea0df", godmode: true, name: "usage-monitor-94" }]);
+
+  // Codex: the rollout matched to the process, and an unlinked terminal with no id.
+  const id = "01a13f7c-406b-70f2-aba7-5ad85ba9cc19";
+  const codex = codexFixture({ [id]: [{ type: "session_meta", payload: { id, cwd: "D:\\git\\usage_monitor", timestamp: new Date(NOW - 3600_000 + 2000).toISOString(), source: "cli" } }] });
+  fs.writeFileSync(path.join(codex, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Fix the build" }) + "\n");
+  const codexLog = fakeLog();
+  const codexHelper = fakeHelper(() => [{ ...codexProc(9, NOW - 3600_000), cmd: '"C:\\Codex\\codex.exe" --yolo' },
+    { ...codexProc(10, NOW - 600_000), cwd: "D:\\other\\" }]);
+  await createWatcher({ platform: "win32", now: () => NOW, request: codexHelper.request, sessionLog: codexLog, records: { read: () => [] },
+    claudeDir: () => path.join(codex, "none"), codexDir: () => codex }).scan();
+  assert.deepEqual(logged(codexLog).map((s) => [s.cli, s.id, s.godmode, s.name]), [["codex", id, true, "Fix the build"], ["codex", null, false, ""]]);
+
+  // Grok: the session id from its active-sessions record.
+  const start = toFiletime(NOW - 3600_000);
+  const grokDir = grokFixture({ pid: 31, cwd: "D:/work/api", id: "01a1-grok", title: "Fix the billing parser",
+    events: [{ type: "turn_ended", outcome: "completed" }], openedAt: new Date(NOW - 3590_000).toISOString() });
+  // Cursor: the chat it started.
+  const cursorDir = tmpdir();
+  fs.mkdirSync(path.join(cursorDir, "chats", "h1", "chat-1"), { recursive: true });
+  fs.writeFileSync(path.join(cursorDir, "chats", "h1", "chat-1", "meta.json"), JSON.stringify({ createdAtMs: NOW - 3599_000, updatedAtMs: NOW - 1000, cwd: "D:\\work\\cli", title: "Wire it" }));
+  const cursor = "C:/c/cursor-agent/versions/1";
+  const procs = [
+    { pid: 31, ppid: 1, name: "grok", start, cwd: "D:/work/api/", cmd: '"C:/g/.grok/bin/grok.exe" --always-approve' },
+    { pid: 41, ppid: 1, name: "node", start, cwd: "D:\\work\\cli\\", cmd: `${cursor}/node.exe ${cursor}/index.js --force` },
+    { pid: 51, ppid: 1, name: "agy", start, cwd: "D:/work/web/", cmd: "agy --dangerously-skip-permissions" },
+  ];
+  const request = async (req) => (req.op === "scan" ? { procs } : req.op === "screen" ? { text: ">" } : { ok: true });
+  const othersLog = fakeLog();
+  const none = path.join(grokDir, "none");
+  const w = createWatcher({ platform: "win32", now: () => NOW, request, sessionLog: othersLog, records: { read: () => [] },
+    claudeDir: () => none, codexDir: () => none, grokDir: () => grokDir, cursorDir: () => cursorDir });
+  const view = await w.scan();
+  assert.deepEqual(logged(othersLog).map((s) => [s.tool, s.cli, s.id, s.godmode, s.name]), [
+    ["grok", "grok", "01a1-grok", true, "Fix the billing parser"],
+    ["cursor", "cursor-agent", "chat-1", true, "Wire it"],
+    ["gemini", "agy", null, true, ""],
+  ]);
+  // The chips' list keeps its shape.
+  assert.deepEqual(Object.keys(view.sessions[0]), ["key", "tool", "label", "name", "cwd", "state", "limit", "resets_at", "resume_at", "resume"]);
+  assert.deepEqual(view.recent, []);
+});
+
+test("the CLIs' records are read on the first scan and then once a minute, before the running list", async () => {
+  const dir = tmpdir();
+  const log = fakeLog();
+  const order = [];
+  log.seed = () => order.push("seed");
+  log.record = () => order.push("record");
+  let t = NOW;
+  let reads = 0;
+  const w = createWatcher({ platform: "linux", now: () => t, request: async () => ({}), sessionLog: log, records: { read: () => { reads++; return []; } },
+    claudeDir: () => path.join(dir, "none"), codexDir: () => path.join(dir, "none"), grokDir: () => path.join(dir, "none") });
+  await w.scan();
+  t += 10_000;
+  await w.scan();
+  assert.equal(reads, 1);
+  t = NOW + SEED_MS;
+  await w.scan();
+  assert.equal(reads, 2);
+  assert.deepEqual(order, ["seed", "record", "record", "seed", "record"]);
+  // A reader that throws is reported, not fatal.
+  const broken = createWatcher({ platform: "linux", now: () => t, request: async () => ({}), sessionLog: fakeLog(), records: { read: () => { throw new Error("x"); } },
+    claudeDir: () => path.join(dir, "none"), codexDir: () => path.join(dir, "none"), grokDir: () => path.join(dir, "none") });
+  const realError = console.error;
+  console.error = () => {};
+  try {
+    assert.deepEqual((await broken.scan()).sessions, []);
+  } finally {
+    console.error = realError;
+  }
+});
+
+test("a session whose terminal closed shows in recent after two scans, resumable only when its CLI is installed", async (t) => {
+  const fx = claudeFixture({ entries: [{ type: "user" }] });
+  const file = path.join(fx.dir, "recent.json");
+  t.after(() => fs.rmSync(fx.dir, { recursive: true, force: true }));
+  let clock = NOW;
+  let open = true;
+  const sessionLog = createSessionLog({ file, now: () => clock });
+  const helper = fakeHelper(() => (open ? [{ pid: fx.pid, name: "claude", start: fx.start, cmd: "claude --dangerously-skip-permissions" }] : []));
+  let onPath = true;
+  const asked = [];
+  const w = createWatcher({ platform: "win32", now: () => clock, request: helper.request, sessionLog, records: { read: () => [] },
+    which: (name) => { asked.push(name); return onPath; }, folderExists: () => true, claudeDir: () => fx.dir, codexDir: () => path.join(fx.dir, "none") });
+  assert.deepEqual((await w.scan()).recent, []);
+  open = false;
+  clock += 10_000;
+  let view = await w.scan();
+  assert.deepEqual(view.recent, [], "one scan without it is not enough");
+  clock += 10_000;
+  view = await w.scan();
+  assert.equal(view.sessions.length, 0);
+  assert.deepEqual(view.recent, [{
+    key: "claude:dc08e9b8-c071-4f61-83f5-2ac3413ea0df", tool: "claude", cli: "claude", label: "Claude Code", name: "usage-monitor-94",
+    cwd: "D:\\git\\usage_monitor", id: "dc08e9b8-c071-4f61-83f5-2ac3413ea0df", started: new Date(NOW - 3600_000).toISOString(),
+    last_active: new Date(NOW).toISOString(), closed_at: new Date(NOW + 20_000).toISOString(), godmode: true, can_resume: true, reason: null,
+  }]);
+  assert.deepEqual(asked, ["claude"]);
+  // Not on PATH: listed, with the reason. The answer is looked up again with the next records read.
+  const w2 = createWatcher({ platform: "win32", now: () => clock, request: helper.request, sessionLog, records: { read: () => [] },
+    which: () => false, folderExists: () => true, claudeDir: () => fx.dir, codexDir: () => path.join(fx.dir, "none") });
+  view = await w2.scan();
+  assert.deepEqual([view.recent[0].can_resume, view.recent[0].reason], [false, "not installed"]);
+  // Open again: it leaves the recent list.
+  open = true;
+  clock += 10_000;
+  assert.deepEqual((await w.scan()).recent, []);
 });

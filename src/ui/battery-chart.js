@@ -1,5 +1,5 @@
 /* Shared SVG chart for the flyout and Insights. Each segment keeps recording gaps visible. */
-window.drawBatteryChart = function (root, points, detail, compact = false) {
+window.drawBatteryChart = function (root, points, detail, compact = false, { height: tall } = {}) {
   // A new sample redraws the chart; someone inspecting it with the keyboard keeps focus and the reading.
   const focused = root.contains(document.activeElement);
   const kept = focused ? Number(root.dataset.selected) : NaN;
@@ -12,10 +12,12 @@ window.drawBatteryChart = function (root, points, detail, compact = false) {
     if (text != null) el.textContent = text;
     return el;
   };
-  const svg = make("svg", { viewBox: compact ? "0 0 800 100" : "0 0 800 180", role: "img", tabindex: "0", "aria-label": "Battery level from 0 to 100 percent. Shading indicates charging. Use arrow keys to inspect readings." });
+  // A panel chart given a taller height grows its plot area only, so its labels keep their size.
+  const viewHeight = compact ? (tall > 0 ? Math.round(100 * tall / 74) : 100) : 180;
+  const svg = make("svg", { viewBox: `0 0 800 ${viewHeight}`, role: "img", tabindex: "0", "aria-label": "Battery level from 0 to 100 percent. Shading indicates charging. Use arrow keys to inspect readings." });
   const first = points[0].t, span = Math.max(60000, points.at(-1).t - first);
   const x = (p) => 40 + (p.t - first) / span * 745;
-  const bottom = compact ? 65 : 145, height = compact ? 55 : 125;
+  const bottom = compact ? viewHeight - 35 : 145, height = compact ? viewHeight - 45 : 125;
   // The compact chart is drawn at about 70% of its size, so its labels are larger and shorter.
   const font = compact ? 17 : 11;
   const y = (p) => bottom - p.percent / 100 * height;

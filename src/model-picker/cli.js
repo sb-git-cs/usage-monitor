@@ -1,14 +1,19 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const readline = require("node:readline");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const tools = require("./tools");
 const { createConversation, menuRows, currentIndex, matchRow } = require("./conversation");
 const render = require("./render");
 
 const RECENT_MAX = 10;
 const HISTORY_MAX = 50;
+const USED_MAX = 8;
+const SAVED_TURNS_MAX = 100;
+// A reply that took this long rings the terminal bell when it finishes.
+const BELL_AFTER_MS = 20000;
 const st = render.styler();
 const fmt = { color: st.on, basic: st.basic };
 const { dim, red, yellow, bold } = st;
@@ -27,9 +32,14 @@ function settingsFile() {
 }
 
 // Only well-formed entries survive: an id saved before ids were checked (such as "/model") is
-// dropped. effort maps a tool to its chosen level.
+// dropped. effort maps a tool to its chosen level, used lists the models used last (newest
+// first), resolved maps "tool:model" to the full model the tool last reported running.
 function readSettings(data) {
   const object = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+  const pick = (v) => {
+    const p = object(v);
+    return typeof p.toolId === "string" && (p.model == null || tools.validModelId(p.model)) ? { toolId: p.toolId, model: p.model || null } : null;
+  };
   const saved = Array.isArray(data.history) ? data.history.filter((x) => typeof x === "string" && x) : [];
   const recent = {};
   for (const [toolId, ids] of Object.entries(object(data.recent))) {
@@ -39,9 +49,12 @@ function readSettings(data) {
   for (const [toolId, level] of Object.entries(object(data.effort))) {
     if (typeof level === "string" && /^[a-z]+$/.test(level)) effort[toolId] = level;
   }
-  const l = object(data.last);
-  const last = typeof l.toolId === "string" && (l.model == null || tools.validModelId(l.model)) ? { toolId: l.toolId, model: l.model || null } : null;
-  return { last, recent, effort, history: saved.slice(0, HISTORY_MAX) };
+  const used = (Array.isArray(data.used) ? data.used : []).map(pick).filter(Boolean).slice(0, USED_MAX);
+  const resolved = {};
+  for (const [key, full] of Object.entries(object(data.resolved))) {
+    if (/^[a-z]+:/.test(key) && tools.validModelId(full)) resolved[key] = full;
+  }
+  return { last: pick(data.last), recent, effort, used, resolved, history: saved.slice(0, HISTORY_MAX) };
 }
 
 function loadSettings() {
@@ -65,6 +78,66 @@ function saveSettings(settings) {
 function remember(settings, toolId, id) {
   const list = (settings.recent[toolId] || []).filter((x) => x !== id);
   settings.recent[toolId] = [id, ...list].slice(0, RECENT_MAX);
+}
+
+// One saved conversation per folder, so a new window there can carry on with every tool's session.
+function conversationFile(cwd, base = path.dirname(settingsFile())) {
+  const key = process.platform === "win32" ? cwd.toLowerCase() : cwd;
+  return path.join(base, "model-picker-conversations", `${crypto.createHash("sha256").update(key).digest("hex").slice(0, 16)}.json`);
+}
+
+function loadConversation(cwd) {
+  try {
+    const data = JSON.parse(fs.readFileSync(conversationFile(cwd), "utf8"));
+    return data && Array.isArray(data.turns) && data.turns.length ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+// Keeps the newest turns; a tool whose seen turns were dropped is given the kept ones again.
+function saveConversation(cwd, conversation, keep = SAVED_TURNS_MAX) {
+  try {
+    const { turns, sessions } = conversation.toJSON();
+    const drop = Math.max(0, turns.length - keep);
+    const kept = {};
+    for (const [toolId, s] of Object.entries(sessions)) kept[toolId] = { id: s.id, seen: Math.max(0, s.seen - drop) };
+    const file = conversationFile(cwd);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ cwd, savedAt: Date.now(), turns: turns.slice(drop), sessions: kept }));
+  } catch {
+    /* best effort */
+  }
+}
+
+function forgetConversation(cwd) {
+  fs.rm(conversationFile(cwd), { force: true }, () => {});
+}
+
+function ago(ms) {
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+
+// Puts text on the clipboard with the platform's own tool; false when none worked. clip.exe
+// keeps UTF-16LE exactly, but keeps a byte-order mark as a character and reads UTF-8 in the
+// console code page.
+function copyToClipboard(text, platform = process.platform, run = spawnSync) {
+  const tries =
+    platform === "win32"
+      ? [["clip.exe", [], Buffer.from(text, "utf16le")]]
+      : platform === "darwin"
+        ? [["pbcopy", [], Buffer.from(text)]]
+        : [["wl-copy", [], Buffer.from(text)], ["xclip", ["-selection", "clipboard"], Buffer.from(text)], ["xsel", ["--clipboard", "--input"], Buffer.from(text)]];
+  for (const [command, args, input] of tries) {
+    const r = run(command, args, { input, windowsHide: true, timeout: 5000 });
+    if (r && !r.error && r.status === 0) return true;
+  }
+  return false;
 }
 
 // ---- input ----
@@ -111,29 +184,75 @@ function ask(text) {
   return askTerminal(text);
 }
 
-// One line from the terminal, null on Ctrl+C or end of input. Each question gets its own
-// interface, which must close completely: readline detaches from the input in its own
-// close listener, and an interface left attached echoes every later keystroke again.
-function askTerminal(text, input = process.stdin, output = process.stdout) {
+// Lines arriving closer together than this are one paste, not typed lines.
+const PASTE_GAP_MS = 40;
+const CONTINUE = "    ";
+
+// An answer from the terminal, null on Ctrl+C or end of input. Each question gets its own
+// interface, which must close completely: readline detaches from the input in its own close
+// listener, and an interface left attached echoes every later keystroke again.
+// multiline: a pasted block stays one answer and is sent by the next Enter, and a line ending
+// in \ continues on the next. Only single-line answers join the ↑ history.
+function askTerminal(text, { input = process.stdin, output = process.stdout, multiline = false, completer } = {}) {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input, output, terminal: true, history, historySize: 100, removeHistoryDuplicates: true });
-    rl.on("SIGINT", () => rl.close());
-    rl.on("close", () => resolve(null));
-    rl.question(text, (answer) => {
-      // The interface may hold its own copy of the list, so make sure this line is in ours.
-      if (answer.trim() && history[0] !== answer) history.unshift(answer);
+    const before = history.slice();
+    const rl = readline.createInterface({ input, output, terminal: true, history, historySize: 100, removeHistoryDuplicates: true, ...(completer ? { completer } : {}) });
+    const lines = [];
+    let lastAt = 0;
+    let pasted = false;
+    let timer = null;
+    const submit = () => {
+      const answer = lines.join("\n").replace(/\n+$/, "");
+      // readline added every entered line to the list; keep only what was sent, and one line at most.
+      history.splice(0, history.length, ...before);
+      if (multiline && answer.trim() && !answer.includes("\n") && history[0] !== answer) history.unshift(answer);
       history.length = Math.min(history.length, 100);
       // Resolved first, so the null from the close listener is ignored.
       resolve(answer);
       rl.close();
+    };
+    rl.on("SIGINT", () => rl.close());
+    rl.on("close", () => {
+      clearTimeout(timer);
+      history.splice(0, history.length, ...before);
+      resolve(null);
     });
+    rl.on("line", (line) => {
+      if (!multiline) {
+        lines.push(line);
+        return submit();
+      }
+      const now = Date.now();
+      if (now - lastAt < PASTE_GAP_MS) pasted = true;
+      lastAt = now;
+      clearTimeout(timer);
+      if (line.endsWith("\\")) {
+        lines.push(line.slice(0, -1));
+        rl.setPrompt(CONTINUE);
+        rl.prompt();
+        return;
+      }
+      lines.push(line);
+      // Pasted lines are echoed as they came, so a redraw must not add an indent either.
+      rl.setPrompt("");
+      timer = setTimeout(() => {
+        if (!pasted) return submit();
+        pasted = false;
+      }, PASTE_GAP_MS);
+    });
+    rl.setPrompt(text);
+    rl.prompt();
   });
 }
 
-async function readPrompt(head) {
+async function readPrompt(head, completer) {
+  if (interactive) {
+    const text = await askTerminal(head, { multiline: true, completer });
+    return text === null ? null : text.trim();
+  }
   const lines = [];
   for (;;) {
-    const line = await ask(lines.length ? "    " : head);
+    const line = await ask(lines.length ? CONTINUE : head);
     if (line === null) return lines.length ? lines.join("\n") : null;
     if (line.endsWith("\\")) {
       lines.push(line.slice(0, -1));
@@ -146,13 +265,17 @@ async function readPrompt(head) {
 
 // ---- menu ----
 
-// Returns the chosen row index, or null when the menu is closed without a choice.
-function pickInteractive(rows, startIndex, current, startFilter = "") {
+// Returns { index, effort } for the chosen row, or null when the menu is closed without a
+// choice. effort is the level set with ←/→ (null: the tool's own setting), undefined for a
+// row without effort levels; effortStart(row) is where a row starts.
+function pickInteractive(rows, startIndex, current, startFilter = "", effortStart = () => null) {
   return new Promise((resolve) => {
     const stdin = process.stdin;
     let filter = startFilter;
     let pos = 0;
     let drawn = 0;
+    const efforts = new Map();
+    const effortOf = (ri) => (efforts.has(ri) ? efforts.get(ri) : effortStart(rows[ri]));
     const visible = () => render.filterRows(rows, filter);
     pos = Math.max(0, visible().indexOf(startIndex));
 
@@ -165,6 +288,7 @@ function pickInteractive(rows, startIndex, current, startFilter = "") {
         width: (process.stdout.columns || 80) - 1,
         height: Math.max(5, (process.stdout.rows || 24) - 2),
         current,
+        effortOf,
         ...fmt,
       });
       process.stdout.write((drawn ? `\x1b[${drawn}A` : "") + "\r\x1b[J" + lines.join("\n") + "\n");
@@ -207,9 +331,21 @@ function pickInteractive(rows, startIndex, current, startFilter = "") {
         case "end":
           pos = Math.max(0, list.length - 1);
           break;
+        case "left":
+        case "right": {
+          const ri = list[pos];
+          if (ri === undefined || !rows[ri].efforts) return;
+          const options = [null, ...rows[ri].efforts];
+          const at = Math.max(0, options.indexOf(effortOf(ri)));
+          efforts.set(ri, options[(at + (key.name === "right" ? 1 : -1) + options.length) % options.length]);
+          break;
+        }
         case "return":
-        case "enter":
-          return list.length ? finish(list[pos]) : undefined;
+        case "enter": {
+          if (!list.length) return undefined;
+          const ri = list[pos];
+          return finish({ index: ri, effort: rows[ri].efforts ? effortOf(ri) : undefined });
+        }
         case "escape":
           if (!filter) return finish(null);
           filter = "";
@@ -243,9 +379,9 @@ async function pickNumbered(rows, startIndex) {
     if (answer === null) return null;
     const t = answer.trim();
     if (t === "/exit" || t === "/quit") return null;
-    if (!t) return startIndex;
+    if (!t) return { index: startIndex };
     const n = Number(t);
-    if (Number.isInteger(n) && n >= 1 && n <= rows.length) return n - 1;
+    if (Number.isInteger(n) && n >= 1 && n <= rows.length) return { index: n - 1 };
     console.log("Not a valid number.");
   }
 }
@@ -393,7 +529,7 @@ async function runTurn(tool, model, effort, prompt, conversation) {
   if (run.stopped) {
     answer.endLine();
     line(render.turnFooter({ elapsedMs, stopped: true, ...fmt }));
-    return;
+    return null;
   }
   const reply = (run.result && run.result.text) || run.texts.join("");
   if (!run.printed && run.result && run.result.text) answer.push(run.result.text);
@@ -406,7 +542,10 @@ async function runTurn(tool, model, effort, prompt, conversation) {
   // What the tool says it ran, which settles what an alias such as "opus" and the effort became.
   const used = failed ? null : tools.usedBy(tool.id, { sessionId: run.sessionId });
   line(render.turnFooter({ elapsedMs, usage: r.usage, costUsd: r.costUsd, failed, used, ...fmt }));
-  conversation.record({ toolId: tool.id, toolLabel: tool.label, model, prompt, reply, sessionId: run.sessionId });
+  // A long reply rings the bell, which flashes the taskbar when the window is in the background.
+  if (tty && elapsedMs >= BELL_AFTER_MS) process.stdout.write("\x07");
+  conversation.record({ toolId: tool.id, toolLabel: tool.label, model, prompt, reply, sessionId: run.sessionId, effort, used, elapsedMs, usage: r.usage || null, costUsd: typeof r.costUsd === "number" ? r.costUsd : null });
+  return { used, failed };
 }
 
 // ---- main ----
@@ -428,18 +567,19 @@ async function main() {
   const byId = Object.fromEntries(installed.map((t) => [t.id, t]));
   if (tty) process.stdout.write("\x1b[1A\r\x1b[J");
   console.log(dim(installed.map((t) => `${t.label} ${t.models.length}`).join(" · ")));
-  console.log(dim("Runs with skip-permissions · Ctrl+C stops a turn · /model [name] switches · /effort [level] · /exit quits"));
+  console.log(dim("Runs with skip-permissions · /help lists commands · Tab completes · Ctrl+C stops a reply"));
 
   const settings = loadSettings();
   history.push(...settings.history);
-  const conversation = createConversation();
+  let conversation = createConversation();
   // A model is checked against its tool's list; a list that could not be read checks nothing,
   // so saved ids for that tool are kept until it can be.
-  const listed = (toolId, model) => !model || !byId[toolId].models.length || tools.knownModel(byId[toolId], model);
+  const listed = (toolId, model) => !!byId[toolId] && (!model || !byId[toolId].models.length || tools.knownModel(byId[toolId], model));
   for (const tool of installed) {
     if (settings.recent[tool.id]) settings.recent[tool.id] = settings.recent[tool.id].filter((id) => listed(tool.id, id));
   }
-  let current = settings.last && byId[settings.last.toolId] && listed(settings.last.toolId, settings.last.model) ? settings.last : null;
+  settings.used = settings.used.filter((u) => listed(u.toolId, u.model));
+  let current = settings.last && listed(settings.last.toolId, settings.last.model) ? settings.last : null;
 
   // Ctrl+C outside a turn must not leave a half-drawn menu or a hung process.
   process.on("SIGINT", () => {});
@@ -448,16 +588,24 @@ async function main() {
   // into one unknown key. The first call sets this for the menu and readline alike.
   if (interactive) readline.emitKeypressEvents(process.stdin, { escapeCodeTimeout: 100 });
 
-  // The model menu; null when it is closed without a choice.
+  const rowsNow = () => menuRows(installed, settings.recent, { used: settings.used, resolved: settings.resolved });
+  // A row starts on the tool's chosen effort when its model takes that level.
+  const effortStart = (row) => {
+    const level = settings.effort[row.toolId];
+    return level && row.efforts && row.efforts.includes(level) ? level : null;
+  };
+
+  // The model menu: { toolId, model, effort } (effort undefined: not set in the menu), or null
+  // when it is closed without a choice.
   const choose = async (filter = "") => {
     for (;;) {
-      const rows = menuRows(installed, settings.recent);
+      const rows = rowsNow();
       const start = currentIndex(rows, current);
-      const picked = interactive ? await pickInteractive(rows, start, current, filter) : await pickNumbered(rows, start);
+      const picked = interactive ? await pickInteractive(rows, start, current, filter, effortStart) : await pickNumbered(rows, start);
       if (picked === null) return null;
       filter = "";
-      const row = rows[picked];
-      if (row.kind !== "other") return { toolId: row.toolId, model: row.model };
+      const row = rows[picked.index];
+      if (row.kind !== "other") return { toolId: row.toolId, model: row.model, effort: picked.effort };
       const typed = await ask(`Model id for ${row.toolLabel}: `);
       if (typed === null) return null;
       const id = typed.trim();
@@ -477,9 +625,14 @@ async function main() {
   const announce = () => console.log(tty ? st.fg(byId[current.toolId].color, `● ${describe()}`) : `Model: ${describe()}`);
 
   const use = (next) => {
-    current = next;
+    current = { toolId: next.toolId, model: next.model || null };
     settings.last = current;
     const tool = byId[current.toolId];
+    if (next.effort !== undefined) {
+      if (next.effort) settings.effort[tool.id] = next.effort;
+      else delete settings.effort[tool.id];
+    }
+    settings.used = [current, ...settings.used.filter((u) => u.toolId !== current.toolId || u.model !== current.model)].slice(0, USED_MAX);
     const levels = tools.effortLevels(tool, current.model);
     if (effort() && !(levels && levels.includes(effort()))) {
       console.log(yellow(`${current.model || `${tool.label}'s default model`} has no effort ${effort()}, so ${tool.label}'s own setting is used.`));
@@ -515,6 +668,62 @@ async function main() {
     announce();
   };
 
+  // "/model <name>" and "/retry <name>": the named model, the menu filtered to the name when
+  // several match, or null (with the reason) when none does or the menu is closed.
+  const byName = async (name) => {
+    const rows = rowsNow();
+    const hit = matchRow(rows, name, current);
+    if (hit >= 0) return { toolId: rows[hit].toolId, model: rows[hit].model };
+    if (!render.filterRows(rows, name).length) {
+      console.log(red(`No model matches “${name}”.`));
+      return null;
+    }
+    return choose(name);
+  };
+
+  const complete = (line) => completeLine(line, { installed, recent: settings.recent, current });
+
+  const width = () => Math.max(20, (process.stdout.columns || 80) - 1);
+
+  // After a turn: how big the conversation is and what a switch would hand over.
+  const showStatus = () => {
+    const t = conversation.totals();
+    if (!t.turns) return;
+    const parts = [`${t.turns} turn${t.turns === 1 ? "" : "s"}`];
+    if (t.input || t.output) parts.push(`${render.formatTokens(t.input)} in · ${render.formatTokens(t.output)} out`);
+    if (t.costUsd > 0) parts.push(render.formatCost(t.costUsd));
+    const carry = installed
+      .filter((x) => x.id !== current.toolId && conversation.missedBy(x.id) > 0)
+      .map((x) => `${x.label} ${conversation.missedBy(x.id)}`);
+    if (carry.length) parts.push(`a switch hands over: ${carry.join(", ")}`);
+    console.log(dim(render.clip(parts.join(" · "), width())));
+  };
+
+  const showHistory = () => {
+    if (!conversation.turns.length) return console.log(dim("No turns yet."));
+    conversation.turns.forEach((t, i) => {
+      const model = (t.used && t.used.model) || t.model || "default";
+      const level = (t.used && t.used.effort) || t.effort;
+      const who = `${t.toolLabel} · ${model}${level ? ` · ${level}` : ""}`;
+      const stats = [t.elapsedMs ? `${(t.elapsedMs / 1000).toFixed(1)} s` : "", t.usage ? `${render.formatTokens(t.usage.input || 0)} in · ${render.formatTokens(t.usage.output || 0)} out` : ""].filter(Boolean).join(" · ");
+      const color = byId[t.toolId] ? byId[t.toolId].color : 252;
+      const head = `${String(i + 1).padStart(3)}  ${who}${stats ? `  ${stats}` : ""}  `;
+      const asked = render.clip(t.prompt.split("\n")[0], Math.max(10, width() - [...head].length));
+      console.log(`${dim(String(i + 1).padStart(3))}  ${st.fg(color, who)}${stats ? `  ${dim(stats)}` : ""}  ${asked}`);
+    });
+  };
+
+  const turn = async (prompt) => {
+    const tool = byId[current.toolId];
+    const result = await runTurn(tool, current.model, effort(), prompt, conversation);
+    if (result && result.used) {
+      settings.resolved[`${tool.id}:${current.model || ""}`] = result.used.model;
+      saveSettings(settings);
+    }
+    if (result) saveConversation(cwd, conversation);
+    showStatus();
+  };
+
   // Start on the last model; the menu opens only when there is none, or on /model.
   if (current) use(current);
   else {
@@ -523,37 +732,127 @@ async function main() {
     use(first);
   }
 
+  // A conversation left in this folder can carry on, with every tool's own session.
+  const saved = interactive ? loadConversation(cwd) : null;
+  if (saved) {
+    const last = saved.turns[saved.turns.length - 1];
+    const n = saved.turns.length;
+    const answer = await ask(
+      `Carry on the conversation here from ${ago(Date.now() - (saved.savedAt || 0))}? ${n} turn${n === 1 ? "" : "s"}, last ${last.toolLabel}: “${render.clip(String(last.prompt).split("\n")[0], 40)}” [Y/n] `
+    );
+    if (answer === null) return;
+    if (!/^\s*n/i.test(answer)) {
+      conversation = createConversation(saved);
+      console.log(dim("Carrying on. /history lists the turns, /new starts over."));
+      showStatus();
+    }
+  }
+
   for (;;) {
     const tool = byId[current.toolId];
     const head = `${st.fg(tool.color, `● ${current.model || "default"}${effort() ? ` · ${effort()}` : ""}`)} › `;
     let prompt;
-    do prompt = await readPrompt(head);
+    do prompt = await readPrompt(head, complete);
     while (prompt === "");
     if (prompt === null) return;
     const command = parseCommand(prompt);
     if (command.kind === "exit") return;
+    if (command.kind === "help") {
+      console.log(HELP.join("\n"));
+      continue;
+    }
     if (command.kind === "effort") {
       setEffort(command.arg);
       continue;
     }
     if (command.kind === "model") {
-      const rows = menuRows(installed, settings.recent);
-      const hit = matchRow(rows, command.arg, current);
-      if (hit < 0 && command.arg && !render.filterRows(rows, command.arg).length) {
-        console.log(red(`No model matches “${command.arg}”.`));
+      const next = command.arg ? await byName(command.arg) : await choose();
+      if (next) use(next);
+      continue;
+    }
+    if (command.kind === "history") {
+      showHistory();
+      continue;
+    }
+    if (command.kind === "new") {
+      conversation = createConversation();
+      forgetConversation(cwd);
+      console.log(dim("New conversation: every tool starts a fresh session."));
+      continue;
+    }
+    if (command.kind === "copy") {
+      const last = conversation.turns[conversation.turns.length - 1];
+      if (!last) console.log(dim("No answer to copy yet."));
+      else if (copyToClipboard(last.reply)) console.log(dim(`Copied the last answer (${last.toolLabel}, ${last.reply.length} characters).`));
+      else console.log(red("Could not reach the clipboard."));
+      continue;
+    }
+    if (command.kind === "retry") {
+      const last = conversation.turns[conversation.turns.length - 1];
+      if (!last) {
+        console.log(dim("Nothing to ask again yet."));
         continue;
       }
-      const next = hit >= 0 ? { toolId: rows[hit].toolId, model: rows[hit].model } : await choose(command.arg);
-      if (next) use(next);
+      if (command.arg) {
+        const next = await byName(command.arg);
+        if (!next) continue;
+        use(next);
+      }
+      console.log(dim(`Asking again: ${render.clip(last.prompt.split("\n")[0], width() - 14)}`));
+      await turn(last.prompt);
+      continue;
+    }
+    if (command.kind === "unknown") {
+      console.log(red(`${command.name} is not a picker command. Did you mean ${command.suggestion}? /help lists them.`));
       continue;
     }
     if (interactive) {
       settings.history = history.slice(0, HISTORY_MAX);
       saveSettings(settings);
     }
-    await runTurn(tool, current.model, effort(), prompt, conversation);
+    await turn(prompt);
   }
 }
+
+// Tab completion offers these; the ones taking a name end in a space.
+const COMMANDS = ["/model ", "/effort ", "/retry ", "/new", "/history", "/copy", "/help", "/exit"];
+
+// readline completer: [completions, the text they replace]. Commands first, then the names
+// /model and /retry take or the levels /effort takes. In a prompt, Tab stays a Tab.
+function completeLine(line, { installed, recent = {}, current }) {
+  if (!line.startsWith("/")) return [[`${line}\t`], line];
+  const m = /^(\/\w+)[ \t]+(\S*)$/.exec(line);
+  if (!m) return [COMMANDS.filter((c) => c.startsWith(line)), line];
+  let names = [];
+  if (m[1] === "/model" || m[1] === "/retry") {
+    const set = new Set();
+    for (const tool of installed) {
+      set.add(tool.id);
+      for (const x of tool.models || []) set.add(x.id);
+      for (const id of recent[tool.id] || []) set.add(id);
+    }
+    names = [...set, "default"];
+  } else if (m[1] === "/effort") {
+    const tool = installed.find((t) => t.id === current.toolId);
+    names = ["default", ...(tools.effortLevels(tool, current.model) || [])];
+  }
+  const word = m[2].toLowerCase();
+  return [names.filter((n) => n.toLowerCase().startsWith(word)), m[2]];
+}
+
+const HELP = [
+  "/model [name]     switch model: the menu, or straight to a name (/model sonnet, /model codex)",
+  "/effort [level]   show the effort levels, or set one for this tool (/effort xhigh, /effort default)",
+  "/retry [name]     ask the last prompt again, with this model or another (/retry codex)",
+  "/history          the turns so far: tool, model, effort, time and tokens",
+  "/copy             copy the last answer to the clipboard",
+  "/new              start a new conversation; every tool starts a fresh session",
+  "/help             this list        /exit  quit",
+  "",
+  "Prompt: Tab completes commands and names · ↑ earlier prompts · a pasted block is sent by the next Enter",
+  "        · a line ending in \\ continues · Ctrl+C stops a reply, or quits at the prompt",
+  "Menu:   ↑↓ move · ←→ effort · Tab next group · type to filter · Enter select · Esc close",
+];
 
 // Why a typed id is refused: it is not one of the tool's models.
 function notListed(tool, id) {
@@ -562,15 +861,31 @@ function notListed(tool, id) {
   return `“${id}” is not in ${tool.label}'s model list.`;
 }
 
-// "/model" opens the menu and "/model <name>" switches straight to that model; "/effort"
-// shows the effort and "/effort <level>" sets it. Only a one-line prompt is a command.
+function editDistance(a, b) {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length];
+}
+
+// A one-line prompt that starts with a known /command is that command; "/model <name>",
+// "/retry <name>" and "/effort <level>" carry an argument. Any other text goes to the model,
+// including the tools' own slash commands, except a near miss of a picker command (/modle).
 function parseCommand(line) {
   const t = String(line).trim();
   if (t === "/exit" || t === "/quit") return { kind: "exit" };
-  const m = /^\/model(?:[ \t]+(.+))?$/.exec(t);
-  if (m) return { kind: "model", arg: (m[1] || "").trim() };
-  const e = /^\/effort(?:[ \t]+(.+))?$/.exec(t);
-  if (e) return { kind: "effort", arg: (e[1] || "").trim().toLowerCase() };
+  const m = /^\/(model|retry|effort)(?:[ \t]+(.+))?$/.exec(t);
+  if (m) return { kind: m[1], arg: m[1] === "effort" ? (m[2] || "").trim().toLowerCase() : (m[2] || "").trim() };
+  const bare = /^\/(new|history|copy|help)$/.exec(t);
+  if (bare) return { kind: bare[1] };
+  const word = /^\/([a-z]+)(?:[ \t].*)?$/i.exec(t);
+  if (word) {
+    const near = COMMANDS.map((c) => c.trim()).find((c) => editDistance(`/${word[1].toLowerCase()}`, c) <= 2);
+    if (near) return { kind: "unknown", name: `/${word[1]}`, suggestion: near };
+  }
   return { kind: "prompt" };
 }
 
@@ -584,4 +899,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { main, parseCommand, askTerminal, readSettings, notListed };
+module.exports = { main, parseCommand, askTerminal, completeLine, readSettings, notListed, copyToClipboard, conversationFile, saveConversation, loadConversation, ago };

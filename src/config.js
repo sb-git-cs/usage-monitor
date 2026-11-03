@@ -12,7 +12,7 @@ const PHONE_PORT = 47329;
 const DEFAULTS = {
   poll_interval_secs: 5,
   subscription_regime: "legacy",
-  config_version: 7,
+  config_version: 8,
   chips_docked: true,
   chips_hidden: false,
   chips_show_network: true,
@@ -35,6 +35,8 @@ const DEFAULTS = {
   forecast_alerts: true,
   // Typing into terminals is opt-in, also for copies that update themselves to this version.
   auto_resume: false,
+  // The panel and Insights list recently closed coding sessions, each with a Resume button.
+  recent_sessions: true,
   quiet_hours: { enabled: false, start: "22:00", end: "07:00" },
   chips_show: Object.fromEntries(CHIP_KEYS.map((k) => [k, true])),
   update_channel: "stable",
@@ -201,6 +203,12 @@ function ensure() {
   if (fileVersion < 7) {
     // Settings window: threshold, quiet hours, chip visibility, update channel and phone sharing use their defaults.
     cfg.config_version = 7;
+    dirty = true;
+  }
+  if (fileVersion < 8) {
+    // The panel text size became "Auto" (fits the screen). The old default of 100 moves to it; 115 and 130 were a choice.
+    if (cfg.display.scale === 100) cfg.display.scale = "auto";
+    cfg.config_version = 8;
     dirty = true;
   }
   if (!ALLOWED_INTERVALS.includes(Number(cfg.poll_interval_secs))) {

@@ -67,6 +67,11 @@
         <label class="session-auto" id="autoResumeRow"><input type="checkbox" id="autoResume" /> Resume after limit</label>
       </div>
       <div id="sessionRows"></div>
+      <p class="session-empty hint" id="sessionEmpty" hidden>No coding session is running in a terminal.</p>
+      <div class="session-recent" id="recentWrap" hidden>
+        <div class="session-sub"><span class="session-sub-title">Recent</span><button class="text-btn" id="recentMore" type="button" hidden></button></div>
+        <div id="recentRows"></div>
+      </div>
     </section>
     <div class="section-caption" id="systemCaption">
       <h2 class="section-title">This computer</h2>

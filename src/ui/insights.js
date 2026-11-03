@@ -878,7 +878,9 @@ function render(s) {
   state = s;
   const light = s.display.theme === "light" || (s.display.theme === "system" && !s.dark);
   document.body.classList.toggle("light", light);
-  document.body.style.fontSize = `${14 * (s.display.scale || 100) / 100}px`;
+  // "auto" only fits the panel; Insights keeps its normal size.
+  const scale = typeof s.display.scale === "number" ? s.display.scale : 100;
+  document.body.style.fontSize = `${14 * scale / 100}px`;
 
   renderHealthHero(s.health);
   renderSummary(s);
@@ -887,6 +889,7 @@ function render(s) {
   renderBurnAnalysis(s);
   renderTokenIntelligence(s.tokens);
   renderSessionUsage(s);
+  renderRecentSessions(s.recent_sessions);
   renderNetworkBudget(s);
   renderEvents(s.events);
   renderDiagnostics(s);
@@ -1021,7 +1024,7 @@ selectBattery(new URLSearchParams(location.search).get("tab"));
 function renderSessionUsage(s) {
   const active = $("activeSessions"), rows = $("sessionUsageRows");
   active.replaceChildren(); rows.replaceChildren();
-  for (const session of s.active_sessions || []) active.append(node("p", `${names[session.tool] || session.tool} · ${session.name || session.label || "Session"} · ${session.state || "Unknown"}`, "battery-session"));
+  for (const session of s.active_sessions || []) active.append(node("p", `${session.label || names[session.tool] || session.tool} · ${session.name || session.label || "Session"} · ${session.state || "Unknown"}`, "battery-session"));
   if (!active.children.length) active.append(node("p", "No running coding sessions.", "fine"));
   for (const session of s.tokens?.by_session || []) {
     const row = node("tr");
@@ -1031,6 +1034,57 @@ function renderSessionUsage(s) {
   }
   if (!rows.children.length) { const row = node("tr"), cell = node("td", "No session usage recorded in this period.", "empty-cell"); cell.colSpan = 4; row.append(cell); rows.append(row); }
 }
+function recentTime(iso) {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t).toLocaleString() : "—";
+}
+
+function renderRecentSessions(list) {
+  const rows = $("recentSessionRows");
+  if (!rows) return;
+  rows.replaceChildren();
+  for (const entry of list || []) {
+    const row = node("tr");
+    const action = node("td");
+    if (entry.can_resume) {
+      const resume = node("button", "Resume", "btn btn-secondary resume");
+      resume.type = "button";
+      resume.dataset.key = entry.key;
+      resume.title = entry.godmode ? "Reopens in its folder and skips permissions, as before" : "Reopens in a terminal in its folder";
+      resume.setAttribute("aria-label", `Resume ${entry.name || "session"} in ${entry.label || entry.tool}`);
+      action.append(resume);
+    } else {
+      action.append(node("span", entry.reason || "Can't resume", "fine"));
+    }
+    const folder = node("td", entry.cwd || "—");
+    if (entry.cwd) folder.title = entry.cwd;
+    row.append(
+      node("td", entry.label || names[entry.tool] || entry.tool),
+      node("td", entry.name || "Session"),
+      folder,
+      node("td", recentTime(entry.last_active)),
+      node("td", recentTime(entry.closed_at)),
+      action,
+    );
+    rows.append(row);
+  }
+  if (!rows.children.length) {
+    const row = node("tr"), cell = node("td", "No closed sessions recorded yet.", "empty-cell");
+    cell.colSpan = 6;
+    row.append(cell);
+    rows.append(row);
+  }
+}
+
+// One handler for the rebuilt buttons; the table is replaced on every refresh.
+$("recentSessionRows").addEventListener("click", async (e) => {
+  const button = e.target.closest("button.resume");
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  setTimeout(() => { button.disabled = false; }, 3000);
+  const r = await api.action("resume", button.dataset.key);
+  message(r, r?.message || "Opening a terminal…");
+});
 $("tokenModel").onchange = () => { tokenModel = $("tokenModel").value; if (state) renderTokenIntelligence(state.tokens); };
 for (const [id, format] of [["modelsCsv", "models-csv"], ["modelsDailyCsv", "models-daily-csv"], ["modelsJson", "models-json"]]) {
   $(id).onclick = async () => message(await api.export(format, Number($("period").value), tokenModel), "Export saved.");

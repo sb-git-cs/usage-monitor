@@ -1,5 +1,6 @@
 const { app, BrowserWindow, Menu, Tray, Notification, nativeImage, nativeTheme, ipcMain, shell, screen, dialog, powerMonitor, safeStorage } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const os = require("os");
 const config = require("./config");
 const poller = require("./poller");
@@ -18,12 +19,13 @@ let batteryPoll;
 function batteryView() { return batteryHistory ? batteryHistory.view(1 / 24) : { latest: null, points: [] }; }
 const sessions = require("./sessions");
 const { History } = require("./history");
+const { createSessionLog, resumeCommand } = require("./session-log");
 const { Insights, displayPrefs } = require("./insights");
 const insightsWindow = require("./insights-window");
 const { PhoneLink } = require("./phone");
 const accounts = require("./accounts");
 const accountVault = require("./account-vault");
-const { cliOnPath } = require("./paths");
+const { cliOnPath, cacheDir } = require("./paths");
 const godmodeLaunch = require("./godmode-launch");
 const folderMenu = require("./folder-menu");
 const claude = require("./adapters/claude");
@@ -49,6 +51,7 @@ let systemPoll;
 let latestSystem;
 let sessionWatch;
 let latestSessions = null;
+let sessionLog;
 let history;
 let insights;
 let phone;
@@ -433,7 +436,8 @@ function refreshTrayMenu() {
   if (process.platform !== "linux" || !tray || tray.isDestroyed() || !cfg) return;
   const flyoutOpen = !!(flyout && !flyout.isDestroyed() && flyout.isVisible() && !flyout.isMinimized());
   const update = updater.getState();
-  const key = [cfg.chips_hidden, cfg.chips_show_network, cfg.poll_interval_secs, cfg.autostart, cfg.auto_update, flyoutOpen, update && update.status].join("|");
+  const last = lastRecent();
+  const key = [cfg.chips_hidden, cfg.chips_show_network, cfg.poll_interval_secs, cfg.autostart, cfg.auto_update, flyoutOpen, update && update.status, last?.key].join("|");
   if (key === trayMenuKey) return;
   trayMenuKey = key;
   tray.setContextMenu(buildMenu());
@@ -605,11 +609,14 @@ function sendFlyoutState() {
   });
 }
 
+// The width the panel last asked for, so showing it again keeps the zoom it settled on.
+let flyoutWidth = 0;
 function placeFlyoutRight(bounds, requestedWidth) {
   if (!flyout) return;
   const area = screen.getDisplayMatching(bounds || flyout.getBounds()).workArea;
-  const scale = (cfg.display?.scale || 100) / 100;
-  const width = Math.min(area.width, Math.max(320, Math.min(860, Math.round(requestedWidth || 620 * scale))));
+  // "auto" has no fixed zoom: the renderer asks for the width it settled on.
+  const scale = typeof cfg.display?.scale === "number" ? cfg.display.scale / 100 : 1;
+  const width = Math.min(area.width, Math.max(320, Math.min(860, Math.round(requestedWidth || flyoutWidth || 620 * scale))));
   const next = { x: area.x + area.width - width, y: area.y, width, height: area.height };
   const current = flyout.getBounds();
   if (Object.keys(next).every((key) => current[key] === next[key])) return;
@@ -685,10 +692,18 @@ function broadcast(snap) {
 }
 
 function broadcastSessions(view) {
-  latestSessions = view;
+  // The log keeps recording while the list is off, so switching it on shows the history again.
+  latestSessions = { ...view, recent: cfg.recent_sessions === false ? [] : (view.recent || []) };
   for (const win of [flyout, chips]) {
-    if (win && !win.isDestroyed()) win.webContents.send("usage://sessions", view);
+    if (win && !win.isDestroyed()) win.webContents.send("usage://sessions", latestSessions);
   }
+}
+
+// An event in Insights, plus a notification unless quiet hours or a snooze mute it.
+function notify(title, body) {
+  const muted = config.inQuietHours(cfg) || insights.isSnoozed();
+  insights.event(title, body, muted ? "suppressed" : Notification.isSupported() ? "requested" : "unsupported");
+  if (!muted && Notification.isSupported()) new Notification({ title, body, silent: true }).show();
 }
 
 // Reports a resume once it was typed, or once every attempt failed.
@@ -699,9 +714,7 @@ function sessionResumed(session, attempt) {
   const body = attempt.sent
     ? `${where}: typed "${sessions.RESUME_TEXT}" after the usage limit reset.`
     : `${where}: ${attempt.error || "the terminal did not accept input"}.`;
-  const muted = config.inQuietHours(cfg) || insights.isSnoozed();
-  insights.event(title, body, muted ? "suppressed" : Notification.isSupported() ? "requested" : "unsupported");
-  if (!muted && Notification.isSupported()) new Notification({ title, body, silent: true }).show();
+  notify(title, body);
 }
 
 function setAutoResume(enabled) {
@@ -711,6 +724,52 @@ function setAutoResume(enabled) {
   if (latestSessions) broadcastSessions({ ...latestSessions, auto_resume: enabled });
   if (sessionWatch) sessionWatch.refresh();
   sendSettings();
+}
+
+// Reopens a closed session from the recent list in a terminal in its folder. The command comes
+// from the log's fixed table; the id was checked when it was recorded and again by resumeCommand.
+function resumeSession(key) {
+  const entry = typeof key === "string" && sessionLog ? sessionLog.get(key) : null;
+  if (!entry) return { ok: false, error: "That session is no longer listed." };
+  const where = `${entry.label} · ${entry.name}`;
+  // A session with no id of its own runs under a different key than its log entry, so the log's
+  // own open state is checked too.
+  const running = entry.closed_at == null || (latestSessions?.sessions || []).some((s) => s.key === entry.key);
+  if (running) return { ok: false, error: `${where} is still open in a terminal.` };
+  const command = resumeCommand(entry);
+  if (!command) return { ok: false, error: `Can't resume ${entry.label} sessions.` };
+  if (!cliOnPath(command.file)) return { ok: false, error: `${entry.label} isn't installed on this computer.` };
+  // Some tools only find a session from its own folder, so an unknown folder is not guessed.
+  if (!entry.cwd) return { ok: false, error: "Its folder isn't known, so it can't be reopened." };
+  if (!fs.existsSync(entry.cwd)) return { ok: false, error: `Its folder no longer exists: ${entry.cwd}` };
+  // The folder goes on the terminal's command line: a quote or a semicolon in it would end the argument.
+  if (/["\n\r;]/.test(entry.cwd)) return { ok: false, error: `Its folder's name can't be passed to a terminal: ${entry.cwd}` };
+  // cmd.exe looks in the current folder before PATH, so a program of that name there would run instead.
+  if (IS_WINDOWS && ["", ".exe", ".cmd", ".bat", ".com"].some((ext) => fs.existsSync(path.join(entry.cwd, command.file + ext)))) {
+    return { ok: false, error: `Its folder holds a file named ${command.file}, which would run instead of ${entry.label}.` };
+  }
+  let opened;
+  try {
+    opened = godmodeLaunch.open(entry.tool, {
+      cwd: entry.cwd,
+      command,
+      onError: (err) => notify("Couldn't resume a session", `${where}: ${err && err.message ? err.message : "the terminal did not start"}.`),
+    });
+  } catch (err) {
+    opened = { ok: false, error: err && err.message };
+  }
+  if (!opened || !opened.ok) return { ok: false, error: (opened && opened.error) || "Couldn't open a terminal." };
+  insights.event("Session resumed from the panel", where, "Not notified");
+  // The reopened session shows in the running list once its process has started.
+  setTimeout(() => sessionWatch && sessionWatch.refresh(), 4000).unref?.();
+  return { ok: true, message: `Opening ${where} in a terminal…` };
+}
+
+function clearRecent() {
+  if (sessionLog) sessionLog.clear();
+  // The watcher's last view still lists them until its next scan.
+  if (sessionWatch) broadcastSessions({ ...sessionWatch.view(), recent: [] });
+  return { ok: true, message: "Recent sessions cleared.", view: settingsView() };
 }
 
 function setPollInterval(secs) {
@@ -748,7 +807,19 @@ function broadcastNet() {
   }
 }
 
+// The newest closed session that can be reopened, for the tray's "Resume last session".
+function lastRecent() {
+  return (latestSessions?.recent || []).find((s) => s.can_resume) || null;
+}
+
+function resumeLastSession() {
+  const last = lastRecent();
+  const result = last ? resumeSession(last.key) : null;
+  if (result && !result.ok) notify("Couldn't resume a session", result.error);
+}
+
 function buildMenu() {
+  const last = lastRecent();
   return Menu.buildFromTemplate([
     { label: "Insights and reports…", click: () => insightsWindow.open() },
     { label: "Network usage…", click: () => netUsage.openWindow() },
@@ -772,6 +843,8 @@ function buildMenu() {
       },
     },
     { label: "Refresh now", click: () => poll && poll.refresh() },
+    // "&" starts a shortcut in a Windows menu label; a doubled one shows the character.
+    { label: last ? `Resume last session: ${last.label} · ${last.name}`.replaceAll("&", "&&") : "Resume last session", enabled: !!last, click: resumeLastSession },
     {
       label: "Refresh every",
       submenu: config.ALLOWED_INTERVALS.map((secs) => ({
@@ -934,7 +1007,7 @@ function broadcastPrefs() {
 
 function settingsView() {
   const keys = ["autostart", "poll_interval_secs", "chips_hidden", "chips_docked", "chips_show_network", "chips_show", "alert_threshold",
-    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel", "subscription_regime", "auto_resume"];
+    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel", "subscription_regime", "auto_resume", "recent_sessions"];
   return {
     platform: process.platform,
     version: app.getVersion(),
@@ -1228,6 +1301,10 @@ function applySettings(patch) {
   if (bool(patch.notify_on_limit_reached) !== null) cfg.notify_on_limit_reached = patch.notify_on_limit_reached;
   if (bool(patch.forecast_alerts) !== null) cfg.forecast_alerts = patch.forecast_alerts;
   if (bool(patch.auto_resume) !== null) setAutoResume(patch.auto_resume);
+  if (bool(patch.recent_sessions) !== null && patch.recent_sessions !== cfg.recent_sessions) {
+    cfg.recent_sessions = patch.recent_sessions;
+    if (sessionWatch) broadcastSessions(sessionWatch.view());
+  }
   if (patch.quiet_hours && typeof patch.quiet_hours === "object") {
     cfg.quiet_hours = config.normalize({ quiet_hours: { ...cfg.quiet_hours, ...patch.quiet_hours } }).quiet_hours;
   }
@@ -1494,6 +1571,7 @@ function wireIpc() {
   }));
   ipcMain.on("usage://flyout-resize", (_e, h, w) => {
     if (!flyout || !Number.isFinite(h) || !Number.isFinite(w)) return;
+    flyoutWidth = w;
     placeFlyoutRight(undefined, w);
   });
   ipcMain.on("usage://tray-menu", () => popupAppMenu());
@@ -1527,11 +1605,13 @@ function wireIpc() {
   });
   ipcMain.handle("usage://get-chips-docked", () => !!cfg.chips_docked);
   ipcMain.handle("usage://get-sessions", () => latestSessions || {
-    auto_resume: cfg.auto_resume === true, can_resume: process.platform === "win32", sessions: [],
+    auto_resume: cfg.auto_resume === true, can_resume: process.platform === "win32", sessions: [], recent: [],
   });
   ipcMain.on("usage://set-auto-resume", (e, enabled) => {
     if (fromFlyout(e)) setAutoResume(enabled);
   });
+  // Starts a program in a terminal, so only the panel's own page may ask for it.
+  ipcMain.handle("usage://resume-session", (e, key) => (fromFlyout(e) ? resumeSession(key) : { ok: false, error: "Not allowed" }));
   ipcMain.handle("usage://get-update", () => updater.getState());
   ipcMain.handle("usage://get-prefs", () => prefs());
   ipcMain.on("usage://open-settings", () => openSettings());
@@ -1552,6 +1632,7 @@ function wireIpc() {
   const fromSettings = (e) => !!(settingsWin && !settingsWin.isDestroyed() && e.sender === settingsWin.webContents);
   ipcMain.handle("settings:get", (e) => (fromSettings(e) ? settingsView() : null));
   ipcMain.handle("settings:set", (e, patch) => (fromSettings(e) ? applySettings(patch) : null));
+  ipcMain.handle("settings:recent-clear", (e) => (fromSettings(e) ? clearRecent() : null));
   ipcMain.handle("settings:phone", (e, op, arg) => {
     if (!fromSettings(e) || !phone) return null;
     if (op === "pair") beginPairing();
@@ -1673,7 +1754,7 @@ if (!gotLock) {
     insights = new Insights();
     batteryHistory = new batteryUsage.BatteryHistory();
     insightsWindow.init({ cfg, insights, battery: batteryHistory, snapshot: () => latest, network: () => netUsage.summary(),
-      sessions: () => latestSessions,
+      sessions: () => latestSessions, resume: resumeSession,
       save: () => { const saved = config.save(cfg); applyTheme(); broadcastPrefs(); sendSettings(); if (latest) broadcast(latest); return saved; },
       refresh: () => poll && poll.refresh(), openNetwork: () => netUsage.openWindow(), openSettings,
       // The combined X Subscription signs in through whichever tool reads its shared pool.
@@ -1709,6 +1790,7 @@ if (!gotLock) {
     }
 
     history = new History();
+    sessionLog = createSessionLog({ file: path.join(cacheDir(), "recent-sessions.json") });
     phone = new PhoneLink({
       getConfig: () => cfg,
       saveConfig: () => config.save(cfg),
@@ -1805,7 +1887,7 @@ if (!gotLock) {
         onClick: () => showFlyout(),
       });
     });
-    sessionWatch = sessions.start({ getConfig: () => cfg, snapshot: () => latest, onChange: broadcastSessions, onResume: sessionResumed });
+    sessionWatch = sessions.start({ getConfig: () => cfg, snapshot: () => latest, onChange: broadcastSessions, onResume: sessionResumed, sessionLog });
 
     setInterval(() => {
       if (!latest) return;
@@ -1861,6 +1943,8 @@ function persistAll() {
   }
   if (poll) poll.stop();
   if (history) history.flush();
+  if (sessionWatch) sessionWatch.stop();
+  if (sessionLog) sessionLog.flush();
   if (insights) insights.save(true);
   if (phone) phone.stop();
   updater.stop();

@@ -171,3 +171,167 @@ test("the settings window can only change known settings, to allowed values", ()
   assert.equal(saved.at(-1).phone.port, 50000);
   assert.equal(view.version, "1.3.0");
 });
+
+// main.js with the recent-sessions pieces replaced by fakes, so no real terminal, log file or window is touched.
+function recentHarness(t, { installed = ["claude"], open } = {}) {
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "um-resume-"));
+  t.after(() => fs.rmSync(folder, { recursive: true, force: true }));
+  const handlers = {};
+  const events = [];
+  const opens = [];
+  const entries = new Map();
+  const calls = { clear: 0, refresh: 0 };
+  const sessionLog = { get: (key) => entries.get(key) || null, clear: () => { calls.clear++; entries.clear(); } };
+  const resumeCommand = (entry) => entry.cli === "claude" ? { label: entry.label, title: `${entry.label} · ${entry.name}`, file: "claude", args: ["--resume", entry.id] } : null;
+  const electron = {
+    app: { setName() {}, on() {}, commandLine: { appendSwitch() {} }, setAppUserModelId() {}, disableHardwareAcceleration() {}, requestSingleInstanceLock: () => false, quit() {}, getVersion: () => "1.3.0" },
+    ipcMain: { on() {}, handle: (name, fn) => { handlers[name] = fn; } },
+    BrowserWindow: { fromWebContents: () => null },
+    Menu: { buildFromTemplate: (template) => template },
+    nativeTheme: { themeSource: "system", shouldUseDarkColors: false },
+    Notification: class { static isSupported() { return false; } },
+    screen: { getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) },
+  };
+  const signals = new Map(["SIGHUP", "SIGINT"].map((name) => [name, new Set(process.listeners(name))]));
+  const api = load("src/main.js", {
+    electron, "./config": { ...config, save: () => true }, "./poller": {}, "./alerts": {}, "./taskbarLayout": {},
+    "./autostart": { apply: (on) => on }, "./updater": { getState: () => null }, "./log": { install() {} },
+    "./session-log": { createSessionLog: () => sessionLog, resumeCommand },
+    "./godmode-launch": { open: (id, deps) => { opens.push({ id, deps }); return open ? open(deps) : { ok: true }; } },
+    "./paths": { cliOnPath: (name) => installed.includes(name), cacheDir: () => folder },
+  }, ["applySettings", "resumeSession", "clearRecent", "buildMenu", "placeFlyoutRight", "wireIpc", "getSessions: () => latestSessions",
+    "setState: (s) => { if ('cfg' in s) cfg = s.cfg; if ('sessionLog' in s) sessionLog = s.sessionLog; if ('sessionWatch' in s) sessionWatch = s.sessionWatch; if ('latestSessions' in s) latestSessions = s.latestSessions; if ('insights' in s) insights = s.insights; if ('flyout' in s) flyout = s.flyout; if ('settingsWin' in s) settingsWin = s.settingsWin; }"]);
+  for (const [name, existing] of signals) for (const l of process.listeners(name)) if (!existing.has(l)) process.removeListener(name, l);
+  const cfg = config.normalize({});
+  const insights = { event: (...args) => events.push(args), isSnoozed: () => false };
+  const watch = { view: () => ({ auto_resume: false, sessions: [], recent: [{ key: "claude:abc" }] }), refresh: () => { calls.refresh++; }, stop() {} };
+  api.setState({ cfg, sessionLog, sessionWatch: watch, insights });
+  const entry = { key: "claude:abc", tool: "claude", cli: "claude", label: "Claude Code", name: "Fix the bug", cwd: folder, id: "abc", godmode: true, closed_at: Date.now() };
+  entries.set(entry.key, entry);
+  return { api, cfg, entries, entry, folder, events, opens, calls, handlers };
+}
+
+test("recent_sessions is a validated boolean that hides the list without losing it", (t) => {
+  assert.equal(config.DEFAULTS.recent_sessions, true);
+  assert.equal(config.normalize({ recent_sessions: "yes" }).recent_sessions, true);
+  assert.equal(config.normalize({ recent_sessions: false }).recent_sessions, false);
+  const { api, cfg } = recentHarness(t);
+  api.applySettings({ recent_sessions: false });
+  assert.equal(cfg.recent_sessions, false);
+  assert.deepEqual(api.getSessions().recent, [], "the view sent to the windows has no recent sessions");
+  api.applySettings({ recent_sessions: "no", bogus: true });
+  assert.equal(cfg.recent_sessions, false, "anything but a boolean is ignored");
+  const view = api.applySettings({ recent_sessions: true });
+  assert.equal(cfg.recent_sessions, true);
+  assert.deepEqual(api.getSessions().recent, [{ key: "claude:abc" }], "switching it on shows the history again");
+  assert.equal(view.settings.recent_sessions, true, "the settings window receives the key");
+  assert.equal("bogus" in cfg, false);
+});
+
+test("clearing recent sessions empties the log, re-sends the view and answers with the settings", (t) => {
+  const { api, calls } = recentHarness(t);
+  const reply = api.clearRecent();
+  assert.equal(calls.clear, 1);
+  assert.equal(reply.ok, true);
+  assert.equal(reply.message, "Recent sessions cleared.");
+  assert.equal(reply.view.settings.recent_sessions, true);
+  assert.deepEqual(api.getSessions().recent, [], "the windows stop listing them at once, not at the next scan");
+});
+
+test("resuming a session refuses anything it cannot start, in a fixed order", (t) => {
+  const h = recentHarness(t, { installed: [] });
+  const { api, entries, entry } = h;
+  const error = (key) => api.resumeSession(key);
+  for (const key of [undefined, null, 7, {}, ["claude:abc"]]) assert.deepEqual(error(key), { ok: false, error: "That session is no longer listed." });
+  assert.deepEqual(error("claude:nothing"), { ok: false, error: "That session is no longer listed." });
+  api.setState({ latestSessions: { sessions: [{ key: "claude:abc" }], recent: [] } });
+  assert.equal(error("claude:abc").error, "Claude Code · Fix the bug is still open in a terminal.");
+  api.setState({ latestSessions: { sessions: [], recent: [] } });
+  // Running under another key (no id of its own): the log still has it open.
+  entries.set("gemini:c1", { ...entry, key: "gemini:c1", tool: "gemini", cli: "agy", label: "Antigravity", id: "c1", closed_at: null });
+  assert.equal(error("gemini:c1").error, "Antigravity · Fix the bug is still open in a terminal.");
+  entries.set("grok:x", { ...entry, key: "grok:x", cli: "grok", label: "Grok Build", id: "x" });
+  assert.equal(error("grok:x").error, "Can't resume Grok Build sessions.");
+  assert.equal(error("claude:abc").error, "Claude Code isn't installed on this computer.");
+  const there = recentHarness(t);
+  there.entry.cwd = require("node:path").join(there.folder, "gone");
+  assert.equal(there.api.resumeSession("claude:abc").error, `Its folder no longer exists: ${there.entry.cwd}`);
+  there.entry.cwd = "";
+  assert.match(there.api.resumeSession("claude:abc").error, /folder isn't known/);
+  assert.equal(there.opens.length, 0, "nothing was started by a refused request");
+  assert.equal(h.opens.length, 0);
+});
+
+test("resuming a session opens its command in its folder and tells the list to refresh", (t) => {
+  const { api, entry, opens, events, calls, folder } = recentHarness(t);
+  const reply = api.resumeSession("claude:abc");
+  assert.deepEqual(reply, { ok: true, message: "Opening Claude Code · Fix the bug in a terminal…" });
+  assert.equal(opens.length, 1);
+  assert.equal(opens[0].id, "claude");
+  assert.equal(opens[0].deps.cwd, folder);
+  assert.deepEqual(opens[0].deps.command, { label: "Claude Code", title: "Claude Code · Fix the bug", file: "claude", args: ["--resume", entry.id] });
+  assert.equal(events.length, 1);
+  assert.equal(events[0][0], "Session resumed from the panel");
+  opens[0].deps.onError(new Error("spawn failed"));
+  assert.equal(events.at(-1)[0], "Couldn't resume a session");
+  assert.match(events.at(-1)[1], /Fix the bug: spawn failed\./);
+  assert.equal(calls.refresh, 0, "the running list is refreshed after the terminal had time to start");
+});
+
+test("a terminal that cannot be opened is reported, not claimed as opened", (t) => {
+  const failing = recentHarness(t, { open: () => ({ ok: false, error: "No terminal found" }) });
+  assert.deepEqual(failing.api.resumeSession("claude:abc"), { ok: false, error: "No terminal found" });
+  assert.equal(failing.events.length, 0);
+  const throwing = recentHarness(t, { open: () => { throw new Error("boom"); } });
+  assert.deepEqual(throwing.api.resumeSession("claude:abc"), { ok: false, error: "boom" });
+});
+
+test("only the panel may resume a session and only Settings may clear the list", (t) => {
+  const { api, handlers, opens, calls } = recentHarness(t);
+  const panel = { webContents: { id: "panel", send() {} }, isDestroyed: () => false };
+  const settings = { webContents: { id: "settings" }, isDestroyed: () => false };
+  api.setState({ flyout: panel, settingsWin: settings });
+  api.wireIpc();
+  const from = (win) => ({ sender: win.webContents });
+  const stranger = { sender: { id: "other" } };
+  assert.deepEqual(handlers["usage://resume-session"](stranger, "claude:abc"), { ok: false, error: "Not allowed" });
+  assert.deepEqual(handlers["usage://resume-session"](from(settings), "claude:abc"), { ok: false, error: "Not allowed" });
+  assert.equal(opens.length, 0);
+  assert.equal(handlers["usage://resume-session"](from(panel), "claude:abc").ok, true);
+  assert.equal(opens.length, 1);
+  assert.equal(handlers["settings:recent-clear"](stranger), null);
+  assert.equal(handlers["settings:recent-clear"](from(panel)), null);
+  assert.equal(calls.clear, 0);
+  assert.equal(handlers["settings:recent-clear"](from(settings)).ok, true);
+  assert.equal(calls.clear, 1);
+});
+
+test("the tray offers the newest closed session that can be resumed", (t) => {
+  const { api, opens } = recentHarness(t);
+  const item = () => api.buildMenu().find((entry) => /^Resume last session/.test(entry.label));
+  assert.deepEqual([item().label, item().enabled], ["Resume last session", false]);
+  api.setState({ latestSessions: { sessions: [], recent: [
+    { key: "codex:z", label: "Codex", name: "old", can_resume: false },
+    { key: "claude:abc", label: "Claude Code", name: "Fix & test", can_resume: true },
+  ] } });
+  assert.deepEqual([item().label, item().enabled], ["Resume last session: Claude Code · Fix && test", true]);
+  item().click();
+  assert.equal(opens.length, 1);
+});
+
+test("an automatic text size does not scale the panel window", (t) => {
+  const { api, cfg } = recentHarness(t);
+  let bounds = { x: 0, y: 0, width: 580, height: 280 };
+  api.setState({ flyout: { getBounds: () => bounds, setBounds: (next) => { bounds = next; }, isDestroyed: () => false, webContents: { send() {} } } });
+  assert.equal(cfg.display.scale, "auto");
+  api.placeFlyoutRight();
+  assert.equal(bounds.width, 620);
+  cfg.display.scale = 130;
+  api.placeFlyoutRight();
+  assert.equal(bounds.width, 806);
+  api.applySettings({ display: { scale: "auto" } });
+  assert.equal(cfg.display.scale, "auto");
+  api.applySettings({ display: { scale: 120 } });
+  assert.equal(cfg.display.scale, "auto", "an unknown size falls back to automatic");
+});

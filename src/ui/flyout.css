@@ -22,7 +22,8 @@
   flex-direction: column;
   gap: 10px;
   pointer-events: auto;
-  padding: 0 14px 12px;
+  /* 10px keeps the footer within 14 screen px of the bottom even at the largest zoom (1.3). */
+  padding: 0 14px 10px;
   background: var(--bg);
   color: var(--text);
   border: 0;
@@ -59,7 +60,9 @@
   --copilot: #7c3aed;
 }
 html.side-panel, html.side-panel body { width: 100%; height: 100%; overflow: hidden; }
-.side-panel .flyout { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-gutter: stable; }
+/* The panel is fitted to the screen; it scrolls only when the smallest layout still overflows. */
+.side-panel .flyout { overflow-y: hidden; overflow-x: hidden; scrollbar-width: thin; }
+.side-panel .flyout.fit-scroll { overflow-y: auto; scrollbar-gutter: stable; }
 .flyout h2 { font: inherit; margin: 0; }
 .flyout :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -167,6 +170,23 @@ html.side-panel, html.side-panel body { width: 100%; height: 100%; overflow: hid
   gap: 7px 8px; align-items: center; min-width: 0; font-size: 11.5px; color: var(--text-2);
 }
 .flyout.compact .metrics { row-gap: 4px; }
+/* Steps the fit pass takes, in order, when the panel is taller than the screen. */
+.flyout.fit-dense-1 { gap: 7px; }
+.flyout.fit-dense-1 .tile { padding: 7px 12px; }
+.flyout.fit-dense-1 .tile-sub, .flyout.fit-dense-1 .p-account, .flyout.fit-dense-1 .battery-card .hint { display: none; }
+.flyout.fit-dense-1 .provider { padding-top: 7px; padding-bottom: 7px; }
+.flyout.fit-dense-1 .p-head { margin-bottom: 5px; }
+.flyout.fit-dense-1 .metrics { row-gap: 4px; }
+.flyout.fit-dense-2 .net-top, .flyout.fit-dense-2 .caption-detail, .flyout.fit-dense-2 .forecast,
+.flyout.fit-dense-2 .credits, .flyout.fit-dense-2 .battery-chart,
+.flyout.fit-dense-2 .session-recent:not(.expanded) .recent-extra { display: none; }
+/* Room left after the second step shows the chart again, at a height that fits. */
+.flyout.fit-dense-2.fit-chart .battery-chart { display: block; }
+.flyout.fit-dense-3 { font-size: 11px; }
+.flyout.fit-dense-3 .tile strong { font-size: 14px; }
+.flyout.fit-dense-3 .net-value { font-size: 13px; }
+.flyout.fit-dense-3 .battery-status, .flyout.fit-dense-3 .section-caption { display: none; }
+.flyout.fit-dense-3 .update-bar { padding-top: 6px; }
 .flyout .row { display: contents; }
 .row-label { font-weight: 600; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
 .flyout .row .pct { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); white-space: nowrap; }
@@ -216,6 +236,16 @@ html.side-panel, html.side-panel body { width: 100%; height: 100%; overflow: hid
 .session-row.working .session-state { color: var(--good-text); }
 .session-row.limited .session-state, .session-row.limited .eta { color: var(--warn-text); }
 .session-row.alert .session-state { color: var(--bad-text); }
+.session-row[hidden] { display: none; }
+.session-empty { margin-top: -2px; }
+.session-recent { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border); }
+.session-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.session-sub-title { font-size: 10.5px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+#recentRows { display: flex; flex-direction: column; gap: 5px; }
+.session-row .resume { padding: 0 4px; }
+.text-btn:disabled { opacity: 0.5; cursor: default; background: transparent; text-decoration: none; }
+.session-note { font-size: 11px; color: var(--muted); white-space: nowrap; text-align: right; }
+.session-state .pill { margin-right: 6px; font-size: 9.5px; line-height: 1.4; }
 
 .net-row { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 10px; }
 .net-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -233,7 +263,8 @@ html.side-panel, html.side-panel body { width: 100%; height: 100%; overflow: hid
 .battery-card.low .battery-status { color: var(--warn-text); }
 .battery-card.critical .battery-status { color: var(--bad-text); }
 .flyout .battery-chart { color: var(--accent); min-width: 0; }
-.flyout .battery-chart svg { display: block; width: 100%; max-height: 92px; }
+/* --chart-h is set while the fit pass gives the chart spare height. */
+.flyout .battery-chart svg { display: block; width: 100%; max-height: var(--chart-h, 92px); }
 .battery-card .hint { margin-top: 4px; }
 
 /* Pairing. */

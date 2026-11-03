@@ -22,7 +22,7 @@ function displayPrefs(raw = {}) {
   const displayProviders = PROVIDERS.filter((id) => id !== "x_subscription");
   const ids = [...new Set((Array.isArray(raw.order) ? raw.order : []).filter((id) => displayProviders.includes(id)))];
   return { theme: ["system", "light", "dark"].includes(raw.theme) ? raw.theme : "system",
-    scale: [100, 115, 130].includes(Number(raw.scale)) ? Number(raw.scale) : 100,
+    scale: [100, 115, 130].includes(Number(raw.scale)) ? Number(raw.scale) : "auto",
     compact: raw.compact === true, order: [...ids, ...displayProviders.filter((id) => !ids.includes(id))],
     hidden: (Array.isArray(raw.hidden) ? raw.hidden : []).filter((id) => PROVIDERS.includes(id)) };
 }

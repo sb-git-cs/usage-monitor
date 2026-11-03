@@ -7,12 +7,21 @@ const output = path.resolve(__dirname, "../.qa");
 const source = process.argv.includes("--packaged")
   ? path.resolve(__dirname, "../dist/win-unpacked/resources/app.asar/src")
   : path.resolve(__dirname, "../src");
+// --only=flyout,settings checks some pages alone while working on them; all run by default.
+const CHECKS = ["flyout", "chips", "net", "settings", "insights"];
+const only = (process.argv.find((arg) => arg.startsWith("--only=")) || "--only=").slice(7).split(",").filter(Boolean);
+const wanted = (name) => !only.length || only.includes(name);
 app.setPath("userData", path.join(output, "electron-profile"));
 app.disableHardwareAcceleration();
 app.on("window-all-closed", () => {});
 
 const hostile = '<img src="x" onerror="window.injected=true">';
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let resizes = 0;
+let flyoutResizes = 0;
+// The window whose width requests are applied, as main does for the real panel.
+let fitWindow = null;
+const resumedKeys = [];
 const accountSwitches = [];
 const future = new Date(Date.now() + 3600000).toISOString();
 const netSummary = {
@@ -48,7 +57,8 @@ const systemSummary = { cpu: 42, mem: 67, gpuPresent: true, gpu: 18, disk: 9, sp
   disks: [{ name: "0 C:", busy: 9 }], volumes: [{ name: '<img src="x" onerror="window.injected=true">', used: 84 * 1024 ** 3, size: 100 * 1024 ** 3 }] };
 
 async function check(file) {
-  const win = new BrowserWindow({ show: false, width: 860, height: 600, webPreferences: {
+  // The panel is as tall as the work area; a short window would compact it and hide the account menus.
+  const win = new BrowserWindow({ show: false, width: 860, height: file === "flyout" ? 1000 : 600, webPreferences: {
     preload: path.join(source, "preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
   } });
   const errors = [];
@@ -57,6 +67,7 @@ async function check(file) {
   win.webContents.on("console-message", (details) => {
     if (details.level === "error") errors.push(details.message);
   });
+  if (file === "flyout") fitWindow = win;
   try {
     await win.loadFile(path.join(source, `ui/${file}.html`));
     win.webContents.send("usage://snapshot", snapshot);
@@ -68,7 +79,9 @@ async function check(file) {
     const result = await win.webContents.executeJavaScript(`({
       sessions: (() => {
         const el = document.getElementById('sessions') || document.getElementById('sessionChip');
-        return el.hidden ? null : el.textContent.replace(/\\s+/g, ' ').trim();
+        // The panel's card: its heading and running sessions (the empty and recent parts are checked apart).
+        const parts = el.id === 'sessions' ? [el.querySelector('.p-head'), document.getElementById('sessionRows')] : [el];
+        return el.hidden ? null : parts.map((part) => part.textContent).join(' ').replace(/\\s+/g, ' ').trim();
       })(),
       text: document.body.textContent,
       battery: document.getElementById("batteryStatus")?.textContent || document.getElementById("batteryEta")?.textContent,
@@ -150,6 +163,7 @@ async function check(file) {
       assert.equal(await win.webContents.executeJavaScript(`document.querySelectorAll('#sessionRows .eta').length`), 0);
       assert.equal(await win.webContents.executeJavaScript(`document.getElementById('autoResume').checked`), false);
       assert.equal(await win.webContents.executeJavaScript(`document.getElementById('godmode')`), null, "the flyout has no Godmode switch");
+      await checkRecent(win);
       win.webContents.send("usage://sessions", sessionsView);
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.deepEqual(result.widths, ["25%", "90%", "80%", "0%"]);
@@ -318,7 +332,147 @@ async function check(file) {
     assert.doesNotMatch(unavailable, /42%/);
     if (file === "flyout") assert.match(unavailable, /unavailable/);
     console.log(`${file}: rendering, CSP, escaping, warning colors, combined subscription and preload passed`);
-  } finally { win.destroy(); }
+  } finally {
+    fitWindow = null;
+    win.destroy();
+  }
+}
+
+// Recently closed sessions in the panel: text only, Resume from the keyboard, and the card's empty states.
+async function checkRecent(win) {
+  const js = (code) => win.webContents.executeJavaScript(code);
+  const closed = new Date(Date.now() - 300000).toISOString();
+  const recent = [
+    { key: "claude:abc123", tool: "claude", cli: "claude", label: "Claude Code", name: hostile, cwd: `D:\\work\\${hostile}`, id: "abc123",
+      started: closed, last_active: closed, closed_at: closed, godmode: true, can_resume: true, reason: null },
+    { key: "cursor:def456", tool: "cursor", cli: "cursor-agent", label: "Cursor Agent", name: "exporter", cwd: "D:\\work\\exporter", id: "def456",
+      started: null, last_active: closed, closed_at: closed, godmode: false, can_resume: false, reason: "not installed" },
+  ];
+  win.webContents.send("usage://sessions", { auto_resume: false, can_resume: true, sessions: [], recent });
+  await wait(100);
+  const card = await js(`(() => {
+    const rows = document.querySelectorAll('#recentRows .session-row.recent');
+    return {
+      hidden: document.getElementById('sessions').hidden,
+      empty: document.getElementById('sessionEmpty').hidden,
+      count: document.getElementById('sessionCount').textContent,
+      rows: rows.length,
+      text: document.getElementById('recentRows').textContent,
+      injected: !!window.injected || !!document.querySelector('img'),
+      labels: [...document.querySelectorAll('#recentRows button.resume')].map((b) => b.getAttribute('aria-label')),
+      second: rows[1].textContent.replace(/\\s+/g, ' ').trim(),
+      secondButtons: rows[1].querySelectorAll('button').length,
+      pill: rows[0].querySelector('.pill')?.textContent,
+      title: rows[0].title,
+    };
+  })()`);
+  assert.equal(card.hidden, false, "recent sessions keep the card shown");
+  assert.equal(card.empty, false, "the card says that no session is running");
+  assert.equal(card.count, "");
+  assert.equal(card.rows, 2);
+  assert.ok(card.text.includes(hostile), "recent names and folders render as text");
+  assert.equal(card.injected, false);
+  assert.deepEqual(card.labels, [`Resume ${hostile} in Claude Code`]);
+  assert.match(card.second, /exporter · 5m ago not installed$/);
+  assert.equal(card.secondButtons, 0, "a session that can't be resumed has no button");
+  assert.equal(card.pill, "godmode");
+  assert.match(card.title, /^Claude Code · D:\\work\\<img .* · closed .* · skips permissions$/);
+  assert.equal(await js(`(() => { const b = document.querySelector('#recentRows button.resume'); b.focus(); return document.activeElement === b; })()`), true, "Resume is reachable with the keyboard");
+  await js(`document.querySelector('#recentRows button.resume').click()`);
+  await wait(100);
+  assert.deepEqual(resumedKeys, ["claude:abc123"]);
+  assert.equal(await js(`document.getElementById('updated').textContent`), "Resumed for the test", "the reply shows in the header");
+  assert.equal(await js(`document.querySelector('#recentRows button.resume').disabled`), true, "a second click waits a moment");
+  // More than fit: Show all lists every one and Show fewer folds them again.
+  const many = Array.from({ length: 7 }, (_, i) => ({ ...recent[1], key: `cursor:m${i}`, id: `m${i}`, name: `session ${i}` }));
+  win.webContents.send("usage://sessions", { auto_resume: false, can_resume: true, sessions: sessionsView.sessions, recent: many });
+  await wait(100);
+  const shown = `({ rows: [...document.querySelectorAll('#recentRows .session-row')].filter((el) => el.getClientRects().length).length,
+    more: document.getElementById('recentMore').hidden ? null : document.getElementById('recentMore').textContent })`;
+  const folded = await js(shown);
+  assert.equal(folded.more, "Show all (7)");
+  assert.ok(folded.rows < 7, `folded list shows ${folded.rows} rows`);
+  await js(`document.getElementById('recentMore').click()`);
+  await wait(100);
+  assert.deepEqual(await js(shown), { rows: 7, more: "Show fewer" });
+  await js(`document.getElementById('recentMore').click()`);
+  await wait(100);
+  assert.deepEqual(await js(shown), folded);
+  win.webContents.send("usage://sessions", { auto_resume: false, can_resume: true, sessions: [], recent: [] });
+  await wait(100);
+  assert.equal(await js(`document.getElementById('sessions').hidden`), true, "nothing running and nothing recent hides the card");
+}
+
+// The panel fits the screen's height: zoomed when the text size is Auto, compacted step by step when
+// that is not enough, and scrolled only as the last resort.
+async function checkFit() {
+  const demo = require("./demo-data");
+  const win = new BrowserWindow({ show: false, width: 620, height: 1080, webPreferences: {
+    preload: path.join(source, "preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
+  } });
+  fitWindow = win;
+  const errors = [];
+  win.webContents.on("console-message", (details) => {
+    if (details.level === "error") errors.push(details.message);  });
+  const js = (code) => win.webContents.executeJavaScript(code);
+  const send = () => {
+    win.webContents.send("usage://snapshot", demo.snapshot);
+    win.webContents.send("usage://net", demo.netSummary);
+    win.webContents.send("usage://update", demo.updateState);
+    win.webContents.send("usage://sessions", demo.sessionsView);
+    win.webContents.send("usage://battery", demo.batteryView);
+  };
+  const show = async (scale, height) => {
+    win.setSize(win.getSize()[0], height);
+    win.webContents.send("usage://prefs", { alert_threshold: 80, chips_show: {}, dark: true,
+      display: { theme: "dark", scale, compact: false, hidden: [], order: [] } });
+    send();
+    await wait(400);
+  };
+  const measure = `(() => {
+    const root = document.getElementById('root'), update = document.getElementById('update');
+    const scale = root.getBoundingClientRect().height / root.offsetHeight;
+    const last = [...root.children].filter((el) => el !== update && el.getClientRects().length).at(-1);
+    return {
+      height: innerHeight, width: innerWidth, scroll: root.scrollHeight, client: root.clientHeight, className: root.className, zoom: root.style.zoom,
+      footer: innerHeight - update.getBoundingClientRect().bottom,
+      gap: (update.getBoundingClientRect().top - last.getBoundingClientRect().bottom) / scale,
+      sideways: document.documentElement.scrollWidth > innerWidth || root.scrollWidth > root.clientWidth + 1,
+    };
+  })()`;
+  const seen = [];
+  try {
+    await win.loadFile(path.join(source, "ui/flyout.html"));
+    for (const [scale, height] of [...[1400, 1080, 1032, 900, 852, 768, 720].map((h) => ["auto", h]), [130, 1080], [130, 720]]) {
+      await show(scale, height);
+      const m = await js(measure);
+      const where = `${scale} at ${height}px (window ${m.width}x${m.height}, zoom ${m.zoom}, ${m.className})`;
+      seen.push(`${height}/${scale}: zoom ${m.zoom}${m.className.includes("fit-") ? ` ${m.className.match(/fit-[\w-]+/g).join(" ")}` : ""}`);
+      assert.equal(m.sideways, false, `no sideways scroll: ${where}`);
+      if (scale === "auto") {
+        assert.ok(m.scroll <= m.client + 1, `the panel fits: ${where}, ${m.scroll} > ${m.client}`);
+        assert.ok(m.footer >= -1 && m.footer <= 14, `the footer sits at the bottom: ${where}, ${m.footer}px above it`);
+        if (height === 1400) assert.ok(m.gap <= 24, `spare height is used: ${where}, ${m.gap}px above the footer`);
+      }
+      if (height >= 768) assert.ok(!m.className.includes("fit-scroll"), `no scrollbar: ${where}`);
+      if (scale === "auto" && (height === 1080 || height === 768)) fs.writeFileSync(path.join(output, `flyout-${height}.png`), (await win.webContents.capturePage()).toPNG());
+    }
+    // The same readings again lay the panel out the same way and ask for no new width.
+    await show("auto", 1080);
+    const before = { resizes: flyoutResizes, className: (await js(measure)).className };
+    for (let n = 0; n < 5; n++) {
+      send();
+      await wait(60);
+    }
+    await wait(300);
+    assert.ok(flyoutResizes - before.resizes <= 1, `repeated readings asked for ${flyoutResizes - before.resizes} resizes`);
+    assert.equal((await js(measure)).className, before.className, "repeated readings keep the layout");
+    assert.deepEqual(errors, []);
+    console.log(`flyout fit: ${seen.join(", ")}`);
+  } finally {
+    fitWindow = null;
+    win.destroy();
+  }
 }
 
 const MINUTE = 60000;
@@ -361,7 +515,7 @@ async function checkSettings() {
     settings: { autostart: true, poll_interval_secs: 5, chips_hidden: false, chips_docked: true, chips_show_network: true,
       chips_show: { claude: true, codex: true, gemini: true, grok: false, cpu: true, mem: true, gpu: true, disk: true, space: true },
       alert_threshold: 80, notify_on_limit_reached: true, forecast_alerts: true, quiet_hours: { enabled: true, start: "22:00", end: "07:00" },
-      auto_update: true, update_channel: "stable" },
+      auto_update: true, update_channel: "stable", recent_sessions: true },
     display: { theme: "system", scale: 100, compact: false, hidden: ["copilot"], order: ["codex", "claude", "gemini", "grok", "cursor", "copilot"] },
     update: { kind: "installer", status: "up-to-date", current: "1.3.0", checked_at: Date.now() - 120000, auto: true },
     accounts: [
@@ -383,6 +537,8 @@ async function checkSettings() {
   ipcMain.handle("settings:account", (_e, provider, accountId) => { accountActions.push({ provider, accountId }); return { ok: true }; });
   ipcMain.handle("settings:account-forget", (_e, provider, accountId) => { accountActions.push({ forget: provider, accountId }); return { ok: true }; });
   ipcMain.handle("settings:account-keep", (_e, provider) => { accountActions.push({ keep: provider }); return { ok: true, message: "Kept for the test" }; });
+  let recentClears = 0;
+  ipcMain.handle("settings:recent-clear", () => { recentClears++; return { ok: true, message: "Cleared for the test", view }; });
   const win = new BrowserWindow({ show: false, width: 640, height: 1400, webPreferences: {
     preload: path.join(source, "settings-preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, offscreen: true,
   } });
@@ -479,6 +635,20 @@ async function checkSettings() {
     await win.webContents.executeJavaScript(`document.querySelectorAll('#displayProviders input')[5].click()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(patches.at(-1), { display: { hidden: [] } });
+    // Auto text size fits the panel to the screen.
+    assert.ok(await win.webContents.executeJavaScript(`[...document.getElementById('scale').options].some((o) => o.value === 'auto')`), "Auto is a text size");
+    await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('scale'); s.value = 'auto'; s.dispatchEvent(new Event('change')); })()`);
+    await wait(100);
+    assert.deepEqual(patches.at(-1), { display: { scale: "auto" } });
+    // Recently closed sessions: the switch and the clear button.
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('recentSessions').checked`), true);
+    await win.webContents.executeJavaScript(`document.getElementById('recentSessions').click()`);
+    await wait(100);
+    assert.deepEqual(patches.at(-1), { recent_sessions: false });
+    await win.webContents.executeJavaScript(`document.getElementById('clearRecent').click()`);
+    await wait(100);
+    assert.equal(recentClears, 1);
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('toast').textContent`), "Cleared for the test");
     const deadline = Date.now() + 5000;
     renderedFrame = null;
     win.webContents.invalidate();
@@ -572,12 +742,19 @@ async function checkInsights() {
     daily: [{ ...tokenCounts, date: "2026-10-21" }] };
   const tokens = { days: 7, summary: tokenCounts, by_provider: { codex: tokenCounts }, by_model: [model],
     daily: model.daily, hourly: [], by_session: [{ ...tokenCounts, id: "abcdef0123456789", provider: "codex", first: time, last: time, models: [hostile] }] };
+  const closed = new Date(Date.now() - 600000).toISOString();
+  const recentSessions = [{ key: "codex:019a3c2e", tool: "codex", cli: "codex", label: "Codex", name: hostile, cwd: "D:\\work\\api", id: "019a3c2e",
+    started: closed, last_active: closed, closed_at: closed, godmode: false, can_resume: true, reason: null }];
   const view = () => ({ series: data.report(7), events: data.data.events, snooze_until: data.data.snoozeUntil, budget: data.budgetView(),
-    tokens, battery: batteryView, display: cfg.display, dark: true, diagnostics: { storage: "ok", providers: [{ id: "codex", state: "stale", last_success: future }], network: { state: "setup_required", coverage: "Partial observed traffic" } } });
+    tokens, battery: batteryView, display: cfg.display, dark: true, recent_sessions: recentSessions,
+    diagnostics: { storage: "ok", providers: [{ id: "codex", state: "stale", last_success: future }], network: { state: "setup_required", coverage: "Partial observed traffic" } } });
+  const actions = [];
   const errors = [];
   win.webContents.on("console-message", (details) => { if (details.level === "error") errors.push(details.message); });
   ipcMain.handle("insights:get", () => view());
   ipcMain.handle("insights:action", (_e, action, value) => {
+    actions.push([action, value]);
+    if (action === "resume") return { ok: true, message: "Resumed for the test" };
     if (action === "snooze") data.snooze(Number(value));
     if (action === "display") cfg.display = displayPrefs(value);
     if (action === "budget") data.setBudget(value);
@@ -615,6 +792,21 @@ async function checkInsights() {
     assert.equal(await win.webContents.executeJavaScript(`document.body.classList.contains('light')`), false);
     fs.writeFileSync(path.join(output, "insights-dark.png"), (await win.webContents.capturePage()).toPNG());
     assert.deepEqual(errors, []);
+    // Recently closed sessions on the Sessions tab, each with its Resume button.
+    await win.webContents.executeJavaScript(`document.querySelector('[data-tab="sessions"]').click()`);
+    await wait(150);
+    const recent = await win.webContents.executeJavaScript(`({
+      text: document.getElementById('recentSessionRows').textContent,
+      injected: !!document.querySelector('#recentSessionRows img') || !!window.injected,
+      buttons: document.querySelectorAll('#recentSessionRows button').length,
+    })`);
+    assert.ok(recent.text.includes(hostile), "recent session names render as text");
+    assert.equal(recent.injected, false);
+    assert.equal(recent.buttons, 1);
+    await win.webContents.executeJavaScript(`document.querySelector('#recentSessionRows button').click()`);
+    await wait(150);
+    assert.deepEqual(actions.at(-1), ["resume", "codex:019a3c2e"]);
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('message').textContent`), "Resumed for the test", "the reply shows on the page");
     await win.webContents.executeJavaScript(`document.querySelector('[data-tab="battery"]').click()`);
     assert.match(await win.webContents.executeJavaScript(`document.getElementById('batterySummary').textContent`), /62%.*~50m to full/);
     assert.equal(await win.webContents.executeJavaScript(`!!document.querySelector('#batteryChart svg')`), true);
@@ -635,6 +827,11 @@ async function checkInsights() {
 app.whenReady().then(async () => {
   fs.mkdirSync(output, { recursive: true });
   ipcMain.on("usage://chips-resize", () => { resizes++; });
+  // Like main: the window takes the width the panel asks for, within 320..860 px.
+  ipcMain.on("usage://flyout-resize", (e, _h, w) => {
+    flyoutResizes++;    if (fitWindow && e.sender === fitWindow.webContents) fitWindow.setSize(Math.max(320, Math.min(860, Math.round(w))), fitWindow.getSize()[1]);
+  });
+  ipcMain.handle("usage://resume-session", (_e, key) => { resumedKeys.push(key); return { ok: true, message: "Resumed for the test" }; });
   ipcMain.handle("usage://account", (_e, provider, accountId) => { accountSwitches.push([provider, accountId]); return { ok: true, message: "Switched for the test" }; });
   ipcMain.handle("usage://get-interval", () => 5);
   ipcMain.handle("usage://get-chips-docked", () => true);
@@ -651,11 +848,16 @@ app.whenReady().then(async () => {
   ipcMain.handle("net:series", () => netSeries);
   ipcMain.handle("net:settings", () => netState);
   try {
-    await check("flyout");
-    await check("chips");
-    await checkNet();
-    await checkSettings();
-    await checkInsights();
+    const unknown = only.filter((name) => !CHECKS.includes(name));
+    if (unknown.length) throw new Error(`--only takes ${CHECKS.join(", ")}; unknown: ${unknown.join(", ")}`);
+    if (wanted("flyout")) {
+      await check("flyout");
+      await checkFit();
+    }
+    if (wanted("chips")) await check("chips");
+    if (wanted("net")) await checkNet();
+    if (wanted("settings")) await checkSettings();
+    if (wanted("insights")) await checkInsights();
     app.exit(0);
   } catch (err) {
     console.error(err);

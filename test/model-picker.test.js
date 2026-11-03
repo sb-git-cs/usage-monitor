@@ -26,7 +26,7 @@ const {
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { readSettings, notListed } = require("../src/model-picker/cli");
+const { readSettings, notListed, completeLine, copyToClipboard, conversationFile, saveConversation, loadConversation, ago } = require("../src/model-picker/cli");
 
 function parse(toolId, lines) {
   const p = createParser(toolId);
@@ -392,12 +392,19 @@ test("Codex and Grok caches give each model's effort levels; the configured and 
     { id: "gpt-6-astra", label: undefined, efforts: ["low", "ultra"] },
     { id: "gpt-reserve", label: undefined, efforts: ["medium"], isDefault: true },
   ]);
-  const grokCache = JSON.stringify({ models: { "grok-a": { info: { reasoning_efforts: [{ id: "xhigh", value: "xhigh" }, { id: "high", value: "high" }] } }, "grok-b": { info: {} } } });
-  assert.deepEqual(parseGrokCache(grokCache), { "grok-a": ["xhigh", "high"] });
+  const grokCache = JSON.stringify({
+    models: {
+      "grok-a": { info: { name: "Grok A", description: "Frontier.", reasoning_efforts: [{ id: "xhigh", value: "xhigh" }, { id: "high", value: "high" }] } },
+      "grok-b": { info: {} },
+    },
+  });
+  assert.deepEqual(parseGrokCache(grokCache), { "grok-a": { efforts: ["xhigh", "high"], label: "Grok A", description: "Frontier." } });
   assert.deepEqual(parseGrokCache("{bad"), {});
   files["/h/.grok/models_cache.json"] = grokCache;
   const grok = await loadModels("grok", { exe: "g", home: "/h", readFile, run: async () => "  - grok-a\n  * grok-b (default)\n" });
-  assert.deepEqual(grok, [{ id: "grok-a", efforts: ["xhigh", "high"] }, { id: "grok-b", isDefault: true }]);
+  assert.deepEqual(grok, [{ id: "grok-a", efforts: ["xhigh", "high"], label: "Grok A", description: "Frontier." }, { id: "grok-b", isDefault: true }]);
+  const described = parseCodexCache(JSON.stringify({ models: [{ slug: "m", visibility: "list", description: "Workhorse." }] }));
+  assert.equal(described[0].description, "Workhorse.");
 });
 
 test("what a turn used is read from each tool's own record of the session", (t) => {
@@ -451,7 +458,13 @@ test("saved settings drop ids that are not well formed, such as a typed /model",
   assert.deepEqual(s.effort, { claude: "xhigh" });
   assert.deepEqual(s.history, ["a"]);
   assert.deepEqual(readSettings({ last: { toolId: "codex" } }).last, { toolId: "codex", model: null });
-  assert.deepEqual(readSettings({}), { last: null, recent: {}, effort: {}, history: [] });
+  assert.deepEqual(readSettings({}), { last: null, recent: {}, effort: {}, used: [], resolved: {}, history: [] });
+  const more = readSettings({
+    used: [{ toolId: "claude", model: "opus" }, { toolId: "codex" }, { toolId: "claude", model: "/model" }, "x"],
+    resolved: { "claude:opus": "claude-opus-5-5", "claude:": "claude-opus-5-5", bad: "x", "codex:a": "/model" },
+  });
+  assert.deepEqual(more.used, [{ toolId: "claude", model: "opus" }, { toolId: "codex", model: null }]);
+  assert.deepEqual(more.resolved, { "claude:opus": "claude-opus-5-5", "claude:": "claude-opus-5-5" });
 });
 
 test("each terminal question lets go of the input, so a typed key is echoed once", async () => {
@@ -460,31 +473,172 @@ test("each terminal question lets go of the input, so a typed key is echoed once
   let shown = "";
   output.on("data", (d) => (shown += d));
   for (const line of ["one", "two", "/model"]) {
-    const answer = askTerminal("> ", input, output);
+    const answer = askTerminal("> ", { input, output });
     input.write(`${line}\r`);
     assert.equal(await answer, line);
   }
   assert.equal(input.listenerCount("keypress"), 0);
-  const next = askTerminal("> ", input, output);
+  const next = askTerminal("> ", { input, output });
   shown = "";
   input.write("z");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(shown.split("z").length - 1, 1);
+  // End of input sends what was typed so far.
   input.end();
-  assert.equal(await next, null);
+  assert.equal(await next, "z");
 });
 
-test("only a one-line /model or /exit is a command", () => {
+test("a pasted block stays one prompt and is sent by the next Enter", async () => {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const ask = async (chunks) => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    output.resume();
+    let done = false;
+    const answer = askTerminal("> ", { input, output, multiline: true }).then((a) => {
+      done = true;
+      return a;
+    });
+    for (const chunk of chunks) {
+      if (typeof chunk === "number") await wait(chunk);
+      else input.write(chunk);
+    }
+    return { answer, isDone: () => done };
+  };
+  // A paste whose last line has no line break waits for Enter.
+  let run = await ask(["Fix this:\rfunction add(a, b) {\r  return a - b;\r}", 120]);
+  assert.equal(run.isDone(), false);
+  run = await ask(["Fix this:\rfunction add(a, b) {\r  return a - b;\r}", 120, "\r"]);
+  assert.equal(await run.answer, "Fix this:\nfunction add(a, b) {\n  return a - b;\n}");
+  // A paste ending in a line break also waits, and the trailing break is dropped.
+  run = await ask(["x\ry\r", 120]);
+  assert.equal(run.isDone(), false);
+  run = await ask(["x\ry\r", 120, "\r"]);
+  assert.equal(await run.answer, "x\ny");
+  // A typed line is sent by its own Enter; a line ending in \ continues.
+  run = await ask(["hello\r"]);
+  assert.equal(await run.answer, "hello");
+  run = await ask(["first \\\r", 120, "second\r"]);
+  assert.equal(await run.answer, "first \nsecond");
+});
+
+test("only a one-line /command is a command, and a near miss is caught instead of sent", () => {
   assert.deepEqual(parseCommand("/model"), { kind: "model", arg: "" });
   assert.deepEqual(parseCommand("  /model   gpt-5  "), { kind: "model", arg: "gpt-5" });
   assert.deepEqual(parseCommand("/exit"), { kind: "exit" });
   assert.deepEqual(parseCommand("/quit"), { kind: "exit" });
-  assert.deepEqual(parseCommand("/models"), { kind: "prompt" });
   assert.deepEqual(parseCommand("/model opus\nand explain"), { kind: "prompt" });
   assert.deepEqual(parseCommand("use /model later"), { kind: "prompt" });
   assert.deepEqual(parseCommand("/effort"), { kind: "effort", arg: "" });
   assert.deepEqual(parseCommand("/effort  XHigh "), { kind: "effort", arg: "xhigh" });
-  assert.deepEqual(parseCommand("/efforts"), { kind: "prompt" });
+  assert.deepEqual(parseCommand("/retry"), { kind: "retry", arg: "" });
+  assert.deepEqual(parseCommand("/retry Codex"), { kind: "retry", arg: "Codex" });
+  for (const c of ["new", "history", "copy", "help"]) assert.deepEqual(parseCommand(`/${c}`), { kind: c });
+  assert.deepEqual(parseCommand("/models"), { kind: "unknown", name: "/models", suggestion: "/model" });
+  assert.deepEqual(parseCommand("/modle opus"), { kind: "unknown", name: "/modle", suggestion: "/model" });
+  assert.deepEqual(parseCommand("/hepl"), { kind: "unknown", name: "/hepl", suggestion: "/help" });
+  // The tools' own slash commands, paths and text go to the model.
+  for (const text of ["/review", "/compact keep the plan", "/usr/bin/env node", "/new\nline"]) assert.deepEqual(parseCommand(text), { kind: "prompt" }, text);
+});
+
+test("Tab completes commands, model names and effort levels, and leaves a Tab in text", () => {
+  const installed = [
+    { ...tools.toolById("claude"), models: ["fable", "opus", "sonnet", "haiku"].map((id) => ({ id })) },
+    { ...tools.toolById("codex"), models: [{ id: "gpt-6-astra", efforts: ["low", "high"], isDefault: true }] },
+  ];
+  const ctx = { installed, recent: { claude: ["claude-opus-5-5"] }, current: { toolId: "claude", model: "opus" } };
+  assert.deepEqual(completeLine("/mo", ctx), [["/model "], "/mo"]);
+  assert.deepEqual(completeLine("/h", ctx), [["/history", "/help"], "/h"]);
+  assert.deepEqual(completeLine("/model so", ctx), [["sonnet"], "so"]);
+  assert.deepEqual(completeLine("/retry co", ctx), [["codex"], "co"]);
+  assert.deepEqual(completeLine("/model claude-", ctx), [["claude-opus-5-5"], "claude-"]);
+  assert.deepEqual(completeLine("/effort x", ctx), [["xhigh"], "x"]);
+  assert.deepEqual(completeLine("/effort ", { ...ctx, current: { toolId: "codex", model: null } }), [["default", "low", "high"], ""]);
+  assert.deepEqual(completeLine("fix this", ctx), [["fix this\t"], "fix this"]);
+});
+
+test("a conversation can be saved and carried on, keeping each tool's session", (t) => {
+  const conv = createConversation();
+  conv.record({ toolId: "claude", toolLabel: "Claude Code", model: "opus", prompt: "p1", reply: "r1", sessionId: "s-1", effort: "xhigh", used: { model: "claude-opus-5-5", effort: "xhigh" }, elapsedMs: 2000, usage: { input: 100, output: 10 }, costUsd: 0.01 });
+  conv.record({ toolId: "codex", toolLabel: "Codex", model: null, prompt: "p2", reply: "r2", sessionId: "t-1", usage: { input: 50, output: 5 } });
+  conv.record({ toolId: "claude", toolLabel: "Claude Code", model: "opus", prompt: "p3", reply: "r3", sessionId: "s-1" });
+  assert.equal(conv.missedBy("codex"), 1);
+  assert.equal(conv.missedBy("claude"), 0);
+  assert.equal(conv.missedBy("grok"), 3);
+  assert.deepEqual(conv.totals(), { turns: 3, input: 150, output: 15, costUsd: 0.01 });
+  const again = createConversation(JSON.parse(JSON.stringify(conv.toJSON())));
+  assert.equal(again.sessionFor("claude"), "s-1");
+  assert.equal(again.missedBy("codex"), 1);
+  assert.match(again.promptFor("codex", "next"), /\[User\]\np3[\s\S]*Now the user asks:\nnext$/);
+  assert.equal(again.turns[0].used.model, "claude-opus-5-5");
+  assert.deepEqual(createConversation({ turns: [{ nope: 1 }], sessions: { x: { id: 3 } } }).turns, []);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "um-conv-"));
+  const env = { LOCALAPPDATA: process.env.LOCALAPPDATA, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  t.after(() => {
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  Object.assign(process.env, { LOCALAPPDATA: dir, HOME: dir, USERPROFILE: dir });
+  const cwd = path.join(dir, "project");
+  assert.ok(conversationFile(cwd).startsWith(dir));
+  assert.equal(loadConversation(cwd), null);
+  saveConversation(cwd, conv, 2);
+  const saved = loadConversation(cwd);
+  assert.deepEqual(saved.turns.map((x) => x.prompt), ["p2", "p3"]);
+  assert.deepEqual(saved.sessions, { claude: { id: "s-1", seen: 2 }, codex: { id: "t-1", seen: 1 } });
+  assert.equal(saved.cwd, cwd);
+});
+
+test("the menu lists recent models first, shows effort on the highlighted row and what an alias last ran", () => {
+  const installed = [
+    { ...tools.toolById("claude"), models: ["opus", "sonnet"].map((id) => ({ id })) },
+    { ...tools.toolById("codex"), models: [{ id: "gpt-6-astra", label: "GPT-6 Astra", description: "Frontier.", efforts: ["low", "high"], isDefault: true }] },
+  ];
+  const rows = menuRows(installed, {}, { used: [{ toolId: "codex", model: "gpt-6-astra" }, { toolId: "gone", model: null }], resolved: { "claude:opus": "claude-opus-5-5" } });
+  assert.equal(rows[0].group, "recent");
+  assert.equal(rows[0].label, "Codex · gpt-6-astra");
+  assert.equal(rows.filter((r) => r.group === "recent").length, 1);
+  const opus = rows.find((r) => r.group === "claude" && r.model === "opus");
+  assert.equal(opus.description, "→ claude-opus-5-5");
+  assert.deepEqual(opus.efforts, ["low", "medium", "high", "xhigh", "max"]);
+  // A recent row repeats a tool row, so a name still matches once.
+  assert.equal(rows[matchRow(rows, "gpt-6-astra")].group, "codex");
+  const plain = { color: false };
+  const lines = render.menuLines(rows, { pos: 0, width: 100, height: 30, effortOf: (ri) => (ri === 0 ? "high" : null), ...plain });
+  assert.equal(lines[0], "Recent");
+  assert.match(lines[1], /^ {2}› {3}Codex · gpt-6-astra .*‹ high ›$/);
+  const astra = lines.find((l) => l.includes("GPT-6 Astra"));
+  assert.match(astra, /gpt-6-astra · Frontier\./);
+  assert.doesNotMatch(astra, /‹/);
+  assert.match(lines.find((l) => l.includes("opus")), /→ claude-opus-5-5/);
+  assert.match(lines.at(-1), /←→ effort/);
+  // Tab moves between groups, the recent one included.
+  const list = render.filterRows(rows, "");
+  assert.equal(rows[list[render.jumpGroup(rows, list, 0, 1)]].group, "claude");
+});
+
+test("copy uses the platform's clipboard tool, UTF-16 without a BOM for Windows clip", () => {
+  const calls = [];
+  const run = (ok) => (cmd, args, opts) => {
+    calls.push([cmd, args, opts.input]);
+    return ok(cmd) ? { status: 0 } : { error: new Error("missing") };
+  };
+  assert.equal(copyToClipboard("héllo ✓", "win32", run(() => true)), true);
+  assert.equal(calls[0][0], "clip.exe");
+  // clip.exe keeps a byte-order mark as a character, so none is sent.
+  assert.equal(calls[0][2].toString("utf16le"), "héllo ✓");
+  calls.length = 0;
+  assert.equal(copyToClipboard("x", "linux", run((c) => c === "xclip")), true);
+  assert.deepEqual(calls.map((c) => c[0]), ["wl-copy", "xclip"]);
+  assert.equal(copyToClipboard("x", "linux", run(() => false)), false);
+  assert.equal(ago(30 * 1000), "just now");
+  assert.equal(ago(5 * 60000), "5 min ago");
+  assert.equal(ago(3 * 3600000), "3 h ago");
+  assert.equal(ago(3 * 86400000), "3 days ago");
 });
 
 test("executable lookup searches PATH then the tool's own install folders", () => {

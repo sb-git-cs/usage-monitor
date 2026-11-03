@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.15.0 — 2026-11-03
+
+- **Resume a closed session from the panel.** The Sessions card keeps a **Recent** list of the coding sessions whose terminal was closed: title, folder and when it closed, the newest three with **Show all** for the rest. **Resume** opens a terminal in that folder and continues the session with the tool's own command (`claude --resume`, `codex resume`, `grok --resume`, `agy --conversation`, `cursor-agent --resume`, `copilot --resume`, `gemini --resume`), adding the skip-permissions flag only when the session ran with it (a **godmode** tag says so). Sessions from before Usage Monitor started are read from each tool's own records, so the list is there on first launch. A session whose tool is not installed or whose folder is gone says so instead of a button. Insights → Sessions lists every recent session with the same button, and the tray menu has **Resume last session**. The list holds only the last few sessions worked on (eight at most, from the past week), so it is what was open before the last shutdown rather than a history; Settings → Coding sessions turns it off or clears it, and it holds no prompt text.
+- **The panel fits the screen.** With the new default text size **Auto** (Settings → Appearance), the panel scales its text to the display's height, so a tall screen no longer has a gap above the footer and a short one no longer scrolls: on a short screen it first tightens the cards, then hides secondary lines and the battery chart, and the extra room on a tall screen goes to the battery chart and the Recent list. A fixed size (100%, 115%, 130%) keeps that size and still compacts the cards; a scrollbar appears only when nothing else fits. Copies that were on the default 100% move to Auto.
+- **Model picker: model and effort in one menu.** In the `/model` menu, ←/→ sets the effort on the highlighted model, which shows as `‹ xhigh ›`. Each model shows its description: Codex and Grok Build list their own descriptions, and Claude Code's aliases show what they last ran as (`opus → claude-opus-5-5`). The models you used last sit in a **Recent** group at the top.
+- **Tab completion.** Tab completes commands (`/mo` → `/model`), model names (`/model son` → `sonnet`) and effort levels (`/effort x` → `xhigh`). A Tab in a prompt is still a Tab.
+- **Pasting works.** A pasted block of several lines is now one prompt, sent by the next Enter. Before, only its first line was sent and the rest was dropped. Pasted lines no longer fill the ↑ history.
+- **New commands:**
+  - `/retry [name]` asks the last prompt again, with the same model or another one (`/retry codex`), to compare answers.
+  - `/history` lists the turns with tool, model, effort, time and tokens.
+  - `/copy` puts the last answer on the clipboard.
+  - `/new` starts a fresh conversation.
+  - `/help` lists the commands and keys.
+  - A near miss such as `/modle` is caught instead of being sent to the model. Other slash commands still reach the tool.
+- **Carry on later.** Opening the picker again in a folder offers to carry on its last conversation, with every tool's own session.
+- **Status line.** After each reply: the number of turns, tokens and cost so far, and what a switch would hand to each other tool (`a switch hands over: Codex 2`).
+- **Bell.** A reply that took more than 20 seconds rings the terminal bell when it ends, which flashes the taskbar when the window is in the background.
+
 ## 1.14.0 — 2026-10-26
 
 - **Open model picker here is back, and switches only when you ask.** It sits next to **Open in terminal (godmode)** on the folder right-click menu (Windows) instead of replacing it. The terminal starts on the model you used last and keeps it for every reply.

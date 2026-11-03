@@ -1,7 +1,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { claudeConfigDir, codexHome, grokHome, cursorCliDir } = require("./paths");
+const { claudeConfigDir, codexHome, grokHome, cursorCliDir, cliOnPath } = require("./paths");
 const { createWorker, spawnWorker } = require("./system");
+const { launchFlags, resumeCommand } = require("./session-log");
+const { createRecordReader } = require("./session-records");
 
 // Coding sessions running in a terminal, and resuming the ones a usage limit stopped.
 // Claude Code records each running session in ~/.claude/sessions/<pid>.json; Codex has no such
@@ -13,6 +15,9 @@ const { createWorker, spawnWorker } = require("./system");
 // the session is busy, or on macOS/Linux.
 
 const SCAN_MS = 10_000;
+// The CLIs' own records of past sessions are read again at most this often.
+const SEED_MS = 60_000;
+const RECENT_MAX = 100;
 // While nobody is at the computer the list is not watched, but limits still reset and get resumed.
 const AWAY_SCAN_MS = 30_000;
 const GRACE_MS = 60_000; // after the reported reset, so a slightly fast clock does not hit the limit again
@@ -61,19 +66,20 @@ const OTHER_PROMPT_FLAGS = new Set(["-p", "--print", "--prompt"]);
 // CLI draws while a turn runs and while it waits at an empty prompt (from each CLI's own interface
 // text). A dialog's "Esc to cancel" is not a running turn, so each CLI has its own pattern.
 // Grok's state comes from its session events instead; its screen pattern is the fallback.
+// program: the command that reopens its sessions (see session-log RESUME).
 const OTHER_CLIS = [
-  { tool: "grok", label: "Grok Build", exe: /^grok$/i, working: /send a message to interrupt/i },
+  { tool: "grok", program: "grok", label: "Grok Build", exe: /^grok$/i, working: /send a message to interrupt/i },
   // Grok installs a second name for the same program; "agent" alone is too common a name.
-  { tool: "grok", label: "Grok Build", exe: /^agent$/i, path: /[\\/]\.grok[\\/]bin[\\/]agent\.exe/i, working: /send a message to interrupt/i },
+  { tool: "grok", program: "grok", label: "Grok Build", exe: /^agent$/i, path: /[\\/]\.grok[\\/]bin[\\/]agent\.exe/i, working: /send a message to interrupt/i },
   // Antigravity: "Working... (12s · esc to cancel)", "Press esc to interrupt generation."; idle footer "? for shortcuts".
-  { tool: "gemini", label: "Antigravity", exe: /^agy$/i, working: /esc to interrupt|\(\s*\d[^)\n]*esc to cancel\)|generating\.\.\./i, idle: /\? for shortcuts/i },
+  { tool: "gemini", program: "agy", label: "Antigravity", exe: /^agy$/i, working: /esc to interrupt|\(\s*\d[^)\n]*esc to cancel\)|generating\.\.\./i, idle: /\? for shortcuts/i },
   // Gemini CLI: "(esc to cancel, 12s)".
-  { tool: "gemini", label: "Gemini CLI", exe: /^gemini$/i, script: /[\\/]@google[\\/]gemini-cli[\\/][^"\s]*\.js"?/i, working: /\(esc to cancel, \d+s\)/i },
+  { tool: "gemini", program: "gemini", label: "Gemini CLI", exe: /^gemini$/i, script: /[\\/]@google[\\/]gemini-cli[\\/][^"\s]*\.js"?/i, working: /\(esc to cancel, \d+s\)/i },
   // Cursor: the prompt shows "ctrl+c to stop" while a turn runs, "Plan, search, build anything" or "Add a follow-up" when empty.
-  { tool: "cursor", label: "Cursor Agent", exe: /^cursor-agent$/i, script: /[\\/]cursor-agent[\\/]versions[\\/][^\\/"]+[\\/]index\.js"?/i,
+  { tool: "cursor", program: "cursor-agent", label: "Cursor Agent", exe: /^cursor-agent$/i, script: /[\\/]cursor-agent[\\/]versions[\\/][^\\/"]+[\\/]index\.js"?/i,
     working: /ctrl\+c to stop/i, idle: /plan, search, build anything|add a follow-up/i },
   // Copilot: the npm loader starts the native copilot.exe in the same terminal; the loader is the session.
-  { tool: "copilot", label: "Copilot CLI", exe: /^copilot$/i, script: /[\\/]@github[\\/]copilot[\\/][^"\s]*\.js"?/i, working: /\(esc to cancel\b|esc to interrupt/i },
+  { tool: "copilot", program: "copilot", label: "Copilot CLI", exe: /^copilot$/i, script: /[\\/]@github[\\/]copilot[\\/][^"\s]*\.js"?/i, working: /\(esc to cancel\b|esc to interrupt/i },
 ];
 const OTHER_NAMES = ["grok", "agent", "agy", "gemini", "cursor-agent", "copilot", "node"];
 // Of the node.exe processes (editors, servers, tools), the helper returns only these CLIs.
@@ -427,6 +433,13 @@ function messageLimitKind(text) {
   return null;
 }
 
+// What the recent list keeps of a running session: the CLI and id that reopen it, and whether its
+// command line skipped permissions. title is a title of its own, never the folder name.
+function launchInfo(cli, id, cmd, title = null) {
+  const line = String(cmd || "");
+  return { cli, id: id || null, cmd: line, godmode: launchFlags(cli, line).godmode, title: title || null };
+}
+
 function processAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -446,7 +459,12 @@ function createWatcher({
   getConfig = () => ({}), snapshot = () => null, onChange = () => {}, onResume = () => {},
   platform = process.platform, now = Date.now, request = helperRequest,
   claudeDir = claudeConfigDir, codexDir = codexHome, grokDir = grokHome, cursorDir = cursorCliDir, text = RESUME_TEXT,
+  sessionLog = null, records = null, which = cliOnPath, folderExists = fs.existsSync,
 } = {}) {
+  const reader = records || createRecordReader({ claudeDir, codexDir, grokDir, cursorDir, now, platform });
+  const installed = new Map(); // command -> on PATH, looked up again with each seed
+  let seededAt = null;
+  let partial = false; // a probe failed during this scan, so a session it missed may still be there
   const attempts = new Map();
   const transcripts = new Map(); // sessionId -> path
   const tails = new Map(); // path -> { key, state }
@@ -454,7 +472,7 @@ function createWatcher({
   const resumeMisses = new Map(); // resume id with no rollout found -> last time its tree walk ran
   const limitsSeen = new Map(); // other CLI session key -> { resets }, fixed when its limit message first showed
   const spentSeen = new Map(); // provider -> latest used-up reset the meters reported
-  let view = { auto_resume: false, can_resume: platform === "win32", sessions: [] };
+  let view = { auto_resume: false, can_resume: platform === "win32", sessions: [], recent: [] };
   let busy = false;
   let again = false; // a refresh asked for while a scan was running
   let codexSpent = null;
@@ -656,7 +674,9 @@ function createWatcher({
     let procs = [];
     if (platform === "win32") {
       const reply = await request({ op: "scan", pids: records.map((r) => r.pid), names: ["codex", ...OTHER_NAMES], only: NODE_ONLY });
-      procs = (reply && Array.isArray(reply.procs) ? reply.procs : []).filter((p) => p && Number.isInteger(p.pid));
+      // A helper that answered with an error saw no processes; that is not a scan.
+      if (!reply || !Array.isArray(reply.procs)) throw new Error(reply && reply.error ? `helper: ${reply.error}` : "helper gave no process list");
+      procs = reply.procs.filter((p) => p && Number.isInteger(p.pid));
     }
     const byPid = new Map(procs.map((p) => [p.pid, p]));
     const sessions = [];
@@ -672,6 +692,8 @@ function createWatcher({
         state: state.limited && r.status !== "busy" ? "limited" : r.status === "busy" ? "working" : "idle",
         resets_at: state.limited ? state.resets_at : null, limit: state.limited ? state.limit : null,
         can_type: r.entrypoint === "cli", started: r.startedAt || null,
+        // A derived name is the folder's slug; the title Claude generates is in the transcript.
+        ...launchInfo("claude", r.sessionId, proc ? proc.cmd : "", r.nameSource === "derived" ? null : r.name),
       });
     }
     const codexProcs = procs.filter((p) => /^codex$/i.test(p.name || "") && isCodexTui(p))
@@ -690,7 +712,8 @@ function createWatcher({
           const state = cachedState(r.file, codexState) || { limited: false, busy: false };
           sessions.push({ ...base, key: `codex:${r.id}`, name: names.get(r.id) || path.basename(cwd) || "Codex",
             state: state.limited ? "limited" : state.busy ? "working" : "idle",
-            resets_at: state.limited ? state.resets_at : null, limit: state.limited ? state.limit : null, can_type: true });
+            resets_at: state.limited ? state.resets_at : null, limit: state.limited ? state.limit : null, can_type: true,
+            ...launchInfo("codex", r.id, p.cmd, names.get(r.id)) });
           continue;
         }
         // Not linked to one rollout (for example two terminals opened together in one folder).
@@ -714,7 +737,7 @@ function createWatcher({
         }
         sessions.push({ ...base, key: `codex:${p.pid}:${p.start}`, name: path.basename(cwd) || "Codex",
           state: shown ? "limited" : "idle", resets_at: shown ? resets : null, limit: shown ? orphanLimit : null,
-          can_type: true, lines: ORPHAN_LINES });
+          can_type: true, lines: ORPHAN_LINES, ...launchInfo("codex", null, p.cmd) });
       }
     }
     if (platform === "win32") {
@@ -727,7 +750,8 @@ function createWatcher({
         const cwd = String(r.cwd || "").replace(/[\\/]+$/, "");
         sessions.push({ key: `grok:${r.session_id}`, tool: "grok", label: "Grok Build", pid: r.pid, start: null, cwd,
           name: info.name || path.basename(cwd) || "Grok Build", state: info.state && info.state.busy ? "working" : "idle",
-          resets_at: null, limit: null, can_type: false, started: Date.parse(r.opened_at) || null });
+          resets_at: null, limit: null, can_type: false, started: Date.parse(r.opened_at) || null,
+          ...launchInfo("grok", r.session_id, "", info.name) });
       }
     }
     return sessions;
@@ -752,13 +776,16 @@ function createWatcher({
       try {
         screen = (await request({ op: "screen", pid: p.pid, start: p.start, lines: OTHER_LINES }))?.text ?? null;
       } catch {
+        // The session may well be there; this scan must not count it as closed.
         screen = null;
+        partial = true;
       }
       // No screen to read: started by an editor or another program, not in a terminal.
       if (typeof screen !== "string") continue;
       const started = filetimeMs(p.start);
       let key = `${p.cli.tool}:${p.pid}:${p.start}`;
       let name = null;
+      let id = null; // the session id its CLI reopens it by, when its records name one
       let busy = null; // null: the screen decides
       if (p.cli.tool === "grok") {
         // The record must be this process's, not one left by a process that had the same id.
@@ -767,6 +794,7 @@ function createWatcher({
           const info = grokSession(r);
           key = `grok:${r.session_id}`;
           name = info.name;
+          id = r.session_id;
           if (info.state) busy = info.state.busy;
         }
       } else if (p.cli.tool === "cursor") {
@@ -775,6 +803,7 @@ function createWatcher({
         const chat = alone ? mine.sort((a, b) => b.updated - a.updated)[0]
           : mine.filter((c) => c.created <= started + 120_000).sort((a, b) => a.created - b.created)[0];
         if (chat && chat.title) name = chat.title;
+        if (chat) id = chat.id;
       }
       const working = busy != null ? busy : !!(p.cli.working && p.cli.working.test(screen));
       const limited = !working && new RegExp(OTHER_LIMIT_ON_SCREEN, "i").test(screen);
@@ -809,10 +838,72 @@ function createWatcher({
       const waiting = busy === false || !!(p.cli.idle && p.cli.idle.test(screen));
       out.push({ key, tool: p.cli.tool, label: p.cli.label, pid: p.pid, start: p.start, cwd, name: name || path.basename(cwd) || p.cli.label,
         state: limited ? "limited" : working ? "working" : waiting ? "idle" : "running", resets_at: resets, limit, can_type: true,
-        started, lines: OTHER_LINES, expect: OTHER_LIMIT_ON_SCREEN });
+        started, lines: OTHER_LINES, expect: OTHER_LIMIT_ON_SCREEN, ...launchInfo(p.cli.program, id, p.cmd, name) });
     }
     for (const key of limitsSeen.keys()) if (!live.has(key)) limitsSeen.delete(key);
     return out;
+  }
+
+  // The CLIs' records go in first, so a running session with no id of its own can take over its record.
+  function logSessions(sessions) {
+    if (seededAt == null || now() - seededAt >= SEED_MS) {
+      seededAt = now();
+      installed.clear();
+      try {
+        sessionLog.seed(reader.read());
+      } catch (err) {
+        console.error("recent sessions read failed", err.message);
+      }
+    }
+    if (partial) return;
+    try {
+      sessionLog.record(sessions.map((s) => ({ key: s.key, tool: s.tool, cli: s.cli, label: s.label, name: s.title || "",
+        cwd: s.cwd, id: s.id || resumedId(s), started: s.started, godmode: s.godmode, pid: s.pid })));
+    } catch (err) {
+      console.error("recent sessions update failed", err.message);
+    }
+  }
+
+  // A session reopened from the recent list names its id on its command line; it is that entry.
+  function resumedId(s) {
+    const id = launchFlags(s.cli, s.cmd).resumed;
+    return id && sessionLog.get(`${s.tool}:${id}`) ? id : null;
+  }
+
+  function onPath(file) {
+    if (!installed.has(file)) {
+      let found = false;
+      try {
+        found = !!which(file);
+      } catch {
+        found = false;
+      }
+      installed.set(file, found);
+    }
+    return installed.get(file);
+  }
+
+  const iso = (at) => (Number.isFinite(at) ? new Date(at).toISOString() : null);
+
+  function recentView(sessions) {
+    if (!sessionLog) return [];
+    const running = new Set(sessions.flatMap((s) => [s.key, s.id ? `${s.tool}:${s.id}` : null]).filter(Boolean));
+    let entries = [];
+    try {
+      entries = sessionLog.recent();
+    } catch (err) {
+      console.error("recent sessions list failed", err.message);
+    }
+    return entries.filter((e) => !running.has(e.key)).slice(0, RECENT_MAX).map((e) => {
+      const command = resumeCommand(e);
+      const folder = !!e.cwd && folderExists(e.cwd);
+      const ready = !!command && folder && onPath(command.file);
+      return {
+        key: e.key, tool: e.tool, cli: e.cli, label: e.label, name: e.name, cwd: e.cwd, id: e.id,
+        started: iso(e.started), last_active: iso(e.last_active), closed_at: iso(e.closed_at), godmode: e.godmode,
+        can_resume: ready, reason: ready ? null : !command ? "no session id" : !folder ? "folder missing" : "not installed",
+      };
+    });
   }
 
   async function scan() {
@@ -833,11 +924,13 @@ function createWatcher({
       }
       let sessions;
       try {
+        partial = false;
         sessions = await collect();
       } catch (err) {
         console.error("session scan failed", err.message);
         return view;
       }
+      if (sessionLog) logSessions(sessions);
       const live = new Set();
       for (const s of sessions) {
         if (s.state !== "limited") continue;
@@ -877,6 +970,7 @@ function createWatcher({
             resume_at: Number.isFinite(s.resets_at) ? new Date(s.resets_at + GRACE_MS).toISOString() : null,
             resume: s.resume || null,
           })),
+        recent: recentView(sessions),
       };
       onChange(view);
       return view;
@@ -913,6 +1007,11 @@ function start(opts) {
         worker.stop();
         worker = null;
       }
+      try {
+        if (opts && opts.sessionLog) opts.sessionLog.flush();
+      } catch (err) {
+        console.error("recent sessions write failed", err.message);
+      }
     },
   };
 }
@@ -920,5 +1019,5 @@ function start(opts) {
 module.exports = {
   start, createWatcher, claudeState, codexState, resumeStatus, matchCodex, isCodexTui, stillLimited,
   otherCli, isOtherTui, resetOnScreen, grokState, OTHER_CLIS, OTHER_LIMIT_ON_SCREEN, OTHER_LINES,
-  filetimeMs, clockAfter, readTail, GRACE_MS, MAX_ATTEMPTS, RETRY_MS, RESUME_TEXT, LIMIT_ON_SCREEN,
+  filetimeMs, clockAfter, readTail, GRACE_MS, MAX_ATTEMPTS, RETRY_MS, RESUME_TEXT, LIMIT_ON_SCREEN, SEED_MS,
 };

@@ -8,7 +8,7 @@ function applyDisplay(prefs) {
   display = prefs.display || { order: [], hidden: [] };
   root.classList.toggle("light", display.theme === "light" || (display.theme === "system" && !prefs.dark));
   root.classList.toggle("compact", !!display.compact);
-  root.style.zoom = `${(display.scale || 100) / 100}`;
+  scheduleFit();
 }
 document.getElementById("settings").addEventListener("click", (e) => {
   e.stopPropagation();
@@ -47,18 +47,138 @@ function applyFlyoutState(state) {
 window.usage.onFlyoutState(applyFlyoutState);
 window.usage.getFlyoutState().then(applyFlyoutState);
 
-function fitFlyout() {
-  const scale = (display.scale || 100) / 100;
-  const available = window.innerWidth / scale;
-  root.style.width = `${available}px`;
-  root.style.minWidth = "0";
-  root.style.maxWidth = `${available}px`;
-  root.style.height = `${window.innerHeight / scale}px`;
-  root.style.maxHeight = "none";
-  root.classList.toggle("narrow", available < 580);
-  window.usage.resizeFlyout(window.innerHeight, Math.ceil(620 * scale));
+// ---- fit to the screen's height ------------------------------------------------------
+// Main sizes the window to the work area's height and to the width asked for here. The panel is
+// laid out 620 CSS px wide and zoomed, so its natural height does not depend on the zoom.
+
+const PANEL_WIDTH = 620;
+const DENSE = ["fit-dense-1", "fit-dense-2", "fit-dense-3"];
+let fitFrame = 0;
+let fitting = false;
+let lastWidth = 0;
+let pendingWidth = 0; // a width asked of main that the window has not taken yet
+let pendingTimer = 0;
+
+function scheduleFit() {
+  if (fitFrame) return;
+  fitFrame = requestAnimationFrame(() => {
+    fitFrame = 0;
+    fit();
+  });
 }
-window.addEventListener("resize", fitFlyout);
+
+// Layout px of the panel that do not fit its height.
+function overflow() {
+  return root.scrollHeight - root.clientHeight;
+}
+
+function sizeRoot(zoom, width, height) {
+  root.style.zoom = String(zoom);
+  root.style.width = root.style.maxWidth = `${width}px`;
+  root.style.height = height ? `${height}px` : "auto";
+}
+
+// Free space above the footer beyond the usual gap, in the panel's CSS px. Rects are viewport px,
+// so they are divided by the rendered scale.
+function slack() {
+  const last = [...root.children].filter((el) => el !== updateBar && el.getClientRects().length).at(-1);
+  if (!last) return 0;
+  const box = root.getBoundingClientRect();
+  const scale = box.height / root.offsetHeight || 1;
+  const style = getComputedStyle(root);
+  const end = updateBar.hidden ? box.bottom - parseFloat(style.paddingBottom) * scale
+    : updateBar.getBoundingClientRect().top - parseFloat(style.rowGap) * scale;
+  return (end - last.getBoundingClientRect().bottom) / scale;
+}
+
+// Spare height shows two more recent sessions, then a taller battery chart. The second density step
+// hides both; when it left room, a shorter chart comes back rather than a gap above the footer.
+function useSlack() {
+  if (root.classList.contains(DENSE[1])) {
+    const room = Math.floor(slack());
+    if (room < 50 || batteryCard.hidden || !batteryPoints?.length) return;
+    root.classList.add("fit-chart");
+    drawChart(Math.min(74, room - 6));
+    if (overflow() > 0) {
+      root.classList.remove("fit-chart");
+      drawChart(0);
+    }
+    return;
+  }
+  if (recentRowsEl.children.length > RECENT_ROWS && slack() >= 48) {
+    recentCount = RECENT_ROWS + 2;
+    showRecent();
+    if (overflow() > 0) {
+      recentCount = RECENT_ROWS;
+      showRecent();
+    }
+  }
+  const room = Math.floor(slack());
+  if (room < 1 || batteryCard.hidden || !batteryPoints?.length) return;
+  drawChart(Math.min(190, 74 + room));
+  root.classList.add("fit-grow");
+  if (overflow() > 0) {
+    drawChart(0);
+    root.classList.remove("fit-grow");
+  }
+}
+
+function fit() {
+  if (fitting) return;
+  fitting = true;
+  try {
+    // A text size chosen in Settings is kept; anything else fits the panel to the screen.
+    const user = [100, 115, 130].includes(display.scale) ? display.scale : "auto";
+    let zoom = user === "auto" ? 1 : user / 100;
+    // Measuring resets the scroll position; a scrolling panel gets it back.
+    const scrolled = root.scrollTop;
+    root.classList.remove(...DENSE, "fit-scroll", "fit-grow", "fit-chart");
+    recentCount = RECENT_ROWS;
+    showRecent(false);
+    if (chartHeight) drawChart(0);
+    root.style.minWidth = "0";
+    root.style.maxHeight = "none";
+    if (user === "auto") {
+      // Measured at the width the panel has once main applies the width asked for below.
+      root.classList.remove("narrow");
+      sizeRoot(1, PANEL_WIDTH, 0);
+      const natural = root.scrollHeight;
+      // A display too narrow for the width asked for gives less: past that zoom the panel would fold to one column.
+      const clamped = lastWidth && !pendingWidth && window.innerWidth < lastWidth
+        ? Math.max(0.85, Math.floor(window.innerWidth / PANEL_WIDTH * 20 + 1e-6) / 20) : Infinity;
+      zoom = natural > 0 ? Math.min(1.3, clamped, Math.max(0.85, Math.floor(window.innerHeight / natural * 20 + 1e-6) / 20)) : 1;
+    }
+    const width = window.innerWidth / zoom;
+    sizeRoot(zoom, width, window.innerHeight / zoom);
+    root.classList.toggle("narrow", width < 580);
+    for (const step of DENSE) {
+      if (overflow() <= 0) break;
+      root.classList.add(step);
+    }
+    if (overflow() > 0) root.classList.add("fit-scroll");
+    else if (!recentExpanded) useSlack();
+    showRecent();
+    // Showing every recent session never changes the zoom; the panel scrolls instead.
+    if (recentExpanded && overflow() > 0) root.classList.add("fit-scroll");
+    root.scrollTop = root.classList.contains("fit-scroll") ? scrolled : 0;
+    const request = Math.ceil(PANEL_WIDTH * zoom);
+    if (request !== lastWidth) {
+      lastWidth = request;
+      // Until the window has taken the new width (or had half a second to), its width says nothing.
+      pendingWidth = request;
+      clearTimeout(pendingTimer);
+      pendingTimer = setTimeout(() => { pendingWidth = 0; }, 500);
+      window.usage.resizeFlyout(window.innerHeight, request);
+    }
+  } finally {
+    fitting = false;
+  }
+}
+window.addEventListener("resize", () => {
+  pendingWidth = 0;
+  scheduleFit();
+});
+document.fonts.ready.then(scheduleFit);
 
 // Newest successful reading among the shown providers, for the header.
 let freshest = null;
@@ -235,7 +355,7 @@ function render(snapshot) {
       });
     }
   });
-  requestAnimationFrame(fitFlyout);
+  scheduleFit();
 }
 
 // "This computer" heads the network and battery cards while either is shown.
@@ -265,7 +385,7 @@ function renderNet(summary) {
     if (!wasHidden) {
       netCard.hidden = true;
       syncSystemCaption();
-      requestAnimationFrame(fitFlyout);
+      scheduleFit();
     }
     return;
   }
@@ -281,7 +401,7 @@ function renderNet(summary) {
   else if (!summary.top.length) top = "No app is using the network right now.";
   else top = `Now: ${summary.top.map((a) => `${a.name} ${NetFormat.formatRateShort(a.rx_rate + a.tx_rate)}`).join(" · ")}`;
   setNetText("netTop", top);
-  if (wasHidden) requestAnimationFrame(fitFlyout);
+  if (wasHidden) scheduleFit();
 }
 
 netCard.addEventListener("click", (e) => {
@@ -320,16 +440,112 @@ function sessionLine(s) {
   }
 }
 
+// ---- recently closed sessions ----
+
+const sessionEmpty = document.getElementById("sessionEmpty");
+const recentWrap = document.getElementById("recentWrap");
+const recentRowsEl = document.getElementById("recentRows");
+const recentMore = document.getElementById("recentMore");
+const RECENT_ROWS = 3;
+// Rows shown while collapsed: 3, or 5 when the fit pass finds room for them.
+let recentCount = RECENT_ROWS;
+let recentExpanded = false;
+let recentHtml = "";
+// Keys resumed in the last 3 s: their buttons stay disabled across re-renders.
+const resuming = new Set();
+
+function folderName(cwd) {
+  return String(cwd || "").split(/[\\/]/).filter(Boolean).pop() || "";
+}
+
+function recentRow(r, i) {
+  const label = r.label || TOOL_NAMES[r.tool] || r.tool;
+  const closed = Date.parse(r.closed_at);
+  const when = Number.isFinite(closed) ? new Date(closed).toLocaleString() : "";
+  const title = `${label} · ${r.cwd || ""} · closed ${when}${r.godmode ? " · skips permissions" : ""}`;
+  const state = [folderName(r.cwd), formatAgo(closed)].filter(Boolean).join(" · ");
+  const action = r.can_resume
+    ? `<button class="text-btn resume" type="button" data-key="${escapeHtml(r.key)}" aria-label="${escapeHtml(`Resume ${r.name} in ${label}`)}"${resuming.has(r.key) ? " disabled" : ""}>Resume</button>`
+    : `<span class="session-note">${escapeHtml(r.reason || "can't resume")}</span>`;
+  // The pill says the resumed session gets its skip-permissions flag again.
+  return `<div class="session-row recent accent-${escapeHtml(r.tool)}${i >= 2 ? " recent-extra" : ""}" title="${escapeHtml(title)}">
+      <span class="session-who">${mark(r.tool)}</span>
+      <span class="session-name">${escapeHtml(r.name)}</span>
+      <span class="session-state">${r.godmode ? `<span class="pill muted">godmode</span>` : ""}${escapeHtml(state)}</span>
+      ${action}
+    </div>`;
+}
+
+function resumeButton(key) {
+  return [...recentRowsEl.querySelectorAll("button.resume")].find((b) => b.dataset.key === key);
+}
+
+function renderRecent(recent) {
+  recentWrap.hidden = !recent.length;
+  const html = recent.map(recentRow).join("");
+  if (html === recentHtml) return;
+  // A periodic update keeps keyboard focus on the Resume button it was on.
+  const focused = recentRowsEl.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+  recentHtml = html;
+  recentRowsEl.innerHTML = html;
+  showRecent();
+  if (focused) resumeButton(focused)?.focus({ preventScroll: true });
+}
+
+function showRecent(expand = recentExpanded) {
+  const rows = [...recentRowsEl.children];
+  const limit = expand ? rows.length : recentCount;
+  rows.forEach((row, i) => { row.hidden = i >= limit; });
+  recentWrap.classList.toggle("expanded", expand);
+  const visible = root.classList.contains("fit-dense-2") ? Math.min(limit, 2) : limit;
+  recentMore.hidden = !expand && rows.length <= visible;
+  recentMore.textContent = expand ? "Show fewer" : `Show all (${rows.length})`;
+  recentMore.setAttribute("aria-expanded", String(expand));
+}
+
+async function resumeRecent(button) {
+  const key = button.dataset.key;
+  if (resuming.has(key)) return;
+  resuming.add(key);
+  button.disabled = true;
+  setTimeout(() => {
+    resuming.delete(key);
+    const again = resumeButton(key);
+    if (again) again.disabled = false;
+  }, 3000);
+  let reply;
+  try {
+    reply = await window.usage.resumeSession(key);
+  } catch {
+    reply = { error: "Couldn't open a terminal." };
+  }
+  showNotice(reply?.message || reply?.error || "");
+}
+
+recentRowsEl.addEventListener("click", (e) => {
+  const button = e.target.closest("button.resume");
+  if (!button) return;
+  e.stopPropagation();
+  resumeRecent(button);
+});
+recentMore.addEventListener("click", (e) => {
+  e.stopPropagation();
+  recentExpanded = !recentExpanded;
+  showRecent();
+  scheduleFit();
+});
+
 function renderSessions(view) {
   const list = (view && view.sessions) || [];
+  const recent = view && Array.isArray(view.recent) ? view.recent : [];
   const wasHidden = sessionCard.hidden;
-  sessionCard.hidden = !list.length;
-  if (!list.length) {
-    if (!wasHidden) requestAnimationFrame(fitFlyout);
+  sessionCard.hidden = !list.length && !recent.length;
+  if (sessionCard.hidden) {
+    if (!wasHidden) scheduleFit();
     return;
   }
   const stopped = list.filter((s) => s.state === "limited").length;
-  document.getElementById("sessionCount").textContent = stopped ? `${list.length} · ${stopped} at limit` : String(list.length);
+  document.getElementById("sessionCount").textContent = !list.length ? "" : stopped ? `${list.length} · ${stopped} at limit` : String(list.length);
   document.getElementById("autoResumeRow").hidden = !view.can_resume;
   autoResume.checked = !!view.auto_resume;
   document.getElementById("autoResumeRow").title = 'Type "continue" into the terminal where a usage limit stopped a session, once the limit resets. Only while that terminal is open, still shows the limit message, and the session is idle.';
@@ -343,7 +559,9 @@ function renderSessions(view) {
       ${at ? `<span class="eta" data-reset="${escapeHtml(at)}">${formatEta(at)}</span>` : ""}
     </div>`;
   }).join("");
-  requestAnimationFrame(fitFlyout);
+  sessionEmpty.hidden = list.length > 0;
+  renderRecent(recent);
+  scheduleFit();
 }
 
 autoResume.addEventListener("change", (e) => {
@@ -383,7 +601,7 @@ function renderUpdate(u) {
   if (!u || !u.current) {
     if (!updateBar.hidden) {
       updateBar.hidden = true;
-      requestAnimationFrame(fitFlyout);
+      scheduleFit();
     }
     return;
   }
@@ -397,7 +615,7 @@ function renderUpdate(u) {
   updateStatus.title = `${u.message || text}.${checked}`.replace(/\.\./g, ".");
   updateBtn.hidden = !action;
   if (action && updateBtn.textContent !== action) updateBtn.textContent = action;
-  if (wasHidden) requestAnimationFrame(fitFlyout);
+  if (wasHidden) scheduleFit();
 }
 
 updateBtn.addEventListener("click", (e) => {
@@ -431,7 +649,7 @@ function renderPairing(phone) {
     if (img) img.remove();
     if (!pairCard.hidden) {
       pairCard.hidden = true;
-      requestAnimationFrame(fitFlyout);
+      scheduleFit();
     }
     return;
   }
@@ -469,7 +687,7 @@ function renderPairing(phone) {
   tick();
   pairTimer = setInterval(tick, 5000);
   if (wasHidden) {
-    requestAnimationFrame(fitFlyout);
+    scheduleFit();
     pairCard.scrollIntoView({ block: "nearest" });
   }
 }
@@ -522,18 +740,31 @@ setInterval(() => {
   renderUpdated();
 }, 1000);
 
+const batteryCard = document.getElementById("batteryCard");
+let batteryPoints = null;
+// Height the fit pass gave the chart, in CSS px; 0 is its natural height.
+let chartHeight = 0;
+
+function drawChart(height) {
+  chartHeight = height;
+  const el = document.getElementById("batterySpark");
+  if (height) el.style.setProperty("--chart-h", `${height}px`);
+  else el.style.removeProperty("--chart-h");
+  drawBatteryChart(el, batteryPoints, null, true, height ? { height } : {});
+}
+
 function renderBattery(view = {}) {
   const r = view.latest;
-  const card = document.getElementById("batteryCard");
-  card.hidden = r?.present === false;
+  batteryCard.hidden = r?.present === false;
   syncSystemCaption();
   document.getElementById("batteryLevel").textContent = `Battery${r?.percent != null ? ` · ${Math.round(r.percent)}%` : ""}`;
   document.getElementById("batteryStatus").textContent = BatteryModel.label(r);
   document.getElementById("batteryUpdated").textContent = r ? `Last reading ${new Date(r.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Waiting for this computer's battery";
-  card.classList.toggle("low", r?.state === "discharging" && r.percent <= 20);
-  card.classList.toggle("critical", r?.state === "discharging" && r.percent <= 10);
-  drawBatteryChart(document.getElementById("batterySpark"), view.points, null, true);
-  requestAnimationFrame(fitFlyout);
+  batteryCard.classList.toggle("low", r?.state === "discharging" && r.percent <= 20);
+  batteryCard.classList.toggle("critical", r?.state === "discharging" && r.percent <= 10);
+  batteryPoints = view.points;
+  drawChart(chartHeight);
+  scheduleFit();
 }
 window.usage.onBattery(renderBattery);
 window.usage.getBattery().then(renderBattery, () => renderBattery());

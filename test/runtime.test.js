@@ -80,6 +80,40 @@ test("config rejects malformed booleans, coordinates and intervals without shari
   assert.equal(cfg.load().adapters.claude.refresh_tokens, true);
 });
 
+test("the panel text size can be automatic, which is also what an unknown value means", () => {
+  const { displayPrefs } = require("../src/insights");
+  assert.equal(displayPrefs().scale, "auto");
+  assert.equal(displayPrefs({ scale: "auto" }).scale, "auto");
+  for (const size of [100, 115, 130, "115"]) assert.equal(displayPrefs({ scale: size }).scale, Number(size));
+  for (const size of [0, 99, 1000, "big", null, {}]) assert.equal(displayPrefs({ scale: size }).scale, "auto");
+  assert.equal(load("src/config.js").DEFAULTS.display.scale, "auto");
+});
+
+test("config version 8 moves the old default text size to automatic and keeps a chosen one", () => {
+  const ensure = (raw) => {
+    let written = null;
+    const config = load("src/config.js", {
+      fs: { readFileSync: () => { if (raw === null) throw new Error("ENOENT"); return JSON.stringify(raw); }, mkdirSync() {}, chmodSync() {}, writeFileSync: (_f, text) => { written = JSON.parse(text); }, renameSync() {} },
+    });
+    return { cfg: config.ensure(), written };
+  };
+  for (const [before, after] of [[100, "auto"], [115, 115], [130, 130]]) {
+    const { cfg, written } = ensure({ config_version: 7, poll_interval_secs: 5, display: { theme: "dark", scale: before } });
+    assert.equal(cfg.display.scale, after);
+    assert.equal(cfg.display.theme, "dark", "the other display choices are untouched");
+    assert.equal(cfg.config_version, 8);
+    assert.equal(written.display.scale, after, "the migration is saved");
+  }
+  assert.equal(ensure({ config_version: 7, poll_interval_secs: 5 }).cfg.display.scale, "auto", "no saved display block");
+  const current = ensure({ config_version: 8, poll_interval_secs: 5, display: { scale: 100 } });
+  assert.equal(current.cfg.display.scale, 100, "a 100 chosen after the migration stays");
+  assert.equal(current.written.display.scale, 100);
+  const fresh = ensure(null);
+  assert.equal(fresh.cfg.display.scale, "auto");
+  assert.equal(fresh.cfg.recent_sessions, true);
+  assert.equal(fresh.cfg.config_version, 8);
+});
+
 test("malformed snapshot and alert caches safely recover", () => {
   let raw = { providers: "bad" };
   const cache = load("src/cache.js", { fs: { readFileSync: () => JSON.stringify(raw) } });

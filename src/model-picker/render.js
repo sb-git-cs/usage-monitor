@@ -1,7 +1,8 @@
 const { stripVTControlCharacters } = require("node:util");
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const HINT = "↑↓ move · Tab next tool · type to filter · Enter select · Esc close";
+const HINT = "↑↓ move · ←→ effort · Tab next group · type to filter · Enter select · Esc close";
+const EFFORT_W = 11;
 // 256-color tool colors and their basic-terminal stand-ins.
 const BASIC = { 173: 33, 114: 32, 252: 37, 75: 34, 141: 35 };
 const ACCENT = 222;
@@ -43,11 +44,13 @@ function filterRows(rows, filter = "") {
   return rows.map((_, i) => i).filter((i) => rows[i].search.toLowerCase().includes(f));
 }
 
-// Moves to the first row of the next (dir 1) or previous (dir -1) tool group, wrapping around.
+const groupOf = (r) => r.group || r.toolId;
+
+// Moves to the first row of the next (dir 1) or previous (dir -1) group, wrapping around.
 function jumpGroup(rows, list, pos, dir) {
   const starts = [];
   list.forEach((ri, k) => {
-    if (k === 0 || rows[ri].toolId !== rows[list[k - 1]].toolId) starts.push(k);
+    if (k === 0 || groupOf(rows[ri]) !== groupOf(rows[list[k - 1]])) starts.push(k);
   });
   if (!starts.length) return 0;
   let g = 0;
@@ -58,34 +61,50 @@ function jumpGroup(rows, list, pos, dir) {
 }
 
 // Pure layout of the whole menu block. pos indexes the filtered list of selectable rows.
-function menuLines(rows, { filter = "", pos = 0, width = 80, height = 20, current = null, color, basic } = {}) {
+// effortOf(rowIndex) is the effort chosen on that row, null for the tool's own setting.
+function menuLines(rows, { filter = "", pos = 0, width = 80, height = 20, current = null, effortOf = () => null, color, basic } = {}) {
   const st = styler({ color, basic });
   const list = filterRows(rows, filter);
   pos = Math.max(0, Math.min(pos, list.length - 1));
   const counts = {};
-  for (const r of rows) if (r.kind === "model" && r.model) counts[r.toolId] = (counts[r.toolId] || 0) + 1;
+  for (const r of rows) if (r.kind === "model" && r.model && r.group !== "recent") counts[r.toolId] = (counts[r.toolId] || 0) + 1;
   const labelW = Math.min(36, Math.max(7, ...list.map((i) => [...rows[i].label].length)));
+  const effortW = list.some((i) => rows[i].efforts) ? EFFORT_W : 0;
+  const tailOf = (r) => [r.id, r.description || r.note].filter(Boolean).join(" · ");
+  // The effort column follows the longest description instead of the window's right edge.
+  const room = Math.min(width - 6 - labelW - 2 - (effortW ? effortW + 2 : 0), Math.max(0, ...list.map((i) => [...tailOf(rows[i])].length)));
 
   const items = [];
   let hlItem = 0;
   let prev = null;
   list.forEach((ri, k) => {
     const r = rows[ri];
-    if (r.toolId !== prev) {
-      prev = r.toolId;
+    if (groupOf(r) !== prev) {
+      prev = groupOf(r);
       const n = counts[r.toolId] || 0;
-      items.push({ head: true, text: st.bold(st.fg(r.color, r.toolLabel)) + st.dim(`  ${n} model${n === 1 ? "" : "s"}`) });
+      items.push({
+        head: true,
+        text: r.group === "recent" ? st.bold("Recent") : st.bold(st.fg(r.color, r.toolLabel)) + st.dim(`  ${n} model${n === 1 ? "" : "s"}`),
+      });
     }
     const hl = k === pos;
     if (hl) hlItem = items.length;
     const isCur = !!current && r.kind === "model" && r.toolId === current.toolId && r.model === (current.model || null);
-    const tail = r.id || r.note || "";
-    const room = width - 6 - labelW - 2;
-    const showTail = tail && room >= 4;
+    const tail = tailOf(r);
+    const showTail = !!tail && room >= 4;
+    let effort = "";
+    if (effortW && r.efforts) {
+      const level = effortOf(ri);
+      if (hl) effort = st.fg(r.color, `‹ ${level || "default"} ›`);
+      else if (level) effort = st.dim(level);
+    }
     const label = clip(r.label, labelW);
-    const cell = showTail ? label + " ".repeat(Math.max(0, labelW - [...label].length)) : label;
+    const padded = showTail || effort ? label + " ".repeat(Math.max(0, labelW - [...label].length)) : label;
+    const cell = r.group === "recent" && !hl ? st.fg(r.color, padded) : hl ? st.bold(padded) : padded;
+    const tailText = showTail ? clip(tail, room) : "";
+    const middle = showTail || effort ? `  ${st.dim(tailText)}${effort ? " ".repeat(Math.max(0, room - visibleWidth(tailText))) : ""}` : "";
     items.push({
-      text: `  ${hl ? st.fg(r.color, "›") : " "} ${isCur ? st.fg(r.color, "●") : " "} ${hl ? st.bold(cell) : cell}${showTail ? "  " + st.dim(clip(tail, room)) : ""}`,
+      text: `  ${hl ? st.fg(r.color, "›") : " "} ${isCur ? st.fg(r.color, "●") : " "} ${cell}${middle}${effort ? `  ${effort}` : ""}`,
     });
   });
   if (!list.length) items.push({ text: st.dim("  (no match)") });

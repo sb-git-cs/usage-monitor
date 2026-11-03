@@ -181,6 +181,7 @@ function render(next) {
   setValue($("notifyLimit"), s.notify_on_limit_reached);
   setValue($("forecast"), s.forecast_alerts);
   setValue($("autoResume"), s.auto_resume);
+  setValue($("recentSessions"), s.recent_sessions);
   $("autoResume").disabled = next.platform !== "win32";
   if (next.platform !== "win32") {
     $("autoResumeHint").textContent = "Claude Code sessions running in a terminal are listed on the flyout and the chips. Listing the other CLIs and resuming sessions automatically needs Windows; here a session stopped by a usage limit waits for you.";
@@ -359,6 +360,12 @@ async function forgetAccount(id, accountId) {
   else if (result.error) toast(result.error);
 }
 
+async function clearRecent() {
+  const r = await api.clearRecent();
+  if (r?.view) render(r.view);
+  toast(r?.message || r?.error || "Recent sessions cleared.");
+}
+
 async function switchAccount(id, accountId) {
   const result = await api.account(id, accountId);
   if (!result) return;
@@ -377,6 +384,8 @@ function bind() {
   $("notifyLimit").addEventListener("change", (e) => save({ notify_on_limit_reached: e.target.checked }));
   $("forecast").addEventListener("change", (e) => save({ forecast_alerts: e.target.checked }));
   $("autoResume").addEventListener("change", (e) => save({ auto_resume: e.target.checked }));
+  $("recentSessions").addEventListener("change", (e) => save({ recent_sessions: e.target.checked }));
+  $("clearRecent").addEventListener("click", clearRecent);
   $("quiet").addEventListener("change", (e) => save({ quiet_hours: { enabled: e.target.checked } }));
   $("quietStart").addEventListener("change", (e) => e.target.value && save({ quiet_hours: { start: e.target.value } }));
   $("quietEnd").addEventListener("change", (e) => e.target.value && save({ quiet_hours: { end: e.target.value } }));
@@ -396,7 +405,7 @@ function bind() {
   $("cancelPair").addEventListener("click", async () => render(await api.phone("cancel")));
   $("openNetwork").addEventListener("click", () => api.openNetwork());
   $("theme").addEventListener("change", (e) => save({ display: { theme: e.target.value } }));
-  $("scale").addEventListener("change", (e) => save({ display: { scale: Number(e.target.value) } }));
+  $("scale").addEventListener("change", (e) => save({ display: { scale: e.target.value === "auto" ? "auto" : Number(e.target.value) } }));
   $("compact").addEventListener("change", (e) => save({ display: { compact: e.target.checked } }));
   bindNav();
 }

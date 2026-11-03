@@ -238,6 +238,9 @@
 
     <div id="tab-sessions" class="tab-panel" role="tabpanel">
       <section class="section-card"><h2>Running coding sessions</h2><div id="activeSessions"></div></section>
+      <section class="section-card"><h2>Recent sessions</h2><p class="fine">Closed sessions you can reopen in a terminal in their folder.</p>
+        <div class="table-container"><table class="data-table"><thead><tr><th>Tool</th><th>Session</th><th>Folder</th><th>Last activity</th><th>Closed</th><th><span class="sr-only">Action</span></th></tr></thead><tbody id="recentSessionRows"></tbody></table></div>
+      </section>
       <section class="section-card"><h2>Recorded usage by session</h2><p class="fine">Local transcript identifiers are anonymized. Model reports combine usage across these sessions.</p>
         <div class="table-container"><table class="data-table"><thead><tr><th>Session</th><th>Models</th><th>First / last observation</th><th>Total tokens</th></tr></thead><tbody id="sessionUsageRows"></tbody></table></div>
       </section>

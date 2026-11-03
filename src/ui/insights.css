@@ -1171,6 +1171,8 @@ button:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 
 .model-report-controls { margin: 14px 0; flex-wrap: wrap; }
 .model-report-controls select { max-width: min(100%, 360px); }
 #modelUsageRows td:first-child, #sessionUsageRows td { white-space: normal; overflow-wrap: anywhere; }
+#recentSessionRows td { white-space: normal; overflow-wrap: anywhere; }
+#recentSessionRows .btn { padding: 3px 10px; }
 .daily-token-bars { height: 140px; overflow-x: auto; padding-bottom: 10px; }
 .daily-col { min-width: 42px; }
 .daily-bar-wrap { display: flex; align-items: flex-end; flex: 1; min-height: 0; width: 100%; }

@@ -71,11 +71,13 @@ function plan(id, { platform = process.platform, cwd = os.homedir(), terminal = 
   const cli = commandOf(id, command);
   if (!cli) return null;
   const dir = cwd || os.homedir();
+  // A trailing backslash (a drive root) would escape the closing quote on Windows; a dot is the same folder.
+  const winDir = /[\\/]$/.test(dir) ? `${dir}.` : dir;
   const title = cli.title;
   if (platform === "win32" && terminal === "wt") {
     return {
       command: "wt.exe",
-      args: ["-w", "0", "new-tab", "--title", cmdQuote(title), "-d", cmdQuote(dir), "--", "cmd.exe", "/d", "/k", cli.file, ...cli.args],
+      args: ["-w", "0", "new-tab", "--title", cmdQuote(title), "-d", cmdQuote(winDir), "--", "cmd.exe", "/d", "/k", cli.file, ...cli.args],
       options: { ...hidden(dir), windowsVerbatimArguments: true },
     };
   }
@@ -83,7 +85,7 @@ function plan(id, { platform = process.platform, cwd = os.homedir(), terminal = 
     // The first quoted string is the window title. /k keeps the console open.
     return {
       command: "cmd.exe",
-      args: ["/d", "/c", "start", cmdQuote(title), "/D", cmdQuote(dir), "cmd.exe", "/d", "/k", cli.file, ...cli.args],
+      args: ["/d", "/c", "start", cmdQuote(title), "/D", cmdQuote(winDir), "cmd.exe", "/d", "/k", cli.file, ...cli.args],
       options: { ...hidden(dir), windowsVerbatimArguments: true },
     };
   }
