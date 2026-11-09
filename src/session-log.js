@@ -99,11 +99,16 @@ function launchFlags(cli, cmd) {
   const spellings = Object.hasOwn(GODMODE_FLAGS, cli) ? GODMODE_FLAGS[cli] : [];
   const is = (i, part) => !!args[i] && !args[i].quoted && args[i].text === part;
   const godmode = spellings.some((flag) => args.some((_, i) => flag.every((part, j) => is(i + j, part))));
-  const opens = (arg) => (cli === "codex" ? arg === "resume"
-    : arg === "--resume" || arg === "-r" || (cli === "agy" && arg === "--conversation"));
+  // The switch each CLI takes a session id after. Amp: `threads continue <id>` (or `t c <id>`).
+  const opens = (arg, prev) => (cli === "codex" ? arg === "resume"
+    : cli === "amp" ? (arg === "continue" || arg === "c") && (prev === "threads" || prev === "t")
+    : arg === "--resume" || arg === "-r" || (cli === "agy" && arg === "--conversation")
+      || (cli === "kiro" && arg === "--resume-id") || (cli === "opencode" && (arg === "--session" || arg === "-s"))
+      || (cli === "kimi" && (arg === "--session" || arg === "-S")));
   let resumed = null;
   for (let i = 0; i < args.length - 1 && resumed == null; i++) {
-    if (!args[i].quoted && opens(args[i].text) && ID_RE.test(args[i + 1].text)) resumed = args[i + 1].text;
+    const prev = i > 0 && !args[i - 1].quoted ? args[i - 1].text : null;
+    if (!args[i].quoted && opens(args[i].text, prev) && ID_RE.test(args[i + 1].text)) resumed = args[i + 1].text;
   }
   return { godmode, resumed };
 }

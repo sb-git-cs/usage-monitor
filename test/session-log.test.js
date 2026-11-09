@@ -271,4 +271,16 @@ test("a command line tells whether it skipped permissions and which session it r
   assert.equal(launchFlags("claude", "claude --continue").resumed, null);
   assert.equal(launchFlags("claude", "claude").resumed, null);
   assert.deepEqual(launchFlags("unknown", "x --yolo --resume a"), { godmode: false, resumed: "a" });
+  // The newer tools' own switches.
+  assert.equal(launchFlags("windsurf", "devin -r brisk-otter").resumed, "brisk-otter");
+  assert.equal(launchFlags("kiro", "kiro-cli chat --resume-id sess_abc123").resumed, "sess_abc123");
+  assert.equal(launchFlags("kiro", "kiro-cli chat --resume").resumed, null);
+  assert.equal(launchFlags("amp", "amp threads continue T-019bfb1e-0a4f-70bb-9034-8f07cc01c4b5").resumed, "T-019bfb1e-0a4f-70bb-9034-8f07cc01c4b5");
+  assert.equal(launchFlags("amp", "amp t c T-1").resumed, "T-1");
+  assert.equal(launchFlags("amp", "amp continue T-1").resumed, null, "continue is a thread subcommand, not a flag");
+  assert.equal(launchFlags("opencode", "opencode --session ses_01HZX").resumed, "ses_01HZX");
+  assert.equal(launchFlags("opencode", "opencode -s ses_01HZX").resumed, "ses_01HZX");
+  assert.equal(launchFlags("kimi", "kimi --session session_abc").resumed, "session_abc");
+  assert.equal(launchFlags("kimi", "kimi -S session_abc").resumed, "session_abc");
+  assert.deepEqual(launchFlags("qwen", "qwen --resume 4f1c2a9e --yolo"), { godmode: true, resumed: "4f1c2a9e" });
 });
