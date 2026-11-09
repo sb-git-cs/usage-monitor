@@ -26,12 +26,12 @@ Sign in once to each coding CLI you use (install them with their own instruction
   grok            https://grok.com/
   cursor-agent login   https://cursor.com/
   gh auth login   https://github.com/features/copilot
-  devin auth login   https://app.devin.ai/ (Windsurf / Devin; readings in progress)
-  kiro-cli login  https://kiro.dev/ (readings in progress)
-  amp login       https://ampcode.com/ (readings in progress)
-  opencode auth login   https://opencode.ai/ (readings in progress)
-  qwen, then /auth   https://github.com/QwenLM/qwen-code (sign-in and sessions only)
-  kimi login      https://www.kimi.com/code (readings in progress)
+  Devin Desktop sign-in, or devin auth login   https://app.devin.ai/ (Windsurf / Devin; the CLI login alone shows sign-in state only)
+  kiro-cli login  https://kiro.dev/ (or sign in in the Kiro IDE)
+  amp login       https://ampcode.com/
+  opencode auth login   https://opencode.ai/
+  qwen, then /auth   https://github.com/QwenLM/qwen-code (sign-in and sessions only; Qwen reports no quota)
+  kimi login      https://www.kimi.com/code
 
 Network usage needs no setup on macOS or Linux.
 `);
