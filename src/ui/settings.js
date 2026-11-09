@@ -181,6 +181,7 @@ function render(next) {
   setValue($("forecast"), s.forecast_alerts);
   setValue($("autoResume"), s.auto_resume);
   setValue($("recentSessions"), s.recent_sessions);
+  setValue($("showSessionModel"), s.show_session_model);
   $("autoResume").disabled = next.platform !== "win32";
   if (next.platform !== "win32") {
     $("autoResumeHint").textContent = "Claude Code sessions running in a terminal are listed on the flyout and the chips. Listing the other CLIs and resuming sessions automatically needs Windows; here a session stopped by a usage limit waits for you.";
@@ -411,6 +412,7 @@ function bind() {
   $("forecast").addEventListener("change", (e) => save({ forecast_alerts: e.target.checked }));
   $("autoResume").addEventListener("change", (e) => save({ auto_resume: e.target.checked }));
   $("recentSessions").addEventListener("change", (e) => save({ recent_sessions: e.target.checked }));
+  $("showSessionModel").addEventListener("change", (e) => save({ show_session_model: e.target.checked }));
   $("clearRecent").addEventListener("click", clearRecent);
   $("quiet").addEventListener("change", (e) => save({ quiet_hours: { enabled: e.target.checked } }));
   $("quietStart").addEventListener("change", (e) => e.target.value && save({ quiet_hours: { start: e.target.value } }));

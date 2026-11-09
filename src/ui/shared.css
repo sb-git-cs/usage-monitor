@@ -153,6 +153,9 @@ html.fit .chips { pointer-events: auto; }
 .session-glyph { color: var(--codex); font-weight: 800; }
 .session-chip.limited .session-glyph { color: var(--amber); }
 .session-val { text-align: right; }
+/* A fixed width, like the net values: a tag that changed the strip's width would resize and re-dock it. */
+.session-model { grid-column: 3; grid-row: 1 / span 2; width: 7ch; min-width: 7ch; overflow: hidden; text-overflow: ellipsis; text-align: left; color: #9ca3af; font-weight: 650; font-size: 9px; }
+.session-chip.limited .session-model { color: inherit; }
 /* Docked on a horizontal taskbar: the strip is exactly as tall as the taskbar. */
 .chips.docked.fill {
   height: var(--fill-h);
@@ -221,6 +224,7 @@ button:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 
 .chips.light .pct-icon.gray { color: #506078; }
 .chips.light .net-chip, .chips.light .session-chip { background: #fff; color: #17243a; }
 .chips.light .session-chip.limited { color: #92400e; }
+.chips.light .session-model { color: #506078; }
 .chips.light .system-chip.busy .system-value { color: #92400e; }
 .chips.light { --grok: #57534e; --cursor: #785c0e; --copilot: #6d28d9; }
 

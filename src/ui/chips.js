@@ -106,7 +106,7 @@ function showLoading() {
 }
 
 // Settings: which chips to show and the "warn at" percentage.
-let prefs = { alert_threshold: 80, chips_show: {}, display: {} };
+let prefs = { alert_threshold: 80, chips_show: {}, display: {}, show_session_model: true };
 
 // The strip follows the display order and hides plans hidden there, as the flyout does.
 function shownProviders(snapshot) {
@@ -121,7 +121,7 @@ function shownProviders(snapshot) {
 
 function applyPrefs(next) {
   if (!next) return;
-  prefs = { alert_threshold: next.alert_threshold, chips_show: next.chips_show || {}, display: next.display || {} };
+  prefs = { alert_threshold: next.alert_threshold, chips_show: next.chips_show || {}, display: next.display || {}, show_session_model: next.show_session_model !== false };
   bar.classList.toggle("light", next.display?.theme === "light" || (next.display?.theme === "system" && !next.dark));
   renderBattery(lastBattery);
   setAlertThreshold(prefs.alert_threshold);
@@ -244,7 +244,7 @@ function sessionTitle(s) {
     : !Number.isFinite(reset) ? "limit reached"
     : resume ? resume()
     : reset > Date.now() ? `limit reached, resets in ${formatEta(s.resets_at)}` : "limit reset, type continue to resume";
-  return `${s.label || SESSION_TOOLS[s.tool] || s.tool} · ${s.name}: ${state}`;
+  return `${s.label || SESSION_TOOLS[s.tool] || s.tool} · ${s.name}${prefs.show_session_model && s.model ? ` · ${s.model}` : ""}: ${state}`;
 }
 
 // "1h05" / "42m": the strip has room for four characters.
@@ -269,12 +269,16 @@ function renderSessions(view) {
   const next = stopped.map((s) => Date.parse(s.resume === "scheduled" ? s.resume_at : s.resets_at)).filter((t) => t > Date.now()).sort((a, b) => a - b)[0];
   const working = list.filter((s) => s.state === "working").length;
   const lower = stopped.length ? `⏸ ${next ? shortEta(next) : stopped.length}` : `▶ ${working}`;
-  const sig = `${list.length}|${lower}|${list.map(sessionTitle).join("\n")}`;
+  // The tag is the model of the first working session with one, else of the first session with one.
+  const tagged = prefs.show_session_model ? list.find((s) => s.state === "working" && s.model) || list.find((s) => s.model) : null;
+  const tag = tagged ? shortModel(tagged.model) : "";
+  const sig = `${list.length}|${lower}|${tag}|${list.map(sessionTitle).join("\n")}`;
   if (sig === sessionSig) return;
   sessionSig = sig;
   sessionChip.hidden = false;
   sessionChip.classList.toggle("limited", stopped.length > 0);
   sessionChip.replaceChildren(netSpan("session-glyph", "›_"), netSpan("session-val", String(list.length)), netSpan("session-glyph", lower.slice(0, 1)), netSpan("session-val", lower.slice(2)));
+  if (tagged) sessionChip.append(netSpan("session-model", tag));
   sessionChip.title = `${list.length} coding session${list.length === 1 ? "" : "s"}\n${list.map(sessionTitle).join("\n")}`;
   requestAnimationFrame(fitBar);
 }

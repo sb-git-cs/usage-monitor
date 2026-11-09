@@ -992,7 +992,7 @@ function sendUpdateState(state) {
 // ---- settings window -----------------------------------------------------------------
 
 function prefs() {
-  return { alert_threshold: cfg.alert_threshold, chips_show: cfg.chips_show, providers_enabled: cfg.providers_enabled, display: cfg.display, dark: nativeTheme.shouldUseDarkColors };
+  return { alert_threshold: cfg.alert_threshold, chips_show: cfg.chips_show, providers_enabled: cfg.providers_enabled, display: cfg.display, show_session_model: cfg.show_session_model, dark: nativeTheme.shouldUseDarkColors };
 }
 
 // The display theme drives every window: "system" follows the OS, light and dark override it.
@@ -1009,7 +1009,8 @@ function broadcastPrefs() {
 
 function settingsView() {
   const keys = ["autostart", "poll_interval_secs", "chips_hidden", "chips_docked", "chips_show_network", "chips_show", "alert_threshold",
-    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel", "subscription_regime", "auto_resume", "recent_sessions", "providers_enabled"];
+    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel", "subscription_regime", "auto_resume", "recent_sessions", "providers_enabled",
+    "show_session_model"];
   return {
     platform: process.platform,
     version: app.getVersion(),
@@ -1309,6 +1310,7 @@ function applySettings(patch) {
   if (config.ALERT_THRESHOLDS.includes(Number(patch.alert_threshold))) cfg.alert_threshold = Number(patch.alert_threshold);
   if (bool(patch.notify_on_limit_reached) !== null) cfg.notify_on_limit_reached = patch.notify_on_limit_reached;
   if (bool(patch.forecast_alerts) !== null) cfg.forecast_alerts = patch.forecast_alerts;
+  if (bool(patch.show_session_model) !== null) cfg.show_session_model = patch.show_session_model;
   if (bool(patch.auto_resume) !== null) setAutoResume(patch.auto_resume);
   if (bool(patch.recent_sessions) !== null && patch.recent_sessions !== cfg.recent_sessions) {
     cfg.recent_sessions = patch.recent_sessions;

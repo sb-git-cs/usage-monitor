@@ -77,6 +77,18 @@ test("shown percentages reach 100 only at the limit, and an empty current readin
   assert.equal(context.statusText({ status: { state: "ok" }, windows: [{ kind: "weekly", used_pct: 5 }] }), null);
 });
 
+test("a model id becomes a short tag for the strip", () => {
+  const context = vm.createContext({});
+  vm.runInContext(fs.readFileSync(require.resolve("../src/models"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(require.resolve("../src/ui/format"), "utf8"), context);
+  for (const [id, tag] of [
+    ["claude-opus-5-5", "opus 5.5"], ["claude-sonnet-4-5-20250929", "sonnet 4.5"], ["claude-haiku-4-5", "haiku 4.5"], ["claude-fable-5", "fable 5"],
+    ["gpt-5.5-codex", "gpt-5.5"], ["gpt-5-codex", "gpt-5"], ["codex-mini-latest", "codex-mini"],
+    ["grok-code-fast-1", "grok-code"], ["grok-4-fast", "grok-4"], ["models/gemini-2.5-pro", "gemini-2"], ["gemini-3-pro", "gemini-3"],
+    ["some-very-long-vendor-name", "some"], ["averyverylongsinglewordid", "averyvery"], ["", ""], [null, ""], [42, ""],
+  ]) assert.equal(context.shortModel(id), tag, String(id));
+});
+
 test("daily usage is the fallback before weekly when no five-hour window exists", () => {
   const daily = { kind: "daily", used_pct: 20 };
   const weekly = { kind: "weekly", used_pct: 80 };
