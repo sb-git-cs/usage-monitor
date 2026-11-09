@@ -317,22 +317,24 @@ function forget(provider, accountId) {
   return dropped;
 }
 
-async function refresh(preferred) {
+// A tool that is switched off is not read; its saved sign-ins stay in the vault.
+async function refresh(preferred, enabled = () => true) {
+  const on = (id, read) => (enabled(id) ? read() : blank(id));
   const next = {
-    claude: readClaude(),
-    codex: readCodex(),
+    claude: on("claude", readClaude),
+    codex: on("codex", readCodex),
     gemini: blank("gemini"),
-    grok: readGrok(preferred && preferred.grok),
-    cursor: readCursor(),
+    grok: on("grok", () => readGrok(preferred && preferred.grok)),
+    cursor: on("cursor", readCursor),
     copilot: blank("copilot"),
   };
   try {
-    next.gemini = await readGemini();
+    if (enabled("gemini")) next.gemini = await readGemini();
   } catch {
     next.gemini = blank("gemini");
   }
   try {
-    next.copilot = await readCopilot();
+    if (enabled("copilot")) next.copilot = await readCopilot();
   } catch {
     next.copilot = blank("copilot");
   }

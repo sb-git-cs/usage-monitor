@@ -2,10 +2,12 @@ const fs = require("fs");
 const { configDir, configPath } = require("./paths");
 const { normalizeNet } = require("./net/settings");
 const { displayPrefs } = require("./insights");
+const { PROVIDERS } = require("./models");
 
 const ALLOWED_INTERVALS = [5, 15, 30, 60];
 const ALERT_THRESHOLDS = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
 const CHIP_KEYS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "sessions", "battery", "cpu", "mem", "gpu", "disk", "space"];
+const PROVIDER_IDS = PROVIDERS.map((p) => p.id);
 const UPDATE_CHANNELS = ["stable", "beta"];
 const PHONE_PORT = 47329;
 
@@ -39,6 +41,7 @@ const DEFAULTS = {
   recent_sessions: true,
   quiet_hours: { enabled: false, start: "22:00", end: "07:00" },
   chips_show: Object.fromEntries(CHIP_KEYS.map((k) => [k, true])),
+  providers_enabled: Object.fromEntries(PROVIDER_IDS.map((id) => [id, true])),
   update_channel: "stable",
   phone: { enabled: false, port: PHONE_PORT, devices: [] },
   accounts: {},
@@ -77,6 +80,7 @@ function normalize(parsed) {
   cfg.alert_threshold = ALERT_THRESHOLDS.includes(Number(cfg.alert_threshold)) ? Number(cfg.alert_threshold) : DEFAULTS.alert_threshold;
   cfg.quiet_hours = normalizeQuietHours(raw.quiet_hours);
   cfg.chips_show = Object.fromEntries(CHIP_KEYS.map((k) => [k, raw.chips_show?.[k] !== false]));
+  cfg.providers_enabled = Object.fromEntries(PROVIDER_IDS.map((id) => [id, raw.providers_enabled?.[id] !== false]));
   cfg.update_channel = UPDATE_CHANNELS.includes(cfg.update_channel) ? cfg.update_channel : "stable";
   cfg.phone = normalizePhone(raw.phone);
   cfg.accounts = normalizeAccounts(raw.accounts);
@@ -225,6 +229,7 @@ module.exports = {
   ALLOWED_INTERVALS,
   ALERT_THRESHOLDS,
   CHIP_KEYS,
+  PROVIDER_IDS,
   UPDATE_CHANNELS,
   load,
   save,

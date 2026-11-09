@@ -15,6 +15,7 @@
         <span class="version" id="version"></span>
       </header>
       <a class="nav-link" href="#sec-general">General</a>
+      <a class="nav-link" href="#sec-providers">Providers</a>
       <a class="nav-link" href="#sec-appearance">Appearance</a>
       <a class="nav-link" href="#sec-chips">Taskbar chips</a>
       <a class="nav-link" href="#sec-alerts">Alerts</a>
@@ -36,6 +37,12 @@
           <span class="setting-text"><label class="setting-name" for="interval">Refresh plan meters every</label><span class="setting-desc">How often each signed-in tool's usage is read.</span></span>
           <select id="interval"></select>
         </div>
+      </section>
+
+      <section class="panel" id="sec-providers" aria-labelledby="h-providers">
+        <h2 id="h-providers">Providers</h2>
+        <p class="note">Switch off a tool you don't use. Off: Usage Monitor stops reading its sign-in and plan, shows nothing for it on the panel, the chips, Insights or your phone, and sends no alerts for it. Saved sign-ins and past history are kept.</p>
+        <div id="providerRows"></div>
       </section>
 
       <section class="panel" id="sec-appearance" aria-labelledby="h-appearance">
@@ -62,7 +69,7 @@
           <input type="checkbox" class="toggle" id="compact" />
         </label>
         <div class="setting stacked">
-          <span class="setting-text"><span class="setting-name">Plans to show</span><span class="setting-desc">Order and visibility in the panel and on the chips. A hidden plan is still read, so its history and alerts continue.</span></span>
+          <span class="setting-text"><span class="setting-name">Plans to show</span><span class="setting-desc">Order and visibility in the panel and on the chips. A hidden plan is still read, so its history and alerts continue; to stop reading one, switch it off under Providers.</span></span>
           <ul class="order-list" id="displayProviders"></ul>
         </div>
       </section>
@@ -194,6 +201,7 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" hidden></div>
+  <script src="../models.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

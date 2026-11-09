@@ -885,6 +885,8 @@ function createWatcher({
 
   const iso = (at) => (Number.isFinite(at) ? new Date(at).toISOString() : null);
 
+  const toolOn = (tool) => (getConfig() || {}).providers_enabled?.[tool] !== false;
+
   function recentView(sessions) {
     if (!sessionLog) return [];
     const running = new Set(sessions.flatMap((s) => [s.key, s.id ? `${s.tool}:${s.id}` : null]).filter(Boolean));
@@ -894,7 +896,7 @@ function createWatcher({
     } catch (err) {
       console.error("recent sessions list failed", err.message);
     }
-    return entries.filter((e) => !running.has(e.key)).slice(0, RECENT_MAX).map((e) => {
+    return entries.filter((e) => !running.has(e.key) && toolOn(e.tool)).slice(0, RECENT_MAX).map((e) => {
       const command = resumeCommand(e);
       const folder = !!e.cwd && folderExists(e.cwd);
       const ready = !!command && folder && onPath(command.file);
@@ -931,6 +933,8 @@ function createWatcher({
         return view;
       }
       if (sessionLog) logSessions(sessions);
+      // A tool that is switched off is not shown; the log above keeps recording it.
+      sessions = sessions.filter((s) => toolOn(s.tool));
       const live = new Set();
       for (const s of sessions) {
         if (s.state !== "limited") continue;

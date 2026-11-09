@@ -6,7 +6,7 @@ const config = require("./config");
 const poller = require("./poller");
 const { consolidate } = require("./subscription");
 const alerts = require("./alerts");
-const { applyLocalResets } = require("./models");
+const { applyLocalResets, PROVIDERS } = require("./models");
 const taskbarLayout = require("./taskbarLayout");
 const autostart = require("./autostart");
 const updater = require("./updater");
@@ -693,7 +693,9 @@ function broadcast(snap) {
 
 function broadcastSessions(view) {
   // The log keeps recording while the list is off, so switching it on shows the history again.
-  latestSessions = { ...view, recent: cfg.recent_sessions === false ? [] : (view.recent || []) };
+  // A tool that is switched off drops out at once; the next scan leaves it out too.
+  const shown = (rows) => (rows || []).filter((row) => providerOn(row.tool));
+  latestSessions = { ...view, sessions: shown(view.sessions), recent: cfg.recent_sessions === false ? [] : shown(view.recent) };
   for (const win of [flyout, chips]) {
     if (win && !win.isDestroyed()) win.webContents.send("usage://sessions", latestSessions);
   }
@@ -990,7 +992,7 @@ function sendUpdateState(state) {
 // ---- settings window -----------------------------------------------------------------
 
 function prefs() {
-  return { alert_threshold: cfg.alert_threshold, chips_show: cfg.chips_show, display: cfg.display, dark: nativeTheme.shouldUseDarkColors };
+  return { alert_threshold: cfg.alert_threshold, chips_show: cfg.chips_show, providers_enabled: cfg.providers_enabled, display: cfg.display, dark: nativeTheme.shouldUseDarkColors };
 }
 
 // The display theme drives every window: "system" follows the OS, light and dark override it.
@@ -1007,7 +1009,7 @@ function broadcastPrefs() {
 
 function settingsView() {
   const keys = ["autostart", "poll_interval_secs", "chips_hidden", "chips_docked", "chips_show_network", "chips_show", "alert_threshold",
-    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel", "subscription_regime", "auto_resume", "recent_sessions"];
+    "notify_on_limit_reached", "forecast_alerts", "quiet_hours", "auto_update", "update_channel", "subscription_regime", "auto_resume", "recent_sessions", "providers_enabled"];
   return {
     platform: process.platform,
     version: app.getVersion(),
@@ -1018,13 +1020,20 @@ function settingsView() {
     display: cfg.display,
     update: updater.getState(),
     phone: phone ? withQr(phone.status()) : null,
-    accounts: accounts.list(),
+    accounts: accounts.list().filter((row) => cfg.providers_enabled[row.id] !== false),
   };
+}
+
+// The shared X Subscription pool stays while Grok or Cursor is on.
+function providerOn(id) {
+  const on = cfg?.providers_enabled || {};
+  return id === "x_subscription" ? on.grok !== false || on.cursor !== false : on[id] !== false;
 }
 
 function present(snapshot) {
   if (!snapshot) return snapshot;
-  return { ...snapshot, providers: consolidate((snapshot.providers || []).map((provider) => accounts.decorate(provider)), snapshot.subscription_regime) };
+  const providers = consolidate((snapshot.providers || []).map((provider) => accounts.decorate(provider)), snapshot.subscription_regime);
+  return { ...snapshot, providers: providers.filter((provider) => providerOn(provider.id)) };
 }
 
 const ACCOUNT_TOOLS = Object.keys(accounts.TOOLS);
@@ -1168,7 +1177,7 @@ async function phoneTokens() {
 
 function refreshAccounts() {
   const preferred = cfg && cfg.accounts;
-  accounts.refresh(preferred).then(() => {
+  accounts.refresh(preferred, (id) => cfg.providers_enabled[id] !== false).then(() => {
     if (latest) {
       latest = present(latest);
       broadcast(latest);
@@ -1279,7 +1288,7 @@ function applySettings(patch) {
     const pending = cfg.subscription_regime === "combined" ? consolidate([], "combined") : ["grok", "cursor"].map((id) => ({
       id, display_name: id === "grok" ? "Grok Build" : "Cursor", status: { state: "unknown", hint: "Refreshing the selected subscription" }, windows: [], source: "none",
     }));
-    latest = { subscription_regime: cfg.subscription_regime, providers: [...other, ...pending] };
+    latest = { subscription_regime: cfg.subscription_regime, providers: [...other, ...pending].filter((p) => providerOn(p.id)) };
     if (poll) poll.refresh();
   }
   if (bool(patch.autostart) !== null) cfg.autostart = autostart.apply(patch.autostart);
@@ -1304,6 +1313,36 @@ function applySettings(patch) {
   if (bool(patch.recent_sessions) !== null && patch.recent_sessions !== cfg.recent_sessions) {
     cfg.recent_sessions = patch.recent_sessions;
     if (sessionWatch) broadcastSessions(sessionWatch.view());
+  }
+  if (patch.providers_enabled && typeof patch.providers_enabled === "object") {
+    const turnedOn = [];
+    let changed = false;
+    for (const id of config.PROVIDER_IDS) {
+      const next = bool(patch.providers_enabled[id]);
+      if (next === null || next === cfg.providers_enabled[id]) continue;
+      cfg.providers_enabled[id] = next;
+      changed = true;
+      if (next) turnedOn.push(id);
+    }
+    if (changed) {
+      // Off: the reading and the sessions go from every window at once. On: a placeholder until the poll answers.
+      const kept = (latest?.providers || []).filter((p) => providerOn(p.id));
+      const missing = turnedOn.flatMap((id) => {
+        if (kept.some((p) => p.id === id)) return [];
+        if (cfg.subscription_regime === "combined" && ["grok", "cursor"].includes(id)) return kept.some((p) => p.id === "x_subscription") ? [] : consolidate([], "combined");
+        return [{ id, display_name: PROVIDERS.find((p) => p.id === id).displayName, status: { state: "unknown", hint: "Reading…" }, windows: [], source: "none" }];
+      });
+      latest = present({ subscription_regime: cfg.subscription_regime, ...latest, providers: [...kept, ...missing] });
+      broadcast(latest);
+      if (turnedOn.length) {
+        refreshAccounts();
+        if (poll) poll.refresh();
+      }
+      if (sessionWatch) {
+        broadcastSessions(sessionWatch.view());
+        if (turnedOn.length) sessionWatch.refresh();
+      }
+    }
   }
   if (patch.quiet_hours && typeof patch.quiet_hours === "object") {
     cfg.quiet_hours = config.normalize({ quiet_hours: { ...cfg.quiet_hours, ...patch.quiet_hours } }).quiet_hours;

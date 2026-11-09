@@ -543,7 +543,8 @@ async function checkSettings() {
     settings: { autostart: true, poll_interval_secs: 5, chips_hidden: false, chips_docked: true, chips_show_network: true,
       chips_show: { claude: true, codex: true, gemini: true, grok: false, cpu: true, mem: true, gpu: true, disk: true, space: true },
       alert_threshold: 80, notify_on_limit_reached: true, forecast_alerts: true, quiet_hours: { enabled: true, start: "22:00", end: "07:00" },
-      auto_update: true, update_channel: "stable", recent_sessions: true },
+      auto_update: true, update_channel: "stable", recent_sessions: true,
+      providers_enabled: { claude: true, codex: true, gemini: true, grok: true, cursor: true, copilot: true } },
     display: { theme: "system", scale: 100, compact: false, hidden: ["copilot"], order: ["codex", "claude", "gemini", "grok", "cursor", "copilot"] },
     update: { kind: "installer", status: "up-to-date", current: "1.3.0", checked_at: Date.now() - 120000, auto: true },
     accounts: [
@@ -652,7 +653,7 @@ async function checkSettings() {
     assert.deepEqual(appearance.names, ["Codex", "Claude Code", "Gemini", "Grok Build", "Cursor", "Copilot"]);
     assert.deepEqual(appearance.shown, [true, true, true, true, true, false]);
     assert.equal(appearance.firstUp, true, "the first plan cannot move up");
-    assert.equal(appearance.nav, 9);
+    assert.equal(appearance.nav, 10);
     assert.equal(appearance.active, 1, "the section in view is marked");
     await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('theme'); s.value = 'light'; s.dispatchEvent(new Event('change')); })()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -668,6 +669,24 @@ async function checkSettings() {
     await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('scale'); s.value = 'auto'; s.dispatchEvent(new Event('change')); })()`);
     await wait(100);
     assert.deepEqual(patches.at(-1), { display: { scale: "auto" } });
+    // Providers: one switch for every provider in the registry; off disables the plan and strip rows.
+    const registry = require("../src/models").PROVIDERS.map((p) => p.id);
+    assert.deepEqual(await win.webContents.executeJavaScript(`[...document.querySelectorAll('#providerRows input')].map((b) => b.dataset.provider)`), registry, "a switch for every provider");
+    assert.equal(await win.webContents.executeJavaScript(`[...document.querySelectorAll('#providerRows input')].every((b) => b.checked)`), true);
+    await win.webContents.executeJavaScript(`document.querySelector('#providerRows input[data-provider="codex"]').click()`);
+    await wait(100);
+    assert.deepEqual(patches.at(-1), { providers_enabled: { codex: false } });
+    win.webContents.send("settings:state", { ...view, settings: { ...view.settings, providers_enabled: { ...view.settings.providers_enabled, codex: false } } });
+    await wait(150);
+    const off = await win.webContents.executeJavaScript(`(() => {
+      const row = [...document.querySelectorAll('#displayProviders li')].find((li) => li.querySelector('.order-name').textContent === 'Codex');
+      const chip = document.querySelector('#chipChecks input[data-key="codex"]');
+      return { off: row.classList.contains('off'), disabled: row.querySelector('input').disabled, title: row.title, chipDisabled: chip.disabled, chipTitle: chip.parentNode.title,
+        other: document.querySelector('#chipChecks input[data-key="claude"]').disabled };
+    })()`);
+    assert.deepEqual(off, { off: true, disabled: true, title: "Switched off under Providers", chipDisabled: true, chipTitle: "Switched off under Providers", other: false });
+    win.webContents.send("settings:state", view);
+    await wait(150);
     // Recently closed sessions: the switch and the clear button.
     assert.equal(await win.webContents.executeJavaScript(`document.getElementById('recentSessions').checked`), true);
     await win.webContents.executeJavaScript(`document.getElementById('recentSessions').click()`);

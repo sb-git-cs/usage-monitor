@@ -68,7 +68,7 @@ label.setting-name { cursor: default; }
 .order-list { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .order-list li { display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; border-top: 1px solid var(--border); background: var(--surface); }
 .order-list li:first-child { border-top: 0; }
-.order-list li.off .order-name { color: var(--muted); }
+.order-list li.off .order-name, .checks .switch.off { color: var(--muted); }
 .order-list .order-name { flex: 1; min-width: 0; }
 .order-list input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 .order-btn {

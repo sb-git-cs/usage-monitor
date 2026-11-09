@@ -64,7 +64,7 @@ async function collect(cfg) {
   for (const p of (previous && previous.providers) || []) prevById[p.id] = p;
 
   const results = await Promise.all(
-    PROVIDERS.map(async ({ id }) => {
+    PROVIDERS.filter(({ id }) => cfg.providers_enabled?.[id] !== false).map(async ({ id }) => {
       // The X Subscription setting only changes what Grok and Cursor read; other plans keep their
       // cache and history when it is switched.
       const selected = ["grok", "cursor"].includes(id) ? regime(cfg.subscription_regime) : "legacy";
@@ -138,11 +138,11 @@ async function collect(cfg) {
 }
 
 function pollOnce(cfg) {
-  const key = JSON.stringify([regime(cfg.subscription_regime), cfg.accounts || {}]);
+  const key = JSON.stringify([regime(cfg.subscription_regime), cfg.accounts || {}, cfg.providers_enabled || {}]);
   if (activePoll && activeKey !== key) return activePoll.then(() => pollOnce(cfg));
   if (!activePoll) {
     activeKey = key;
-    const captured = { ...cfg, accounts: { ...cfg.accounts } };
+    const captured = { ...cfg, accounts: { ...cfg.accounts }, providers_enabled: { ...cfg.providers_enabled } };
     activePoll = collect(captured).finally(() => { activePoll = null; activeKey = null; });
   }
   return activePoll;
@@ -160,9 +160,9 @@ function start(cfg, onSnapshot) {
     if (inflight) { requested = true; return; }
     inflight = true;
     try {
-      const selected = JSON.stringify([regime(cfg.subscription_regime), cfg.accounts || {}]);
+      const selected = JSON.stringify([regime(cfg.subscription_regime), cfg.accounts || {}, cfg.providers_enabled || {}]);
       const snap = await pollOnce(cfg);
-      if (!stopped && selected === JSON.stringify([regime(cfg.subscription_regime), cfg.accounts || {}])) onSnapshot(snap);
+      if (!stopped && selected === JSON.stringify([regime(cfg.subscription_regime), cfg.accounts || {}, cfg.providers_enabled || {}])) onSnapshot(snap);
       else requested = true;
     } catch (err) {
       console.error("poll failed", err.message);

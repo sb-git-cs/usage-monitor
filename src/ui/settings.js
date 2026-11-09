@@ -1,13 +1,12 @@
 const api = window.settingsApi;
 const $ = (id) => document.getElementById(id);
 
+// Every provider in the registry gets a switch, a plan row and a chip box.
+const PLAN_IDS = UsageModels.PROVIDERS.map((p) => p.id);
+const PLAN_NAMES = Object.fromEntries(UsageModels.PROVIDERS.map((p) => [p.id, p.displayName]));
+
 const CHIP_LABELS = [
-  ["claude", "Claude Code"],
-  ["codex", "Codex"],
-  ["gemini", "Gemini"],
-  ["grok", "Grok Build"],
-  ["cursor", "Cursor"],
-  ["copilot", "Copilot"],
+  ...PLAN_IDS.map((id) => [id, PLAN_NAMES[id]]),
   ["sessions", "Coding sessions"],
   ["network", "Network speed"],
   ["battery", "Battery"],
@@ -31,8 +30,8 @@ const UPDATE_TEXT = {
   error: "Couldn't check for updates.",
 };
 
-const PLAN_IDS = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
-const PLAN_NAMES = Object.fromEntries(CHIP_LABELS.filter(([key]) => PLAN_IDS.includes(key)));
+const SWITCHED_OFF = "Switched off under Providers";
+const providerOff = (id) => !!view && !!view.settings.providers_enabled && view.settings.providers_enabled[id] === false;
 
 let view = null;
 let pairTimer = null;
@@ -187,6 +186,7 @@ function render(next) {
     $("autoResumeHint").textContent = "Claude Code sessions running in a terminal are listed on the flyout and the chips. Listing the other CLIs and resuming sessions automatically needs Windows; here a session stopped by a usage limit waits for you.";
     $("folderMenuHint").textContent = "The folder menu that starts a CLI or the model picker in the right-clicked folder is registered on Windows.";
   }
+  renderProviders(s.providers_enabled || {});
   renderDisplay(next.display);
   setValue($("quiet"), s.quiet_hours.enabled);
   setValue($("quietStart"), s.quiet_hours.start);
@@ -208,6 +208,10 @@ function render(next) {
   }
   for (const box of checks.querySelectorAll("input")) {
     setValue(box, box.dataset.key === "network" ? s.chips_show_network : s.chips_show[box.dataset.key]);
+    const off = PLAN_IDS.includes(box.dataset.key) && providerOff(box.dataset.key);
+    box.disabled = off;
+    box.parentNode.title = off ? SWITCHED_OFF : "";
+    box.parentNode.classList.toggle("off", off);
   }
 
   setValue($("autoUpdate"), s.auto_update);
@@ -233,6 +237,25 @@ function render(next) {
   renderAccounts(next.accounts);
 }
 
+// One switch per provider: off means it is not read and not shown anywhere.
+function renderProviders(enabled) {
+  const root = $("providerRows");
+  if (!root.children.length) {
+    for (const id of PLAN_IDS) {
+      const row = el("label", "setting");
+      const text = el("span", "setting-text");
+      text.append(el("span", "setting-name", PLAN_NAMES[id]));
+      const box = el("input", "toggle");
+      box.type = "checkbox";
+      box.dataset.provider = id;
+      box.addEventListener("change", () => save({ providers_enabled: { [id]: box.checked } }));
+      row.append(text, box);
+      root.append(row);
+    }
+  }
+  for (const box of root.querySelectorAll("input")) setValue(box, enabled[box.dataset.provider] !== false);
+}
+
 // Theme, text size, compact cards and the order and visibility of the plans.
 function renderDisplay(display) {
   if (!display) return;
@@ -244,10 +267,13 @@ function renderDisplay(display) {
   const list = $("displayProviders");
   const focused = document.activeElement && list.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
   list.replaceChildren(...order.map((id, i) => {
-    const li = el("li", hidden.includes(id) ? "off" : "");
+    const off = providerOff(id);
+    const li = el("li", off || hidden.includes(id) ? "off" : "");
     const box = el("input");
     box.type = "checkbox";
-    box.checked = !hidden.includes(id);
+    box.checked = !off && !hidden.includes(id);
+    box.disabled = off;
+    if (off) li.title = SWITCHED_OFF;
     box.dataset.focus = `show-${id}`;
     box.setAttribute("aria-label", `Show ${PLAN_NAMES[id]}`);
     box.addEventListener("change", () => save({ display: { hidden: box.checked ? hidden.filter((h) => h !== id) : [...hidden, id] } }));
