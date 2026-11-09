@@ -44,14 +44,14 @@ const sessionReset = new Date(now + 47 * 60_000).toISOString();
 const recent = (tool, cli, label, id, name, cwd, closedMin, extra = {}) => ({ key: `${tool}:${id}`, tool, cli, label, name, cwd, id,
   started: agoMin(closedMin + 95), last_active: agoMin(closedMin), closed_at: agoMin(closedMin), godmode: false, can_resume: true, reason: null, ...extra });
 const sessionsView = { auto_resume: true, can_resume: true, sessions: [
-  { key: "claude:demo", tool: "claude", label: "Claude Code", name: "api-gateway", cwd: "D:\\work\\api-gateway", state: "working", resets_at: null, resume_at: null, resume: null },
-  { key: "cursor:demo", tool: "cursor", label: "Cursor Agent", name: "Wire up the exporter", cwd: "D:\\work\\exporter", state: "idle", resets_at: null, resume_at: null, resume: null },
+  { key: "claude:demo", tool: "claude", label: "Claude Code", name: "api-gateway", cwd: "D:\\work\\api-gateway", state: "working", resets_at: null, resume_at: null, resume: null, model: "claude-opus-5-5" },
+  { key: "cursor:demo", tool: "cursor", label: "Cursor Agent", name: "Wire up the exporter", cwd: "D:\\work\\exporter", state: "idle", resets_at: null, resume_at: null, resume: null, model: null },
   { key: "grok:demo", tool: "grok", label: "Grok Build", name: "web-dashboard", cwd: "D:\\work\\web-dashboard", state: "limited",
-    resets_at: sessionReset, resume_at: new Date(Date.parse(sessionReset) + 60_000).toISOString(), resume: "scheduled" },
+    resets_at: sessionReset, resume_at: new Date(Date.parse(sessionReset) + 60_000).toISOString(), resume: "scheduled", model: "grok-code-fast-1" },
 ], recent: [
-  recent("claude", "claude", "Claude Code", "4f1c2a9e-7b3d-4e8a-9c21-5d6f0e8b1a37", "Refactor the billing webhooks", "D:\\work\\billing-service", 18),
-  recent("codex", "codex", "Codex", "019a3c2e-58f1-7d40-b6a2-3e9c4f1d8a05", "Add pagination to the orders API", "D:\\work\\orders-api", 74, { godmode: true }),
-  recent("grok", "grok", "Grok Build", "8d2e61f0-3a4b-4c9d-a1e7-6b0f2c5d9e14", "Fix the flaky login tests", "D:\\work\\web-dashboard", 5 * 60 + 12),
+  recent("claude", "claude", "Claude Code", "4f1c2a9e-7b3d-4e8a-9c21-5d6f0e8b1a37", "Refactor the billing webhooks", "D:\\work\\billing-service", 18, { model: "claude-opus-5-5" }),
+  recent("codex", "codex", "Codex", "019a3c2e-58f1-7d40-b6a2-3e9c4f1d8a05", "Add pagination to the orders API", "D:\\work\\orders-api", 74, { godmode: true, model: "gpt-5.5-codex" }),
+  recent("grok", "grok", "Grok Build", "8d2e61f0-3a4b-4c9d-a1e7-6b0f2c5d9e14", "Fix the flaky login tests", "D:\\work\\web-dashboard", 5 * 60 + 12, { model: "grok-code-fast-1" }),
   recent("cursor", "cursor-agent", "Cursor Agent", "c7a9e3b2-1d4f-4a6e-8b05-9f2d7c3e1a60", "Move the charts to the new theme", "D:\\work\\design-system", 26 * 60,
     { can_resume: false, reason: "not installed" }),
 ] };

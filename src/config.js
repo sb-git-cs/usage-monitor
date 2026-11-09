@@ -37,6 +37,8 @@ const DEFAULTS = {
   auto_resume: false,
   // The panel and Insights list recently closed coding sessions, each with a Resume button.
   recent_sessions: true,
+  // The panel's Sessions card and the sessions chip name the model each running session last used.
+  show_session_model: true,
   quiet_hours: { enabled: false, start: "22:00", end: "07:00" },
   chips_show: Object.fromEntries(CHIP_KEYS.map((k) => [k, true])),
   update_channel: "stable",

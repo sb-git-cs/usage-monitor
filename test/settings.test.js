@@ -335,3 +335,19 @@ test("an automatic text size does not scale the panel window", (t) => {
   api.applySettings({ display: { scale: 120 } });
   assert.equal(cfg.display.scale, "auto", "an unknown size falls back to automatic");
 });
+
+test("show_session_model is a validated boolean, on by default, in the settings view and the prefs", (t) => {
+  assert.equal(config.DEFAULTS.show_session_model, true);
+  assert.equal(config.normalize({}).show_session_model, true);
+  assert.equal(config.normalize({ show_session_model: "no" }).show_session_model, true);
+  assert.equal(config.normalize({ show_session_model: false }).show_session_model, false);
+  const { api, cfg, handlers } = recentHarness(t);
+  api.wireIpc();
+  const view = api.applySettings({ show_session_model: false, bogus: true });
+  assert.equal(cfg.show_session_model, false);
+  assert.equal(view.settings.show_session_model, false, "the settings window receives the key");
+  assert.equal(handlers["usage://get-prefs"]().show_session_model, false, "the panel and the chips receive it");
+  api.applySettings({ show_session_model: "yes" });
+  assert.equal(cfg.show_session_model, false, "anything but a boolean is ignored");
+  assert.equal(api.applySettings({ show_session_model: true }).settings.show_session_model, true);
+});

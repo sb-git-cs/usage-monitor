@@ -21,7 +21,7 @@ function limitEntry(resetsAt, extra = {}) {
 
 test("a Claude session is stopped by a limit only while the rejected-quota error is its last entry", () => {
   assert.deepEqual(claudeState([{ type: "user" }, limitEntry(1789749600), { type: "system" }, { type: "file-history-snapshot" }]),
-    { limited: true, resets_at: 1789749600000, limit: "five_hour" });
+    { limited: true, resets_at: 1789749600000, limit: "five_hour", model: null });
   assert.equal(claudeState([limitEntry(1789749600), { type: "user", message: { content: "continue" } }]).limited, false);
   assert.equal(claudeState([limitEntry(1789749600), { type: "assistant", isSidechain: true }]).limited, true);
   // A retryable rate limit (not a used-up plan) is not a stop.
@@ -36,7 +36,7 @@ test("a Codex turn that ended at its usage limit reports the window's reset", ()
     error: { message: "You've hit your usage limit. ... or try again at 6:05 PM.", codex_error_info: "usage_limit_exceeded" } } };
   const started = { type: "event_msg", payload: { type: "task_started" } };
   const late = { type: "event_msg", payload: { type: "item_completed" } };
-  assert.deepEqual(codexState([started, tokens, done, late]), { limited: true, busy: false, resets_at: 1792074052000, limit: "five_hour" });
+  assert.deepEqual(codexState([started, tokens, done, late]), { limited: true, busy: false, resets_at: 1792074052000, limit: "five_hour", model: null });
   // Both windows used up: the 5-hour one is what resumes, not the weekly reset days later.
   const both = { type: "event_msg", payload: { type: "token_count", rate_limits: {
     primary: { used_percent: 100, window_minutes: 300, resets_at: 1792074052 },
@@ -57,8 +57,8 @@ test("a Codex turn that ended at its usage limit reports the window's reset", ()
     error: { message: `You've hit your usage limit. try again at ${hh}:${mm} ${ap}.`, codex_error_info: "usage_limit_exceeded" } } };
   assert.equal(codexState([started, namedTokens, named]).resets_at, weekAt * 1000);
   assert.equal(codexState([started, namedTokens, named]).limit, "weekly");
-  assert.deepEqual(codexState([started, tokens, done, started]), { limited: false, busy: true });
-  assert.deepEqual(codexState([started, { type: "event_msg", payload: { type: "task_complete" } }]), { limited: false, busy: false });
+  assert.deepEqual(codexState([started, tokens, done, started]), { limited: false, busy: true, model: null });
+  assert.deepEqual(codexState([started, { type: "event_msg", payload: { type: "task_complete" } }]), { limited: false, busy: false, model: null });
   // Without reported limits the clock time in the message is used.
   const fallback = codexState([started, done]);
   assert.equal(fallback.limited, true);
@@ -572,12 +572,12 @@ test("a Grok turn runs from turn_started until turn_ended; an open permission re
   assert.deepEqual(grokState([]), { busy: false });
 });
 
-function grokFixture({ pid, cwd, id, title, events, openedAt }) {
+function grokFixture({ pid, cwd, id, title, events, openedAt, model }) {
   const dir = tmpdir();
   fs.writeFileSync(path.join(dir, "active_sessions.json"), JSON.stringify([{ session_id: id, pid, cwd, opened_at: openedAt }]));
   const session = path.join(dir, "sessions", encodeURIComponent(cwd), id);
   fs.mkdirSync(session, { recursive: true });
-  fs.writeFileSync(path.join(session, "summary.json"), JSON.stringify({ info: { id, cwd }, generated_title: title }));
+  fs.writeFileSync(path.join(session, "summary.json"), JSON.stringify({ info: { id, cwd }, generated_title: title, current_model_id: model }));
   fs.writeFileSync(path.join(session, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n") + "\n");
   return dir;
 }
@@ -585,7 +585,7 @@ function grokFixture({ pid, cwd, id, title, events, openedAt }) {
 test("a Grok terminal shows its session title and turn state from Grok's own records", async () => {
   const start = toFiletime(NOW - 3600_000);
   const grokDir = grokFixture({ pid: 31, cwd: "D:/work/api", id: "01a1-grok", title: "Fix the billing parser",
-    events: [{ type: "turn_started" }, { type: "phase_changed", phase: "streaming_text" }], openedAt: new Date(NOW - 3590_000).toISOString() });
+    events: [{ type: "turn_started" }, { type: "phase_changed", phase: "streaming_text" }], openedAt: new Date(NOW - 3590_000).toISOString(), model: "grok-code-fast-1" });
   const request = async (req) => {
     if (req.op === "scan") return { procs: [{ pid: 31, ppid: 1, name: "grok", start, cwd: "D:/work/api/", cmd: "grok" }] };
     if (req.op === "screen") return { text: "> \nGrok 4.7 Fast" };
@@ -596,6 +596,7 @@ test("a Grok terminal shows its session title and turn state from Grok's own rec
     claudeDir: () => none, codexDir: () => none, grokDir: () => grokDir, cursorDir: () => none });
   let view = await w.scan();
   assert.deepEqual(view.sessions.map((s) => [s.key, s.name, s.state]), [["grok:01a1-grok", "Fix the billing parser", "working"]]);
+  assert.equal(view.sessions[0].model, "grok-code-fast-1", "Grok names its model in summary.json");
   const events = path.join(grokDir, "sessions", encodeURIComponent("D:/work/api"), "01a1-grok", "events.jsonl");
   fs.appendFileSync(events, JSON.stringify({ type: "turn_ended", outcome: "completed" }) + "\n");
   view = await w.scan();
@@ -729,7 +730,7 @@ test("each scan logs the running sessions with the id and flags that reopen them
     ["gemini", "agy", null, true, ""],
   ]);
   // The chips' list keeps its shape.
-  assert.deepEqual(Object.keys(view.sessions[0]), ["key", "tool", "label", "name", "cwd", "state", "limit", "resets_at", "resume_at", "resume"]);
+  assert.deepEqual(Object.keys(view.sessions[0]), ["key", "tool", "label", "name", "cwd", "state", "limit", "resets_at", "resume_at", "resume", "model"]);
   assert.deepEqual(view.recent, []);
 });
 
@@ -786,7 +787,7 @@ test("a session whose terminal closed shows in recent after two scans, resumable
   assert.deepEqual(view.recent, [{
     key: "claude:dc08e9b8-c071-4f61-83f5-2ac3413ea0df", tool: "claude", cli: "claude", label: "Claude Code", name: "usage-monitor-94",
     cwd: "D:\\git\\usage_monitor", id: "dc08e9b8-c071-4f61-83f5-2ac3413ea0df", started: new Date(NOW - 3600_000).toISOString(),
-    last_active: new Date(NOW).toISOString(), closed_at: new Date(NOW + 20_000).toISOString(), godmode: true, can_resume: true, reason: null,
+    last_active: new Date(NOW).toISOString(), closed_at: new Date(NOW + 20_000).toISOString(), godmode: true, can_resume: true, reason: null, model: null,
   }]);
   assert.deepEqual(asked, ["claude"]);
   // Not on PATH: listed, with the reason. The answer is looked up again with the next records read.
@@ -798,4 +799,62 @@ test("a session whose terminal closed shows in recent after two scans, resumable
   open = true;
   clock += 10_000;
   assert.deepEqual((await w.scan()).recent, []);
+});
+
+// ---- the model of each session -------------------------------------------------------------
+
+const assistant = (model, extra = {}) => ({ type: "assistant", message: { model, content: [] }, ...extra });
+
+test("Claude and Codex records name the session's model, and the limit logic is unchanged", () => {
+  // The newest assistant entry that names a real model; synthetic placeholders are skipped.
+  assert.equal(claudeState([assistant("claude-sonnet-4-5"), assistant("claude-opus-5-5"), assistant("<synthetic>"), { type: "user" }]).model, "claude-opus-5-5");
+  assert.equal(claudeState([{ type: "user" }, { type: "assistant", message: {} }]).model, null);
+  // The model is found even when the last entry already settles the limit question.
+  const state = claudeState([assistant("claude-opus-5-5"), limitEntry(1789749600)]);
+  assert.deepEqual([state.limited, state.resets_at, state.model], [true, 1789749600000, "claude-opus-5-5"]);
+  // Codex: the newest turn_context or session_meta.
+  const started = { type: "event_msg", payload: { type: "task_started" } };
+  assert.equal(codexState([{ type: "session_meta", payload: { model: "gpt-5.4" } }, { type: "turn_context", payload: { model: "gpt-5.5-codex" } }, started]).model, "gpt-5.5-codex");
+  assert.equal(codexState([{ type: "session_meta", payload: { model: "gpt-5.4" } }, started]).busy, true);
+  assert.equal(codexState([started]).model, null);
+});
+
+test("a scan carries each session's model, keeps the last one when the tail loses it, and cleans it", async (t) => {
+  const fx = claudeFixture({ entries: [{ type: "user" }, assistant("claude-opus-5-5")] });
+  t.after(() => fs.rmSync(fx.dir, { recursive: true, force: true }));
+  const helper = fakeHelper(() => [{ pid: fx.pid, name: "claude", start: fx.start, cmd: "claude" }]);
+  const w = createWatcher({ platform: "win32", now: () => NOW, request: helper.request, claudeDir: () => fx.dir, codexDir: () => path.join(fx.dir, "none") });
+  assert.equal((await w.scan()).sessions[0].model, "claude-opus-5-5");
+  // A later tail with no assistant record (a long tool result pushed it out) keeps the model last seen.
+  const transcript = path.join(fx.dir, "projects", "D--git-usage-monitor", "dc08e9b8-c071-4f61-83f5-2ac3413ea0df.jsonl");
+  fs.writeFileSync(transcript, JSON.stringify({ type: "user", message: { content: "next" } }) + "\n");
+  assert.equal((await w.scan()).sessions[0].model, "claude-opus-5-5");
+  // A hostile id has its control characters removed and is cut at 80 characters.
+  fs.writeFileSync(transcript, JSON.stringify(assistant(`evil\u0007\u001b[31m\n${"x".repeat(200)}`)) + "\n");
+  const model = (await w.scan()).sessions[0].model;
+  assert.ok(typeof model === "string" && model.length === 80 && !/[\u0000-\u001f\u007f-\u009f]/.test(model), `cleaned: ${JSON.stringify(model)}`);
+  assert.ok(model.startsWith("evil[31m"));
+});
+
+test("a closed session keeps the model it ran in the recent list", async (t) => {
+  const fx = claudeFixture({ entries: [{ type: "user" }, assistant("claude-opus-5-5")] });
+  t.after(() => fs.rmSync(fx.dir, { recursive: true, force: true }));
+  let clock = NOW;
+  let open = true;
+  const file = path.join(fx.dir, "recent.json");
+  const sessionLog = createSessionLog({ file, now: () => clock });
+  const helper = fakeHelper(() => (open ? [{ pid: fx.pid, name: "claude", start: fx.start, cmd: "claude" }] : []));
+  const w = createWatcher({ platform: "win32", now: () => clock, request: helper.request, sessionLog, records: { read: () => [] },
+    which: () => true, folderExists: () => true, claudeDir: () => fx.dir, codexDir: () => path.join(fx.dir, "none") });
+  await w.scan();
+  open = false;
+  for (let i = 0; i < 2; i++) {
+    clock += 10_000;
+    await w.scan();
+  }
+  assert.equal(w.view().recent[0].model, "claude-opus-5-5");
+  // Kept in the saved log, and read back from it.
+  sessionLog.flush();
+  const reloaded = createSessionLog({ file, now: () => clock });
+  assert.equal(reloaded.recent()[0].model, "claude-opus-5-5");
 });

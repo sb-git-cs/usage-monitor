@@ -130,6 +130,25 @@ function letter(id) {
   return "G";
 }
 
+// A model id as a short tag for the strip and the pills: "claude-opus-5-5" is "opus 5.5".
+// The full id stays in the tooltips.
+function shortModel(id) {
+  if (typeof id !== "string" || !id.trim()) return "";
+  const s = id.trim().replace(/^models\//, "").replace(/-\d{8}$/, "").replace(/^claude-/, "");
+  let m = /^(opus|sonnet|haiku|fable)-(\d+)-(\d+)/i.exec(s);
+  if (m) return `${m[1].toLowerCase()} ${m[2]}.${m[3]}`;
+  m = /^(opus|sonnet|haiku|fable)-(\d+)/i.exec(s);
+  if (m) return `${m[1].toLowerCase()} ${m[2]}`;
+  m = /^gpt-(\d+(?:\.\d+)?)-codex/i.exec(s);
+  if (m) return `gpt-${m[1]}`;
+  if (/^codex-mini-latest$/i.test(s)) return "codex-mini";
+  if (/^grok-code-fast-1$/i.test(s)) return "grok-code";
+  m = /^grok-(\d+)/i.exec(s);
+  if (m) return `grok-${m[1]}`;
+  m = /^([^-]+)(?:-(\d+(?:\.\d+)?))?/.exec(s);
+  return (m[2] ? `${m[1]}-${m[2]}` : m[1]).toLowerCase().slice(0, 9).replace(/[.-]+$/, "");
+}
+
 function statusText(p) {
   const s = p.status || {};
   if (s.state === "logged_out") return s.hint || "Sign in";

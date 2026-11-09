@@ -472,11 +472,18 @@ function folderName(cwd) {
   return String(cwd || "").split(/[\\/]/).filter(Boolean).pop() || "";
 }
 
+// The model as a muted pill, the same one the godmode tag uses; the full id is its tooltip.
+let showModel = true;
+let lastSessionsView = null;
+function modelPill(model) {
+  return showModel && model ? `<span class="pill muted model" title="${escapeHtml(model)}">${escapeHtml(shortModel(model))}</span>` : "";
+}
+
 function recentRow(r, i) {
   const label = r.label || TOOL_NAMES[r.tool] || r.tool;
   const closed = Date.parse(r.closed_at);
   const when = Number.isFinite(closed) ? new Date(closed).toLocaleString() : "";
-  const title = `${label} · ${r.cwd || ""} · closed ${when}${r.godmode ? " · skips permissions" : ""}`;
+  const title = `${label} · ${r.cwd || ""} · closed ${when}${r.godmode ? " · skips permissions" : ""}${showModel && r.model ? ` · ${r.model}` : ""}`;
   const state = [folderName(r.cwd), formatAgo(closed)].filter(Boolean).join(" · ");
   const action = r.can_resume
     ? `<button class="text-btn resume" type="button" data-key="${escapeHtml(r.key)}" aria-label="${escapeHtml(`Resume ${r.name} in ${label}`)}"${resuming.has(r.key) ? " disabled" : ""}>Resume</button>`
@@ -485,7 +492,7 @@ function recentRow(r, i) {
   return `<div class="session-row recent accent-${escapeHtml(r.tool)}${i >= 2 ? " recent-extra" : ""}" title="${escapeHtml(title)}">
       <span class="session-who">${mark(r.tool)}</span>
       <span class="session-name">${escapeHtml(r.name)}</span>
-      <span class="session-state">${r.godmode ? `<span class="pill muted">godmode</span>` : ""}${escapeHtml(state)}</span>
+      <span class="session-state">${r.godmode ? `<span class="pill muted">godmode</span>` : ""}${modelPill(r.model)}${escapeHtml(state)}</span>
       ${action}
     </div>`;
 }
@@ -550,6 +557,7 @@ recentMore.addEventListener("click", (e) => {
 });
 
 function renderSessions(view) {
+  lastSessionsView = view;
   const list = (view && view.sessions) || [];
   const recent = view && Array.isArray(view.recent) ? view.recent : [];
   const wasHidden = sessionCard.hidden;
@@ -566,10 +574,10 @@ function renderSessions(view) {
   document.getElementById("sessionRows").innerHTML = list.map((s) => {
     const [text, at] = sessionLine(s);
     const tone = s.state === "limited" ? (s.resume === "failed" ? " alert" : " limited") : s.state === "working" ? " working" : "";
-    return `<div class="session-row${tone} accent-${escapeHtml(s.tool)}" title="${escapeHtml(`${s.label || TOOL_NAMES[s.tool] || s.tool} · ${s.cwd}`)}">
+    return `<div class="session-row${tone} accent-${escapeHtml(s.tool)}" title="${escapeHtml(`${s.label || TOOL_NAMES[s.tool] || s.tool} · ${s.cwd}${showModel && s.model ? ` · ${s.model}` : ""}`)}">
       <span class="session-who">${mark(s.tool)}</span>
       <span class="session-name">${escapeHtml(s.name)}</span>
-      <span class="session-state${at ? "" : " wide"}">${escapeHtml(text)}</span>
+      <span class="session-state${at ? "" : " wide"}">${modelPill(s.model)}${escapeHtml(text)}</span>
       ${at ? `<span class="eta" data-reset="${escapeHtml(at)}">${formatEta(at)}</span>` : ""}
     </div>`;
   }).join("");
@@ -721,14 +729,22 @@ window.usage.onPrefs((prefs) => {
   if (!prefs) return;
   setAlertThreshold(prefs.alert_threshold);
   applyDisplay(prefs);
+  applyShowModel(prefs);
   if (window.__last) render(window.__last);
 });
 window.usage.getPrefs().then((prefs) => {
   if (!prefs) return;
   setAlertThreshold(prefs.alert_threshold);
   applyDisplay(prefs);
+  applyShowModel(prefs);
   if (window.__last) render(window.__last);
 }, () => {});
+function applyShowModel(prefs) {
+  const next = prefs.show_session_model !== false;
+  if (next === showModel) return;
+  showModel = next;
+  if (lastSessionsView) renderSessions(lastSessionsView);
+}
 let lastSnapshotAt = null;
 window.usage.onSnapshot((s) => {
   window.__last = s;

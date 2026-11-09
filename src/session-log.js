@@ -40,6 +40,13 @@ function clip(text) {
   return s.length > NAME_MAX ? `${s.slice(0, NAME_MAX - 1)}…` : s;
 }
 
+// A model id as shown: text only, no control characters, at most 80 characters.
+function cleanModel(model) {
+  if (typeof model !== "string") return null;
+  const s = model.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim().slice(0, 80);
+  return s || null;
+}
+
 function baseName(p) {
   return String(p || "").split(/[\\/]/).filter(Boolean).pop() || "";
 }
@@ -118,7 +125,7 @@ function entryOf(row) {
     name: clip(row.name), cwd: folder(row.cwd), id,
     started: Number.isFinite(row.started) ? row.started : null, last_active: row.last_active,
     closed_at: Number.isFinite(row.closed_at) ? row.closed_at : null,
-    godmode: row.godmode === true, source: row.source === "seen" ? "seen" : "disk",
+    godmode: row.godmode === true, source: row.source === "seen" ? "seen" : "disk", model: cleanModel(row.model),
   };
 }
 
@@ -222,7 +229,7 @@ function createSessionLog({
       if (fresh) entries.set(key, fresh);
       return !!fresh;
     }
-    const before = JSON.stringify([e.closed_at, e.source, e.name, e.cwd, e.godmode, e.started]);
+    const before = JSON.stringify([e.closed_at, e.source, e.name, e.cwd, e.godmode, e.started, e.model]);
     e.closed_at = null;
     e.source = "seen";
     e.last_active = at;
@@ -230,7 +237,8 @@ function createSessionLog({
     if (clip(item.name)) e.name = clip(item.name);
     if (item.cwd) e.cwd = folder(item.cwd);
     if (typeof item.godmode === "boolean") e.godmode = item.godmode;
-    return JSON.stringify([e.closed_at, e.source, e.name, e.cwd, e.godmode, e.started]) !== before;
+    if (cleanModel(item.model)) e.model = cleanModel(item.model);
+    return JSON.stringify([e.closed_at, e.source, e.name, e.cwd, e.godmode, e.started, e.model]) !== before;
   }
 
   function record(running, at = now()) {
@@ -340,4 +348,4 @@ function createSessionLog({
   };
 }
 
-module.exports = { createSessionLog, resumeCommand, launchFlags, ID_RE, RESUME, clip, baseName };
+module.exports = { createSessionLog, resumeCommand, launchFlags, ID_RE, RESUME, clip, baseName, cleanModel };

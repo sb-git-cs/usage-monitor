@@ -117,6 +117,10 @@
           <span class="setting-text"><span class="setting-name">Show recently closed sessions</span><span class="setting-desc">The panel and Insights list the sessions you closed, with a Resume button that reopens each one in a terminal in its folder, with the same permissions it ran with. Sessions are read from each tool's own records on this computer; nothing leaves it.</span></span>
           <input type="checkbox" class="toggle" id="recentSessions" />
         </label>
+        <label class="setting">
+          <span class="setting-text"><span class="setting-name">Show each session's model</span><span class="setting-desc">The panel's Sessions card and the sessions chip name the model each running session last used. Claude Code, Codex and Grok Build record it; the other tools do not.</span></span>
+          <input type="checkbox" class="toggle" id="showSessionModel" />
+        </label>
         <div class="row-actions wrap">
           <button class="btn" type="button" id="clearRecent">Clear recent sessions</button>
         </div>

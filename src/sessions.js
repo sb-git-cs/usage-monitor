@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { claudeConfigDir, codexHome, grokHome, cursorCliDir, cliOnPath } = require("./paths");
 const { createWorker, spawnWorker } = require("./system");
-const { launchFlags, resumeCommand } = require("./session-log");
+const { launchFlags, resumeCommand, cleanModel } = require("./session-log");
 const { createRecordReader } = require("./session-records");
 
 // Coding sessions running in a terminal, and resuming the ones a usage limit stopped.
@@ -161,16 +161,22 @@ function readFirstLine(file) {
 // Claude Code: the session is stopped by a limit when its last conversation entry is the
 // rejected-quota error. Anything the user or Claude wrote after it means it moved on.
 function claudeState(entries) {
+  // The model comes first: the newest assistant entry that names one, whatever the limit logic finds.
+  let model = null;
+  for (let i = entries.length - 1; i >= 0 && !model; i--) {
+    const m = entries[i] && entries[i].type === "assistant" && entries[i].message && entries[i].message.model;
+    if (typeof m === "string" && m && !m.startsWith("<")) model = m;
+  }
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
     if (!e || (e.type !== "user" && e.type !== "assistant") || e.isSidechain || e.isMeta) continue;
     const q = e.quotaLimits;
     if (e.type === "assistant" && e.error === "rate_limit" && q && q.status === "rejected" && Number.isFinite(q.resetsAt)) {
-      return { limited: true, resets_at: q.resetsAt * 1000, limit: q.rateLimitType || null };
+      return { limited: true, resets_at: q.resetsAt * 1000, limit: q.rateLimitType || null, model };
     }
-    return { limited: false };
+    return { limited: false, model };
   }
-  return { limited: false };
+  return { limited: false, model };
 }
 
 // "try again at 6:05 PM": the next such clock time after the error.
@@ -210,13 +216,19 @@ function pickCodexWindow(limits, message, at) {
 
 // Codex: a turn that ended with usage_limit_exceeded, with no turn started after it.
 function codexState(entries) {
+  let model = null;
+  for (let i = entries.length - 1; i >= 0 && !model; i--) {
+    const e = entries[i];
+    const m = e && (e.type === "turn_context" || e.type === "session_meta") && e.payload && e.payload.model;
+    if (typeof m === "string" && m) model = m;
+  }
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
     const p = e && e.type === "event_msg" && e.payload;
     if (!p) continue;
-    if (p.type === "task_started") return { limited: false, busy: true };
+    if (p.type === "task_started") return { limited: false, busy: true, model };
     if (p.type !== "task_complete") continue;
-    if (!p.error || p.error.codex_error_info !== "usage_limit_exceeded") return { limited: false, busy: false };
+    if (!p.error || p.error.codex_error_info !== "usage_limit_exceeded") return { limited: false, busy: false, model };
     const at = Date.parse(e.timestamp);
     // The rate limits reported just before the error say which window ran out and when it resets.
     // Primary at about 300 minutes is the 5-hour window. When that one is used up, its reset is
@@ -227,9 +239,9 @@ function codexState(entries) {
       if (found) limits = found;
     }
     const picked = pickCodexWindow(limits, p.error.message, at);
-    return { limited: true, busy: false, resets_at: picked.resets_at, limit: picked.limit };
+    return { limited: true, busy: false, resets_at: picked.resets_at, limit: picked.limit, model };
   }
-  return { limited: false, busy: false };
+  return { limited: false, busy: false, model };
 }
 
 // A 5-hour window is the session limit (Claude "five_hour", Codex primary at about 300 minutes).
@@ -476,6 +488,7 @@ function createWatcher({
   let busy = false;
   let again = false; // a refresh asked for while a scan was running
   let codexSpent = null;
+  const models = new Map(); // session key -> last model seen; a tail can lose the assistant record
 
   function cachedState(file, read) {
     let st;
@@ -626,16 +639,18 @@ function createWatcher({
   // Title and turn state of one Grok session.
   function grokSession(record) {
     const dir = grokSessionDir(grokDir(), record.cwd, record.session_id);
-    if (!dir) return { name: null, state: null };
+    if (!dir) return { name: null, state: null, model: null };
     let name = null;
+    let model = null;
     try {
       const summary = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
       name = summary.generated_title || summary.session_summary || null;
+      model = summary.current_model_id || null;
     } catch {
       /* not written yet */
     }
     const state = cachedState(path.join(dir, "events.jsonl"), grokState);
-    return { name, state };
+    return { name, state, model };
   }
 
   // Cursor Agent writes chats/<folder hash>/<chat id>/meta.json: folder, title and times. A chat
@@ -690,7 +705,7 @@ function createWatcher({
         key: `claude:${r.sessionId}`, tool: "claude", label: "Claude Code", pid: r.pid, start: proc ? proc.start : null,
         name: r.name || path.basename(r.cwd || "") || "Claude Code", cwd: r.cwd || "",
         state: state.limited && r.status !== "busy" ? "limited" : r.status === "busy" ? "working" : "idle",
-        resets_at: state.limited ? state.resets_at : null, limit: state.limited ? state.limit : null,
+        resets_at: state.limited ? state.resets_at : null, limit: state.limited ? state.limit : null, model: state.model || null,
         can_type: r.entrypoint === "cli", started: r.startedAt || null,
         // A derived name is the folder's slug; the title Claude generates is in the transcript.
         ...launchInfo("claude", r.sessionId, proc ? proc.cmd : "", r.nameSource === "derived" ? null : r.name),
@@ -712,7 +727,7 @@ function createWatcher({
           const state = cachedState(r.file, codexState) || { limited: false, busy: false };
           sessions.push({ ...base, key: `codex:${r.id}`, name: names.get(r.id) || path.basename(cwd) || "Codex",
             state: state.limited ? "limited" : state.busy ? "working" : "idle",
-            resets_at: state.limited ? state.resets_at : null, limit: state.limited ? state.limit : null, can_type: true,
+            resets_at: state.limited ? state.resets_at : null, limit: state.limited ? state.limit : null, can_type: true, model: state.model || null,
             ...launchInfo("codex", r.id, p.cmd, names.get(r.id)) });
           continue;
         }
@@ -750,7 +765,7 @@ function createWatcher({
         const cwd = String(r.cwd || "").replace(/[\\/]+$/, "");
         sessions.push({ key: `grok:${r.session_id}`, tool: "grok", label: "Grok Build", pid: r.pid, start: null, cwd,
           name: info.name || path.basename(cwd) || "Grok Build", state: info.state && info.state.busy ? "working" : "idle",
-          resets_at: null, limit: null, can_type: false, started: Date.parse(r.opened_at) || null,
+          resets_at: null, limit: null, can_type: false, started: Date.parse(r.opened_at) || null, model: info.model || null,
           ...launchInfo("grok", r.session_id, "", info.name) });
       }
     }
@@ -785,6 +800,7 @@ function createWatcher({
       const started = filetimeMs(p.start);
       let key = `${p.cli.tool}:${p.pid}:${p.start}`;
       let name = null;
+      let model = null;
       let id = null; // the session id its CLI reopens it by, when its records name one
       let busy = null; // null: the screen decides
       if (p.cli.tool === "grok") {
@@ -794,6 +810,7 @@ function createWatcher({
           const info = grokSession(r);
           key = `grok:${r.session_id}`;
           name = info.name;
+          model = info.model;
           id = r.session_id;
           if (info.state) busy = info.state.busy;
         }
@@ -838,7 +855,7 @@ function createWatcher({
       const waiting = busy === false || !!(p.cli.idle && p.cli.idle.test(screen));
       out.push({ key, tool: p.cli.tool, label: p.cli.label, pid: p.pid, start: p.start, cwd, name: name || path.basename(cwd) || p.cli.label,
         state: limited ? "limited" : working ? "working" : waiting ? "idle" : "running", resets_at: resets, limit, can_type: true,
-        started, lines: OTHER_LINES, expect: OTHER_LIMIT_ON_SCREEN, ...launchInfo(p.cli.program, id, p.cmd, name) });
+        started, model, lines: OTHER_LINES, expect: OTHER_LIMIT_ON_SCREEN, ...launchInfo(p.cli.program, id, p.cmd, name) });
     }
     for (const key of limitsSeen.keys()) if (!live.has(key)) limitsSeen.delete(key);
     return out;
@@ -858,7 +875,7 @@ function createWatcher({
     if (partial) return;
     try {
       sessionLog.record(sessions.map((s) => ({ key: s.key, tool: s.tool, cli: s.cli, label: s.label, name: s.title || "",
-        cwd: s.cwd, id: s.id || resumedId(s), started: s.started, godmode: s.godmode, pid: s.pid })));
+        cwd: s.cwd, id: s.id || resumedId(s), started: s.started, godmode: s.godmode, pid: s.pid, model: s.model })));
     } catch (err) {
       console.error("recent sessions update failed", err.message);
     }
@@ -900,7 +917,7 @@ function createWatcher({
       const ready = !!command && folder && onPath(command.file);
       return {
         key: e.key, tool: e.tool, cli: e.cli, label: e.label, name: e.name, cwd: e.cwd, id: e.id,
-        started: iso(e.started), last_active: iso(e.last_active), closed_at: iso(e.closed_at), godmode: e.godmode,
+        started: iso(e.started), last_active: iso(e.last_active), closed_at: iso(e.closed_at), godmode: e.godmode, model: e.model || null,
         can_resume: ready, reason: ready ? null : !command ? "no session id" : !folder ? "folder missing" : "not installed",
       };
     });
@@ -930,6 +947,12 @@ function createWatcher({
         console.error("session scan failed", err.message);
         return view;
       }
+      // A tail without an assistant record keeps the model last seen for that session.
+      for (const s of sessions) {
+        if (s.model) models.set(s.key, s.model);
+        else if (models.has(s.key)) s.model = models.get(s.key);
+      }
+      for (const key of models.keys()) if (!sessions.some((s) => s.key === key)) models.delete(key);
       if (sessionLog) logSessions(sessions);
       const live = new Set();
       for (const s of sessions) {
@@ -968,7 +991,7 @@ function createWatcher({
             key: s.key, tool: s.tool, label: s.label, name: s.name, cwd: s.cwd, state: s.state, limit: s.limit,
             resets_at: Number.isFinite(s.resets_at) ? new Date(s.resets_at).toISOString() : null,
             resume_at: Number.isFinite(s.resets_at) ? new Date(s.resets_at + GRACE_MS).toISOString() : null,
-            resume: s.resume || null,
+            resume: s.resume || null, model: cleanModel(s.model),
           })),
         recent: recentView(sessions),
       };

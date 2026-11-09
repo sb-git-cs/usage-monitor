@@ -190,6 +190,22 @@ async function check(file) {
       assert.equal(await win.webContents.executeJavaScript(`document.getElementById('autoResume').checked`), false);
       assert.equal(await win.webContents.executeJavaScript(`document.getElementById('godmode')`), null, "the flyout has no Godmode switch");
       await checkRecent(win);
+      // The model shows as a pill with the full id in its title, and the toggle takes it away.
+      const withModels = { ...sessionsView, sessions: sessionsView.sessions.map((s, i) => ({ ...s, model: i ? "gpt-5.5-codex" : "claude-opus-5-5" })),
+        recent: [{ key: "claude:r1", tool: "claude", cli: "claude", label: "Claude Code", name: "old", cwd: "D:\\work", id: "r1", godmode: false,
+          closed_at: new Date().toISOString(), last_active: new Date().toISOString(), can_resume: true, reason: null, model: "claude-sonnet-4-5-20250929" }] };
+      win.webContents.send("usage://sessions", withModels);
+      await wait(100);
+      const pills = `[...document.querySelectorAll('.pill.model')].map((el) => el.textContent + '|' + el.title)`;
+      assert.deepEqual(await win.webContents.executeJavaScript(pills),
+        ["opus 5.5|claude-opus-5-5", "gpt-5.5|gpt-5.5-codex", "sonnet 4.5|claude-sonnet-4-5-20250929"], "the model pill names each running and recent session");
+      assert.match(await win.webContents.executeJavaScript(`document.querySelector('#sessionRows .session-row').title`), / · claude-opus-5-5$/);
+      win.webContents.send("usage://prefs", { alert_threshold: 80, chips_show: {}, dark: true, show_session_model: false });
+      await wait(100);
+      assert.deepEqual(await win.webContents.executeJavaScript(pills), [], "the toggle hides the model pills");
+      win.webContents.send("usage://prefs", { alert_threshold: 80, chips_show: {}, dark: true, show_session_model: true });
+      await wait(100);
+      assert.equal((await win.webContents.executeJavaScript(pills)).length, 3, "and brings them back");
       win.webContents.send("usage://sessions", sessionsView);
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.deepEqual(result.widths, ["25%", "90%", "80%", "0%"]);
@@ -259,6 +275,31 @@ async function check(file) {
       win.webContents.send("usage://net", netSummary);
       win.webContents.send("usage://system", systemSummary);
       await new Promise((resolve) => setTimeout(resolve, 60));
+      // The model tag is a fixed step: wider than without it, and the same for any model.
+      const barWidth = () => win.webContents.executeJavaScript(`document.getElementById('bar').getBoundingClientRect().width`);
+      const tagText = () => win.webContents.executeJavaScript(`document.querySelector('.session-model')?.textContent ?? null`);
+      const modelsOf = (a, b) => ({ ...sessionsView, sessions: sessionsView.sessions.map((s, i) => ({ ...s, model: i ? b : a })) });
+      const plainWidth = await barWidth();
+      win.webContents.send("usage://sessions", modelsOf("claude-opus-5-5", "gpt-5.5-codex"));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal(await tagText(), "gpt-5.5", "the tag names the working session's model");
+      const taggedWidth = await barWidth();
+      assert.ok(taggedWidth > plainWidth, "the tag adds width");
+      assert.match(await win.webContents.executeJavaScript(`document.getElementById('sessionChip').title`), /api · gpt-5\.5-codex: working/);
+      const resizesAtTag = resizes;
+      for (const [a, b] of [["claude-sonnet-4-5-20250929", "grok-code-fast-1"], ["a-very-long-model-name-x", "o"], ["claude-opus-5-5", "gpt-5.5-codex"]]) {
+        win.webContents.send("usage://sessions", modelsOf(a, b));
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        assert.equal(await barWidth(), taggedWidth, `the strip keeps its width for ${a} and ${b}`);
+      }
+      assert.equal(resizes, resizesAtTag, "a different model does not resize the window");
+      win.webContents.send("usage://prefs", { alert_threshold: 80, chips_show: {}, dark: true, show_session_model: false });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal(await tagText(), null, "the toggle takes the tag away");
+      assert.equal(await barWidth(), plainWidth, "and the strip returns to its width");
+      win.webContents.send("usage://prefs", { alert_threshold: 80, chips_show: {}, dark: true });
+      win.webContents.send("usage://sessions", sessionsView);
+      await new Promise((resolve) => setTimeout(resolve, 150));
     }
     // The strip keeps to short forms; the panel spells them out.
     for (const [reading, long, short] of [
@@ -543,7 +584,7 @@ async function checkSettings() {
     settings: { autostart: true, poll_interval_secs: 5, chips_hidden: false, chips_docked: true, chips_show_network: true,
       chips_show: { claude: true, codex: true, gemini: true, grok: false, cpu: true, mem: true, gpu: true, disk: true, space: true },
       alert_threshold: 80, notify_on_limit_reached: true, forecast_alerts: true, quiet_hours: { enabled: true, start: "22:00", end: "07:00" },
-      auto_update: true, update_channel: "stable", recent_sessions: true },
+      auto_update: true, update_channel: "stable", recent_sessions: true, show_session_model: true },
     display: { theme: "system", scale: 100, compact: false, hidden: ["copilot"], order: ["codex", "claude", "gemini", "grok", "cursor", "copilot"] },
     update: { kind: "installer", status: "up-to-date", current: "1.3.0", checked_at: Date.now() - 120000, auto: true },
     accounts: [
@@ -673,6 +714,11 @@ async function checkSettings() {
     await win.webContents.executeJavaScript(`document.getElementById('recentSessions').click()`);
     await wait(100);
     assert.deepEqual(patches.at(-1), { recent_sessions: false });
+    // Each session's model: on by default, saved as a boolean patch.
+    assert.equal(await win.webContents.executeJavaScript(`document.getElementById('showSessionModel').checked`), true);
+    await win.webContents.executeJavaScript(`document.getElementById('showSessionModel').click()`);
+    await wait(100);
+    assert.deepEqual(patches.at(-1), { show_session_model: false });
     await win.webContents.executeJavaScript(`document.getElementById('clearRecent').click()`);
     await wait(100);
     assert.equal(recentClears, 1);
