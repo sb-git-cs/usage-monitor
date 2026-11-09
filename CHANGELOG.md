@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.16.0 — unreleased
+## 1.16.0 — 2026-11-10
 
 - **Six more tools.** Windsurf / Devin, Kiro, Amp, OpenCode, Qwen Code and Kimi Code join the plan meters, the Sessions card and the Recent list. Each stays off the strip until it is installed or signed in on this computer, and each reads only the sign-in the tool already saved, read-only, and never refreshes a token.
   - **Windsurf / Devin** reads Devin Desktop's sign-in from its editor database and shows the **Daily** and **Weekly** allowances with their resets, the plan name and extra usage as credits; when the service does not answer it shows the editor's own cached quota as stale. A `devin auth login` sign-in alone shows signed in with no meter. Devin CLI sessions come from its `sessions.db`, with their model; resume is `devin -r <id>`.
