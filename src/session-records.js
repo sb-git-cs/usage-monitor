@@ -95,11 +95,12 @@ function fromFileUri(uri, platform) {
   return platform === "win32" ? p.replace(/\//g, "\\") : p;
 }
 
-function entry(tool, cli, label, { id, name, cwd, started, last_active }) {
+// model: the model the tool recorded for the session, when its records name one.
+function entry(tool, cli, label, { id, name, cwd, started, last_active, model = null }) {
   if (typeof id !== "string" || !id || !Number.isFinite(last_active)) return null;
   const folder = String(cwd || "").replace(/^\\\\\?\\/, "");
   return { tool, cli, label, name: clip(name) || baseName(folder) || label, cwd: folder, id,
-    started: Number.isFinite(started) ? started : null, last_active };
+    started: Number.isFinite(started) ? started : null, last_active, ...(typeof model === "string" && model ? { model } : {}) };
 }
 
 function newest(items) {
