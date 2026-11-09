@@ -1,4 +1,4 @@
-// Read-only lookups in Cursor's editor database. Values stay in memory; nothing here is logged.
+// Read-only lookups in editor and CLI databases. Values stay in memory; nothing here is logged.
 const fs = require("fs");
 
 function readValue(dbPath, key) {
@@ -28,4 +28,24 @@ function readValue(dbPath, key) {
   }
 }
 
-module.exports = { readValue };
+// Rows of one query, [] on any failure. Read-only, so the owning app is never disturbed.
+function readRows(dbPath, sql, params = []) {
+  if (!dbPath || !sql) return [];
+  let db = null;
+  try {
+    if (!fs.existsSync(dbPath)) return [];
+    const { DatabaseSync } = require("node:sqlite");
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    return db.prepare(sql).all(...params);
+  } catch {
+    return [];
+  } finally {
+    try {
+      if (db) db.close();
+    } catch {
+      /* the rows are already in hand */
+    }
+  }
+}
+
+module.exports = { readValue, readRows };

@@ -55,7 +55,7 @@ function diagnostic() {
 function generateReport(v) {
   const md = (value) => String(value ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))
     .replace(/[\\`*_{}\[\]()|]/g, "\\$&").replace(/[\r\n]/g, " ");
-  const NAMES = { claude: "Claude Code", codex: "Codex", gemini: "Gemini", grok: "Grok Build", cursor: "Cursor", copilot: "Copilot", x_subscription: "X Subscription" };
+  const NAMES = { claude: "Claude Code", codex: "Codex", gemini: "Gemini", grok: "Grok Build", cursor: "Cursor", copilot: "Copilot", windsurf: "Windsurf", kiro: "Kiro", amp: "Amp", opencode: "OpenCode", qwen: "Qwen Code", kimi: "Kimi Code", x_subscription: "X Subscription" };
   const STATUS = { exhausted: "Used up", critical: "Runs out", elevated: "Watch", sustainable: "On pace", cooling: "Falling", idle: "Idle" };
   const gb = (n) => `${((Number(n) || 0) / 1e9).toFixed(2)} GB`;
   const lines = [

@@ -8,7 +8,7 @@ const DAY = 86400000;
 // Byte counters and last-success times change every second or poll. On their own they are
 // written at most this often; new readings and events still save within a minute.
 const MINOR_SAVE_MS = 15 * 60000;
-const PROVIDERS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "x_subscription"];
+const PROVIDERS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "windsurf", "kiro", "amp", "opencode", "qwen", "kimi", "x_subscription"];
 const digest = (value) => crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
 const identity = (p) => p.cache_scope || p.account_id || p.account || null;
 function cycleAt(now, day) {

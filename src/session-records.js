@@ -11,6 +11,8 @@ const PER_CLI = 40;
 const CLAUDE_HEAD = 512 * 1024;
 const SMALL_HEAD = 64 * 1024;
 const CODEX_DAYS = 30;
+// One module per newer tool in ./records, each read({ entry, home, platform, now }) -> rows.
+const TOOL_READERS = ["windsurf", "kiro", "amp", "opencode", "qwen", "kimi"].map((id) => require(`./records/${id}`));
 const UUID = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 
 function copilotHome() {
@@ -443,6 +445,13 @@ function createRecordReader({
         out.push(...newest(store()));
       } catch {
         /* one unreadable store never hides the others */
+      }
+    }
+    for (const mod of TOOL_READERS) {
+      try {
+        out.push(...newest(mod.read({ entry, home, platform, now: now() })));
+      } catch {
+        /* one failing reader never hides the others */
       }
     }
     for (const key of cache.keys()) if (!used.has(key)) cache.delete(key);

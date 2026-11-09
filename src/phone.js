@@ -294,7 +294,7 @@ class PhoneLink {
     try { url = new URL(req.url, "http://phone.invalid"); } catch { return reply(400, { error: "invalid request" }); }
     // Native paired clients do not send browser Origin headers. Do not expose a LAN API to web pages.
     if (req.headers.origin) return reply(403, { error: "browser requests are not supported" });
-    const accountRoute = /^\/v1\/account\/(claude|codex|gemini|grok|cursor|copilot)(?:\/([A-Za-z0-9_.:@-]{1,200}))?$/.exec(url.pathname);
+    const accountRoute = /^\/v1\/account\/(claude|codex|gemini|grok|cursor|copilot|windsurf|kiro|amp|opencode|qwen|kimi)(?:\/([A-Za-z0-9_.:@-]{1,200}))?$/.exec(url.pathname);
     const reading = req.method === "GET" && ["/v1/ping", "/v1/snapshot", "/v1/tokens"].includes(url.pathname);
     const switching = req.method === "POST" && accountRoute;
     const linking = req.method === "POST" && ["/v1/link", "/v1/unlink"].includes(url.pathname);

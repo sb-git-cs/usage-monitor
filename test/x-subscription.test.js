@@ -118,7 +118,7 @@ test("cached Additional Usage stays visibly stale when the weekly pool expires",
 
 function polling() {
   let snapshot, signedIn = "user-a", fail = false;
-  const ids = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+  const ids = require("../src/models").PROVIDERS.map((p) => p.id);
   const mocks = { "./cache": { loadSnapshot: () => snapshot, saveSnapshot: (s) => { snapshot = s; } } };
   for (const id of ids) mocks[`./adapters/${id}`] = { displayName: id, accountRef: () => signedIn, fetchUsage: async () => ({ ...provider(id), status: { state: fail ? "fetch_failed" : "ok" }, windows: fail ? [] : provider(id).windows }) };
   return { mocks, poller: load("src/poller.js", mocks), fail: () => { fail = true; }, signIn: (v) => { signedIn = v; } };
@@ -162,7 +162,7 @@ test("a refreshed token keeps its account's cache scope; tokens never key the ca
   const started = Date.now();
   const slow = await p.poller.pollOnce({});
   assert.ok(Date.now() - started < 8000, "an account lookup that never answers cannot hold the poll");
-  assert.equal(slow.providers.length, 6);
+  assert.equal(slow.providers.length, 12);
 });
 
 test("switching during refresh discards the old selection and immediately refreshes the new one", async (t) => {

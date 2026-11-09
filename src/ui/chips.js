@@ -227,7 +227,8 @@ window.usage.onNet(renderNet);
 // ---- coding sessions chip ---------------------------------------------------------
 
 const sessionChip = document.getElementById("sessionChip");
-const SESSION_TOOLS = { claude: "Claude Code", codex: "Codex", grok: "Grok Build", gemini: "Gemini", cursor: "Cursor Agent", copilot: "Copilot CLI" };
+const SESSION_TOOLS = { claude: "Claude Code", codex: "Codex", grok: "Grok Build", gemini: "Gemini", cursor: "Cursor Agent", copilot: "Copilot CLI",
+  windsurf: "Devin CLI", kiro: "Kiro CLI", amp: "Amp", opencode: "OpenCode", qwen: "Qwen Code", kimi: "Kimi Code" };
 let lastSessions = null;
 let sessionSig = "";
 

@@ -22,6 +22,13 @@ const RESUME = Object.freeze({
   gemini: Object.freeze({ label: "Gemini CLI", file: "gemini", args: (id) => ["--resume", id], godmode: "--approval-mode=yolo" }),
   "cursor-agent": Object.freeze({ label: "Cursor Agent", file: "cursor-agent", args: (id) => ["--resume", id], godmode: "--force" }),
   copilot: Object.freeze({ label: "Copilot CLI", file: "copilot", args: (id) => [`--resume=${id}`], godmode: "--allow-all-tools" }),
+  // No skip-permissions switch is known for these, so a resumed one never gets one.
+  windsurf: Object.freeze({ label: "Devin CLI", file: "devin", args: (id) => ["-r", id], godmode: null }),
+  kiro: Object.freeze({ label: "Kiro CLI", file: "kiro-cli", args: (id) => ["chat", "--resume-id", id], godmode: null }),
+  amp: Object.freeze({ label: "Amp", file: "amp", args: (id) => ["threads", "continue", id], godmode: null }),
+  opencode: Object.freeze({ label: "OpenCode", file: "opencode", args: (id) => ["--session", id], godmode: null }),
+  qwen: Object.freeze({ label: "Qwen Code", file: "qwen", args: (id) => ["--resume", id], godmode: "--approval-mode=yolo" }),
+  kimi: Object.freeze({ label: "Kimi Code", file: "kimi", args: (id) => ["--session", id], godmode: null }),
 });
 
 // Every spelling of each CLI's skip-permissions switch; "--name=value" is matched as two tokens.
@@ -33,6 +40,7 @@ const GODMODE_FLAGS = Object.freeze({
   "cursor-agent": [["--force"], ["-f"], ["--yolo"]],
   copilot: [["--allow-all-tools"], ["--allow-all"], ["--yolo"]],
   gemini: [["--yolo"], ["-y"], ["--approval-mode", "yolo"]],
+  qwen: [["--yolo"], ["--approval-mode", "yolo"]],
 });
 
 function clip(text) {

@@ -4,7 +4,7 @@ const http = require("node:http");
 const { load } = require("./helpers");
 const { request } = require("../src/http");
 
-const PLAN_IDS = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+const PLAN_IDS = require("../src/models").PROVIDERS.map((p) => p.id);
 
 function provider(id, used = 50) {
   return { id, display_name: id, status: { state: "ok" }, windows: [{ kind: "daily", label: "Pro", used_pct: used }], fetched_at: new Date().toISOString() };

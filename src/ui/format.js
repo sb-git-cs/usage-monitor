@@ -103,7 +103,16 @@ const MARKS = {
   grok: "M6.469 8.776 16.512 23h-4.464L2.005 8.776H6.47zm-.004 7.9 2.233 3.164L6.467 23H2l4.465-6.324zM22 2.582V23h-3.659V7.764L22 2.582zM22 1l-9.952 14.095-2.233-3.163L17.533 1H22z",
   cursor: "M5 3.2 19.8 12 12.4 14.5 10.5 21.4 5 3.2z",
   copilot: "M12 2.2 14.3 9.7 21.8 12 14.3 14.3 12 21.8 9.7 14.3 2.2 12 9.7 9.7 12 2.2z",
+  // Plain shapes of our own, not the vendors' logos.
+  windsurf: "M3 5l8 7-8 7v-4l4-3-4-3zM12 5l8 7-8 7v-4l4-3-4-3z",
+  kiro: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12z",
+  amp: "M13.5 2 4 14h6.5L9.5 22 20 9.5h-6.5z",
+  opencode: "M3 3h18v18H3zM8 8v8h8V8z",
+  qwen: "M12 2l8.66 5v10L12 22l-8.66-5V7zM12 8l3.46 2v4L12 16l-3.46-2v-4z",
+  kimi: "M12 2 22 12 12 22 2 12zM12 7l5 5-5 5-5-5z",
 };
+// For an id with no mark of its own: three plain bars.
+const GENERIC_MARK = "M4 6h16v3H4zM4 10.5h16v3H4zM4 15h10v3H4z";
 
 const MARK_TITLES = {
   x_subscription: "X Subscription",
@@ -113,10 +122,16 @@ const MARK_TITLES = {
   grok: "xAI",
   cursor: "Cursor",
   copilot: "GitHub Copilot",
+  windsurf: "Windsurf / Devin (Cognition)",
+  kiro: "Kiro (AWS)",
+  amp: "Amp (Sourcegraph)",
+  opencode: "OpenCode",
+  qwen: "Qwen (Alibaba)",
+  kimi: "Kimi (Moonshot)",
 };
 
 function mark(id) {
-  const d = MARKS[id] || MARKS.grok;
+  const d = MARKS[id] || GENERIC_MARK;
   const title = MARK_TITLES[id] || "Usage";
   return `<svg class="brand-mark" viewBox="0 0 24 24" fill-rule="evenodd" aria-hidden="true" focusable="false"><title>${title}</title><path fill="currentColor" d="${d}"/></svg>`;
 }
@@ -127,6 +142,12 @@ function letter(id) {
   if (id === "gemini") return "M";
   if (id === "cursor") return "R";
   if (id === "copilot") return "P";
+  if (id === "windsurf") return "W";
+  if (id === "kiro") return "K";
+  if (id === "amp") return "A";
+  if (id === "opencode") return "O";
+  if (id === "qwen") return "Q";
+  if (id === "kimi") return "I";
   return "G";
 }
 

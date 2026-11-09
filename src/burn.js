@@ -19,7 +19,7 @@ function slopePerHour(points) {
   return d > 0 ? (n * sxy - sx * sy) / d : 0;
 }
 
-const NAMES = { claude: "Claude Code", codex: "Codex", gemini: "Gemini", grok: "Grok Build", cursor: "Cursor", copilot: "Copilot", x_subscription: "X Subscription" };
+const NAMES = { claude: "Claude Code", codex: "Codex", gemini: "Gemini", grok: "Grok Build", cursor: "Cursor", copilot: "Copilot", windsurf: "Windsurf", kiro: "Kiro", amp: "Amp", opencode: "OpenCode", qwen: "Qwen Code", kimi: "Kimi Code", x_subscription: "X Subscription" };
 
 function lookbackMs(kind) {
   return kind === "five_hour" || kind === "daily" ? 3600000 : 21600000;

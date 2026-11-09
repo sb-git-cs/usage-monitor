@@ -62,6 +62,75 @@ function cursorStateDb() {
   return path.join(cursorDir(), "User", "globalStorage", "state.vscdb");
 }
 
+// Devin CLI: settings under the config dir, sign-in and sessions under the data dir.
+function devinConfigDir() {
+  if (process.platform === "win32") return path.join(appData(), "devin");
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home(), ".config"), "devin");
+}
+
+function devinDataDir() {
+  if (process.platform === "win32") return path.join(appData(), "devin");
+  return path.join(home(), ".local", "share", "devin");
+}
+
+// Windsurf was renamed Devin Desktop; the editor keeps its state in whichever folder the install used.
+function devinStateDbs() {
+  return ["Devin", "Windsurf", "Windsurf - Next"].map((name) =>
+    path.join(editorUserData(), name, "User", "globalStorage", "state.vscdb")
+  );
+}
+
+function editorUserData() {
+  if (process.platform === "win32") return process.env.APPDATA || path.join(home(), "AppData", "Roaming");
+  if (process.platform === "darwin") return path.join(home(), "Library", "Application Support");
+  return process.env.XDG_CONFIG_HOME || path.join(home(), ".config");
+}
+
+function kiroHome() {
+  return process.env.KIRO_HOME || path.join(home(), ".kiro");
+}
+
+// Where the Windows build keeps data.sqlite3 is unconfirmed, so every likely folder is offered.
+function kiroDataDirs() {
+  if (process.platform === "win32") {
+    return [
+      path.join(localAppData(), "kiro-cli"),
+      path.join(appData(), "kiro-cli"),
+      path.join(home(), ".local", "share", "kiro-cli"),
+    ];
+  }
+  if (process.platform === "darwin") return [path.join(home(), "Library", "Application Support", "kiro-cli")];
+  return [path.join(process.env.XDG_DATA_HOME || path.join(home(), ".local", "share"), "kiro-cli")];
+}
+
+function awsSsoCache() {
+  return path.join(home(), ".aws", "sso", "cache");
+}
+
+// Amp uses XDG-style folders on every platform, Windows included.
+function ampDataDir() {
+  if (process.env.AMP_DATA_HOME) return process.env.AMP_DATA_HOME;
+  const base = process.env.XDG_DATA_HOME || path.join(home(), ".local", "share");
+  return path.join(base, "amp");
+}
+
+function ampHome() {
+  return process.env.AMP_HOME || path.join(home(), ".amp");
+}
+
+function opencodeDataDir() {
+  const base = process.env.XDG_DATA_HOME || path.join(home(), ".local", "share");
+  return path.join(base, "opencode");
+}
+
+function qwenHome() {
+  return process.env.QWEN_HOME || path.join(home(), ".qwen");
+}
+
+function kimiCodeHome() {
+  return process.env.KIMI_CODE_HOME || path.join(home(), ".kimi-code");
+}
+
 function ghHosts() {
   const files = [path.join(home(), ".config", "gh", "hosts.yml")];
   if (process.platform === "win32") files.push(path.join(appData(), "GitHub CLI", "hosts.yml"));
@@ -177,6 +246,17 @@ module.exports = {
   cursorDir,
   cursorAuth,
   cursorStateDb,
+  devinConfigDir,
+  devinDataDir,
+  devinStateDbs,
+  kiroHome,
+  kiroDataDirs,
+  awsSsoCache,
+  ampDataDir,
+  ampHome,
+  opencodeDataDir,
+  qwenHome,
+  kimiCodeHome,
   ghHosts,
   agyBinaryCandidates,
   localAppData,

@@ -13,6 +13,12 @@
   --grok: #d6d3d1;
   --cursor: #e8c07a;
   --copilot: #c4b5fd;
+  --windsurf: #2dd4bf;
+  --kiro: #e879f9;
+  --amp: #fb7185;
+  --opencode: #a3e635;
+  --qwen: #fdba74;
+  --kimi: #38bdf8;
   --net-rx: #3987e5;
   --net-tx: #d95926;
   --bar-track: #1f2937;
@@ -111,6 +117,12 @@ html.fit .chips { pointer-events: auto; }
 .pct-icon[data-id="grok"] .who { color: var(--grok); }
 .pct-icon[data-id="cursor"] .who { color: var(--cursor); }
 .pct-icon[data-id="copilot"] .who { color: var(--copilot); }
+.pct-icon[data-id="windsurf"] .who { color: var(--windsurf); }
+.pct-icon[data-id="kiro"] .who { color: var(--kiro); }
+.pct-icon[data-id="amp"] .who { color: var(--amp); }
+.pct-icon[data-id="opencode"] .who { color: var(--opencode); }
+.pct-icon[data-id="qwen"] .who { color: var(--qwen); }
+.pct-icon[data-id="kimi"] .who { color: var(--kimi); }
 .pct-icon.red { color: #fecaca; border-color: #ef4444; }
 .pct-icon.green { color: #bbf7d0; border-color: #16a34a; }
 .pct-icon.gray { color: #9ca3af; border-color: #6b7280; }
@@ -226,7 +238,8 @@ button:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 
 .chips.light .session-chip.limited { color: #92400e; }
 .chips.light .session-model { color: #506078; }
 .chips.light .system-chip.busy .system-value { color: #92400e; }
-.chips.light { --grok: #57534e; --cursor: #785c0e; --copilot: #6d28d9; }
+.chips.light { --grok: #57534e; --cursor: #785c0e; --copilot: #6d28d9;
+  --windsurf: #0f766e;  --kiro: #a21caf;  --amp: #be123c;  --opencode: #4d7c0f;  --qwen: #9a3412;  --kimi: #0369a1; }
 
 .chips { gap: 3px; padding-left: 2px; padding-right: 3px; }
 .chips.docked.fill { gap: 2px; padding-left: 2px; padding-right: 3px; }

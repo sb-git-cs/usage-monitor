@@ -8,6 +8,12 @@ const names = {
   grok: "Grok Build",
   cursor: "Cursor",
   copilot: "Copilot",
+  windsurf: "Windsurf",
+  kiro: "Kiro",
+  amp: "Amp",
+  opencode: "OpenCode",
+  qwen: "Qwen Code",
+  kimi: "Kimi Code",
   x_subscription: "X Subscription",
 };
 

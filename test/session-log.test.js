@@ -219,13 +219,19 @@ test("each CLI reopens a session by id, with its skip-permissions flag only when
     gemini: [["--resume", "abc"], "--approval-mode=yolo"],
     "cursor-agent": [["--resume", "abc"], "--force"],
     copilot: [["--resume=abc"], "--allow-all-tools"],
+    windsurf: [["-r", "abc"], null],
+    kiro: [["chat", "--resume-id", "abc"], null],
+    amp: [["threads", "continue", "abc"], null],
+    opencode: [["--session", "abc"], null],
+    qwen: [["--resume", "abc"], "--approval-mode=yolo"],
+    kimi: [["--session", "abc"], null],
   };
   assert.deepEqual(Object.keys(RESUME).sort(), Object.keys(cases).sort());
   for (const [cli, [args, flag]] of Object.entries(cases)) {
     const entry = { cli, id: "abc", name: "Fix it", cwd: "D:\\x", godmode: false };
     const plain = resumeCommand(entry);
     assert.deepEqual(plain, { label: RESUME[cli].label, title: `${RESUME[cli].label} · Fix it`, file: RESUME[cli].file, args }, cli);
-    assert.deepEqual(resumeCommand({ ...entry, godmode: true }).args, [...args, flag], cli);
+    assert.deepEqual(resumeCommand({ ...entry, godmode: true }).args, flag ? [...args, flag] : args, cli);
   }
   assert.deepEqual(resumeCommand({ cli: "codex", id: "01a1-x", godmode: true }).args, ["resume", "01a1-x", "--dangerously-bypass-approvals-and-sandbox"]);
   assert.equal(resumeCommand({ cli: "codex", id: "01a1-x", cwd: "D:\\work\\api" }).title, "Codex · api");

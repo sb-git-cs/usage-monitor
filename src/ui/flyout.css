@@ -58,6 +58,12 @@
   --grok: #57534e;
   --cursor: #a16207;
   --copilot: #7c3aed;
+  --windsurf: #0f766e;
+  --kiro: #a21caf;
+  --amp: #be123c;
+  --opencode: #4d7c0f;
+  --qwen: #9a3412;
+  --kimi: #0369a1;
 }
 html.side-panel, html.side-panel body { width: 100%; height: 100%; overflow: hidden; }
 /* The panel is fitted to the screen; it scrolls only when the smallest layout still overflows. */
@@ -139,6 +145,12 @@ html.side-panel, html.side-panel body { width: 100%; height: 100%; overflow: hid
 .accent-grok, .accent-x_subscription { --accent-color: var(--grok); }
 .accent-cursor { --accent-color: var(--cursor); }
 .accent-copilot { --accent-color: var(--copilot); }
+.accent-windsurf { --accent-color: var(--windsurf); }
+.accent-kiro { --accent-color: var(--kiro); }
+.accent-amp { --accent-color: var(--amp); }
+.accent-opencode { --accent-color: var(--opencode); }
+.accent-qwen { --accent-color: var(--qwen); }
+.accent-kimi { --accent-color: var(--kimi); }
 .flyout .p-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; min-width: 0; }
 .flyout .p-name { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 650; min-width: 0; white-space: nowrap; }
 .flyout .p-name > span:not(.glyph):not(.session-count) { overflow: hidden; text-overflow: ellipsis; }

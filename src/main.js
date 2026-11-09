@@ -103,6 +103,12 @@ const USAGE_URLS = {
   x_subscription: "https://grok.com/?_s=usage",
   cursor: "https://cursor.com/dashboard",
   copilot: "https://github.com/settings/copilot",
+  windsurf: "https://app.devin.ai/settings/usage",
+  kiro: "https://kiro.dev/pricing/",
+  amp: "https://ampcode.com/settings",
+  opencode: "https://opencode.ai/console",
+  qwen: "https://chat.qwen.ai/?memberPlan=qwen_code&entry=qwen_code",
+  kimi: "https://www.kimi.com/code/console",
 };
 
 function ui(file) {

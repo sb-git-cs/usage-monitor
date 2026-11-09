@@ -6,7 +6,7 @@ const { PROVIDERS } = require("./models");
 
 const ALLOWED_INTERVALS = [5, 15, 30, 60];
 const ALERT_THRESHOLDS = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
-const CHIP_KEYS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "sessions", "battery", "cpu", "mem", "gpu", "disk", "space"];
+const CHIP_KEYS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "windsurf", "kiro", "amp", "opencode", "qwen", "kimi", "sessions", "battery", "cpu", "mem", "gpu", "disk", "space"];
 const PROVIDER_IDS = PROVIDERS.map((p) => p.id);
 const UPDATE_CHANNELS = ["stable", "beta"];
 const PHONE_PORT = 47329;
@@ -113,7 +113,7 @@ function normalizeQuietHours(raw) {
   };
 }
 
-const ACCOUNT_IDS = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+const ACCOUNT_IDS = ["claude", "codex", "gemini", "grok", "cursor", "copilot", "windsurf", "kiro", "amp", "opencode", "qwen", "kimi"];
 
 function normalizeAccounts(raw) {
   const src = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
@@ -231,6 +231,7 @@ module.exports = {
   ALLOWED_INTERVALS,
   ALERT_THRESHOLDS,
   CHIP_KEYS,
+  ACCOUNT_IDS,
   PROVIDER_IDS,
   UPDATE_CHANNELS,
   load,

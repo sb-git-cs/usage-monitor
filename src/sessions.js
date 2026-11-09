@@ -55,13 +55,17 @@ const OTHER_LIMIT_ON_SCREEN = [
   "quota exceeded for quota metric",
   "resource_exhausted",
   "(?:individual )?quota reached",
+  "usage limit has been reached",
+  "used up your (?:[\\w-]+ ){0,2}credits",
 ].join("|");
 // The message must be among the newest lines: below it are only the prompt box and footer.
 const OTHER_LINES = 12;
 // Launch forms that are not an interactive session.
 const OTHER_NON_TUI = new Set(["-p", "--print", "--prompt", "-v", "-V", "--version", "-h", "--help", "help", "login", "logout",
-  "update", "upgrade", "mcp", "acp", "serve", "server", "daemon", "worker-server", "status", "completion", "doctor"]);
-const OTHER_PROMPT_FLAGS = new Set(["-p", "--print", "--prompt"]);
+  "update", "upgrade", "mcp", "acp", "serve", "server", "daemon", "worker-server", "status", "completion", "doctor",
+  "auth", "threads", "usage", "account", "whoami", "run", "service", "stats", "export", "import-sessions", "migrate", "web",
+  "uninstall", "settings", "agent", "session", "sessions"]);
+const OTHER_PROMPT_FLAGS = new Set(["-p", "--print", "--prompt", "--no-interactive", "-x", "--execute"]);
 // exe: the process name; script: the program on a node.exe command line. working / idle: what that
 // CLI draws while a turn runs and while it waits at an empty prompt (from each CLI's own interface
 // text). A dialog's "Esc to cancel" is not a running turn, so each CLI has its own pattern.
@@ -80,8 +84,16 @@ const OTHER_CLIS = [
     working: /ctrl\+c to stop/i, idle: /plan, search, build anything|add a follow-up/i },
   // Copilot: the npm loader starts the native copilot.exe in the same terminal; the loader is the session.
   { tool: "copilot", program: "copilot", label: "Copilot CLI", exe: /^copilot$/i, script: /[\\/]@github[\\/]copilot[\\/][^"\s]*\.js"?/i, working: /\(esc to cancel\b|esc to interrupt/i },
+  // The tools below have no known working/idle screen text yet, so they list as running.
+  { tool: "windsurf", program: "windsurf", label: "Devin CLI", exe: /^devin$/i },
+  { tool: "kiro", program: "kiro", label: "Kiro CLI", exe: /^kiro-cli$/i },
+  // The desktop app is also Amp.exe, so the command line must point at the CLI.
+  { tool: "amp", program: "amp", label: "Amp", exe: /^amp$/i, path: /[\\/]\.amp[\\/]bin[\\/]|[\\/]@ampcode[\\/]cli[\\/]/i },
+  { tool: "opencode", program: "opencode", label: "OpenCode", exe: /^opencode$/i },
+  { tool: "qwen", program: "qwen", label: "Qwen Code", exe: /^qwen$/i, script: /[\\/]@qwen-code[\\/]qwen-code[\\/][^"\s]*\.js"?/i },
+  { tool: "kimi", program: "kimi", label: "Kimi Code", exe: /^kimi$/i, script: /[\\/]@moonshot-ai[\\/]kimi-code[\\/]dist[\\/]main\.mjs"?/i },
 ];
-const OTHER_NAMES = ["grok", "agent", "agy", "gemini", "cursor-agent", "copilot", "node"];
+const OTHER_NAMES = ["grok", "agent", "agy", "gemini", "cursor-agent", "copilot", "devin", "kiro-cli", "amp", "opencode", "qwen", "kimi", "node"];
 // Of the node.exe processes (editors, servers, tools), the helper returns only these CLIs.
 const NODE_ONLY = { name: "node", cmd: OTHER_CLIS.filter((c) => c.script).map((c) => c.script.source).join("|") };
 // `codex <subcommand>` forms that are not an interactive terminal session.

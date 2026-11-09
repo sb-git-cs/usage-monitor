@@ -26,6 +26,12 @@ const TOOLS = {
   grok: { label: "Grok Build", url: "https://accounts.x.ai/sign-in", file: "grok", args: ["login"] },
   cursor: { label: "Cursor", url: "https://cursor.com/login", file: "cursor-agent", args: ["login"] },
   copilot: { label: "Copilot", url: "https://github.com/login", file: "gh", args: ["auth", "login"] },
+  windsurf: { label: "Windsurf", url: "https://app.devin.ai/settings/usage", file: "devin", args: ["auth", "login"] },
+  kiro: { label: "Kiro", url: "https://kiro.dev/pricing/", file: "kiro-cli", args: ["login"] },
+  amp: { label: "Amp", url: "https://ampcode.com/settings", file: "amp", args: ["login"] },
+  opencode: { label: "OpenCode", url: "https://opencode.ai/console", file: "opencode", args: ["auth", "login"] },
+  qwen: { label: "Qwen Code", url: "https://chat.qwen.ai/?memberPlan=qwen_code&entry=qwen_code", file: "qwen", args: [] },
+  kimi: { label: "Kimi Code", url: "https://www.kimi.com/code/console", file: "kimi", args: ["login"] },
 };
 
 const ACCOUNT_ID = /^[A-Za-z0-9_.:@-]{1,200}$/;
@@ -327,6 +333,13 @@ async function refresh(preferred, enabled = () => true) {
     grok: on("grok", () => readGrok(preferred && preferred.grok)),
     cursor: on("cursor", readCursor),
     copilot: blank("copilot"),
+    // Their labels arrive through observe() once the adapters read them.
+    windsurf: blank("windsurf"),
+    kiro: blank("kiro"),
+    amp: blank("amp"),
+    opencode: blank("opencode"),
+    qwen: blank("qwen"),
+    kimi: blank("kimi"),
   };
   try {
     if (enabled("gemini")) next.gemini = await readGemini();

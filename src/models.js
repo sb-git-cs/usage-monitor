@@ -7,10 +7,16 @@ const PROVIDERS = [
   { id: "grok", displayName: "Grok Build" },
   { id: "cursor", displayName: "Cursor" },
   { id: "copilot", displayName: "Copilot" },
+  { id: "windsurf", displayName: "Windsurf" },
+  { id: "kiro", displayName: "Kiro" },
+  { id: "amp", displayName: "Amp" },
+  { id: "opencode", displayName: "OpenCode" },
+  { id: "qwen", displayName: "Qwen Code" },
+  { id: "kimi", displayName: "Kimi Code" },
 ];
 
 // These stay off the strip until the app is installed or a login is present.
-const OPTIONAL_PROVIDERS = new Set(["cursor", "copilot"]);
+const OPTIONAL_PROVIDERS = new Set(["cursor", "copilot", "windsurf", "kiro", "amp", "opencode", "qwen", "kimi"]);
 
 function percentage(value) {
   if (typeof value !== "number" && typeof value !== "string") return null;

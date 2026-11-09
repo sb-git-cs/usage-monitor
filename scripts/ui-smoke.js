@@ -691,8 +691,8 @@ async function checkSettings() {
       nav: document.querySelectorAll('.nav-link').length,
       active: document.querySelectorAll('.nav-link.active').length,
     })`);
-    assert.deepEqual(appearance.names, ["Codex", "Claude Code", "Gemini", "Grok Build", "Cursor", "Copilot"]);
-    assert.deepEqual(appearance.shown, [true, true, true, true, true, false]);
+    assert.deepEqual(appearance.names, ["Codex", "Claude Code", "Gemini", "Grok Build", "Cursor", "Copilot", "Windsurf", "Kiro", "Amp", "OpenCode", "Qwen Code", "Kimi Code"]);
+    assert.deepEqual(appearance.shown, [true, true, true, true, true, false, true, true, true, true, true, true]);
     assert.equal(appearance.firstUp, true, "the first plan cannot move up");
     assert.equal(appearance.nav, 10);
     assert.equal(appearance.active, 1, "the section in view is marked");
@@ -701,7 +701,7 @@ async function checkSettings() {
     assert.deepEqual(patches.at(-1), { display: { theme: "light" } });
     await win.webContents.executeJavaScript(`document.querySelectorAll('#displayProviders .order-btn')[1].click()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.deepEqual(patches.at(-1), { display: { order: ["claude", "codex", "gemini", "grok", "cursor", "copilot"] } });
+    assert.deepEqual(patches.at(-1), { display: { order: ["claude", "codex", "gemini", "grok", "cursor", "copilot", "windsurf", "kiro", "amp", "opencode", "qwen", "kimi"] } });
     await win.webContents.executeJavaScript(`document.querySelectorAll('#displayProviders input')[5].click()`);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(patches.at(-1), { display: { hidden: [] } });

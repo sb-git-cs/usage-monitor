@@ -90,7 +90,7 @@ test("the 14-day period reports 14 days, not the 7-day fallback", (t) => {
 test("display preferences validate theme, scale, visibility and provider order", () => {
   const result = displayPrefs({ theme: "invalid", scale: 1000, hidden: ["codex", "bad"], order: ["cursor", "cursor", "bad"] });
   assert.equal(result.theme, "system"); assert.equal(result.scale, "auto");
-  assert.deepEqual(result.hidden, ["codex"]); assert.equal(result.order[0], "cursor"); assert.equal(result.order.length, 6);
+  assert.deepEqual(result.hidden, ["codex"]); assert.equal(result.order[0], "cursor"); assert.equal(result.order.length, 12);
 });
 test("a reset time repeated with a second of jitter keeps one segment and the five-minute spacing", (t) => {
   const f = fixture(t); const reset = f.now() + 3600000;

@@ -234,7 +234,7 @@ function names(list) {
 // A reading that arrives while an account menu is open waits until it closes, so the open
 // menu is not replaced under the pointer.
 let pendingSnapshot = null;
-const ACCOUNT_TOOLS = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+const ACCOUNT_TOOLS = UsageModels.PROVIDERS.map((p) => p.id);
 
 function accountMenu(p) {
   if (!ACCOUNT_TOOLS.includes(p.id)) return "";
@@ -434,7 +434,8 @@ window.usage.onNet(renderNet);
 
 const sessionCard = document.getElementById("sessions");
 const autoResume = document.getElementById("autoResume");
-const TOOL_NAMES = { claude: "Claude Code", codex: "Codex", grok: "Grok Build", gemini: "Gemini", cursor: "Cursor Agent", copilot: "Copilot CLI" };
+const TOOL_NAMES = { claude: "Claude Code", codex: "Codex", grok: "Grok Build", gemini: "Gemini", cursor: "Cursor Agent", copilot: "Copilot CLI",
+  windsurf: "Devin CLI", kiro: "Kiro CLI", amp: "Amp", opencode: "OpenCode", qwen: "Qwen Code", kimi: "Kimi Code" };
 
 // [text, element carrying a countdown]
 function sessionLine(s) {

@@ -133,7 +133,7 @@ test("copilot names the gh login from hosts.yml, so each GitHub account keeps it
 });
 
 test("cursor and copilot stay off the snapshot until they are installed", async () => {
-  const ids = ["claude", "codex", "gemini", "grok", "cursor", "copilot"];
+  const ids = require("../src/models").PROVIDERS.map((p) => p.id);
   const mocks = { "./cache": { loadSnapshot: () => null, saveSnapshot() {} } };
   for (const id of ids) {
     mocks[`./adapters/${id}`] = { fetchUsage: async () => ({ id, status: { state: "ok" }, windows: [], display_name: id }) };
@@ -142,7 +142,7 @@ test("cursor and copilot stay off the snapshot until they are installed", async 
   mocks["./adapters/copilot"].fetchUsage = async () => ({ id: "copilot", status: { state: "logged_out" }, windows: [] });
   const poller = load("src/poller.js", mocks);
   const snap = await poller.pollOnce({});
-  assert.deepEqual(snap.providers.map((item) => item.id), ["claude", "codex", "gemini", "grok", "copilot"]);
+  assert.deepEqual(snap.providers.map((item) => item.id), ["claude", "codex", "gemini", "grok", "copilot", "windsurf", "kiro", "amp", "opencode", "qwen", "kimi"]);
 });
 
 test("Cursor and Copilot reject missing and malformed quota numbers", () => {
