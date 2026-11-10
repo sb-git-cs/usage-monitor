@@ -22,7 +22,7 @@ app.on("window-all-closed", () => {});
 
 // ---- demo data -------------------------------------------------------------------
 
-const { now, snapshot, batteryView, netSummary, updateState, sessionsView } = require("./demo-data");
+const { now, snapshot, batteryView, netSummary, updateState, sessionsView, filesScan } = require("./demo-data");
 
 function findDefender() {
   const base = "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform";
@@ -124,7 +124,7 @@ async function renderPage(page, { width, height, transparent, crop, setup }) {
     transparent: !!transparent,
     backgroundColor: transparent ? "#00000000" : "#1a1a19",
     webPreferences: {
-      preload: path.join(SRC, page === "net" ? "net-preload.js" : "preload.js"),
+      preload: path.join(SRC, page === "net" ? "net-preload.js" : page === "files" ? "files-preload.js" : "preload.js"),
       contextIsolation: true,
       sandbox: true,
       offscreen: true,
@@ -294,6 +294,14 @@ async function main() {
   if (!kept) fs.writeFileSync(path.join(OUT, "network.png"), netImage.toPNG());
   const network = saveTmp("network.png", netImage);
 
+  // Session files: the demo sessions' files under a made-up folder; nothing is read from disk.
+  const scan = filesScan("D:\\work");
+  for (const f of scan.sessions[0].files) if (f.name.length > 40) f.name = "architecture-overview.png";
+  const filesView = require("../src/files-window").buildView(scan, { days: 7, running: ["claude:demo"] }).view;
+  ipcMain.handle("files:get", () => filesView);
+  const filesImage = await renderPage("files", { width: 1080, height: 640, setup: async () => {} });
+  fs.writeFileSync(path.join(OUT, "session-files.png"), filesImage.toPNG());
+
   // Desktop scene: network window, flyout resting on the taskbar, chips in the taskbar.
   const W = 1440;
   const H = 900;
@@ -372,7 +380,7 @@ async function main() {
     OH
   );
   fs.writeFileSync(path.join(OUT, "overview.png"), overview.toPNG());
-  const written = ["tray-flyout.png", "overview.png", ...(kept ? [] : ["network.png"])];
+  const written = ["tray-flyout.png", "overview.png", "session-files.png", ...(kept ? [] : ["network.png"])];
   console.log(`wrote ${written.map((f) => path.join("docs", "screenshots", f)).join(", ")}`);
 }
 

@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld("usage", {
   getPrefs: () => ipcRenderer.invoke("usage://get-prefs"),
   openSettings: () => ipcRenderer.send("usage://open-settings"),
   openInsights: (tab) => ipcRenderer.send("usage://open-insights", tab),
+  openFiles: (key) => ipcRenderer.send("usage://open-files", key || null),
   pairPhone: () => ipcRenderer.invoke("usage://pair-phone"),
   cancelPair: () => ipcRenderer.invoke("usage://pair-cancel"),
   getPairing: () => ipcRenderer.invoke("usage://get-pairing"),

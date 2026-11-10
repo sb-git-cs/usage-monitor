@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.17.0 — unreleased
+
+- **Session files.** A new window lists the files each coding session produced, session by session, for Claude Code, Codex and Grok Build sessions of the last 7 or 30 days. Open it from the panel's header, from **Files ›** on the Sessions card, from the file count on a session's row (it opens at that session), or from the tray menu (**Session files…**).
+  - **Created** and **Edited** come from the session's own record: Claude Code's transcripts (with its sub-agents' and the file changes it recorded for shell commands), Codex's rollouts (completed file changes only) and Grok Build's session updates (completed calls only). A file the session created and later edited stays Created; one it deleted is dropped.
+  - **Generated** is a best guess for what a script built: a document, spreadsheet, deck, image, archive or media file that appeared or changed in the session's folder while the session was working on a turn. Dependency, build, cache, upload and scratch folders are not searched, and a file that any session's record says it wrote is never listed as another session's generated file.
+  - Each file has **Open**, **Show in folder** and **Copy path**. Open is offered only for documents and media; a script or program gets Show in folder instead, so a click never runs something a model wrote. The page names files by an id, never by a path, and the file is checked on disk again before it is opened.
+  - Filter by kind, search by file or folder name, and tick **Show deleted files** for the ones that are gone. A long file name keeps its extension in view.
+  - The session records are read in the background, a few megabytes at a time, and only what was appended since the last read; what was found is kept in `session-files.json` under the cache folder, so a restart does not read them again. It holds paths, times and a short title, never file contents.
+- **A tidier Sessions card.** Each session is one line in aligned columns: the tool's mark, the name, the model, the state, the time, then the buttons. The state has a coloured dot (green working, blue waiting for you, amber at a limit, red when a resume failed). Recent rows use the same columns for the folder and "18m ago", with the **godmode** tag next to the name. The header says "3 running · 1 at limit", with **Resume after limit** and **Files ›** on the right. A row's file count is a small tag that opens that session's files. The card is no taller than before.
+
 ## 1.16.0 — 2026-11-10
 
 - **Six more tools.** Windsurf / Devin, Kiro, Amp, OpenCode, Qwen Code and Kimi Code join the plan meters, the Sessions card and the Recent list. Each stays off the strip until it is installed or signed in on this computer, and each reads only the sign-in the tool already saved, read-only, and never refreshes a token.

@@ -3,6 +3,10 @@ const root = document.getElementById("root");
 const dockBtn = document.getElementById("dock");
 const updated = document.getElementById("updated");
 document.getElementById("insights").addEventListener("click", () => window.usage.openInsights());
+document.getElementById("files").addEventListener("click", (e) => {
+  e.stopPropagation();
+  window.usage.openFiles();
+});
 let display = { order: [], hidden: [] };
 function applyDisplay(prefs) {
   display = prefs.display || { order: [], hidden: [] };
@@ -485,17 +489,35 @@ function recentRow(r, i) {
   const closed = Date.parse(r.closed_at);
   const when = Number.isFinite(closed) ? new Date(closed).toLocaleString() : "";
   const title = `${label} · ${r.cwd || ""} · closed ${when}${r.godmode ? " · skips permissions" : ""}${showModel && r.model ? ` · ${r.model}` : ""}`;
-  const state = [folderName(r.cwd), formatAgo(closed)].filter(Boolean).join(" · ");
   const action = r.can_resume
     ? `<button class="text-btn resume" type="button" data-key="${escapeHtml(r.key)}" aria-label="${escapeHtml(`Resume ${r.name} in ${label}`)}"${resuming.has(r.key) ? " disabled" : ""}>Resume</button>`
     : `<span class="session-note">${escapeHtml(r.reason || "can't resume")}</span>`;
   // The pill says the resumed session gets its skip-permissions flag again.
   return `<div class="session-row recent accent-${escapeHtml(r.tool)}${i >= 2 ? " recent-extra" : ""}" title="${escapeHtml(title)}">
-      <span class="session-who">${mark(r.tool)}</span>
-      <span class="session-name">${escapeHtml(r.name)}</span>
-      <span class="session-state">${r.godmode ? `<span class="pill muted">godmode</span>` : ""}${modelPill(r.model)}${escapeHtml(state)}</span>
-      ${action}
+      ${sessionCells(r, r.godmode ? `<span class="pill muted">godmode</span>` : "")}
+      <span class="session-state">${escapeHtml(folderName(r.cwd))}</span>
+      <span class="session-when">${escapeHtml(formatAgo(closed))}</span>
+      <span class="session-files">${filesButton(r)}</span>
+      <span class="session-action">${action}</span>
     </div>`;
+}
+
+// The cells every row starts with, running or recent: the tool's mark, the name and the model.
+function sessionCells(s, tag = "") {
+  return `<span class="session-who">${mark(s.tool)}</span>
+      <span class="session-name"><span class="session-title">${escapeHtml(s.name)}</span>${tag}</span>
+      <span class="session-tag">${modelPill(s.model)}</span>`;
+}
+
+// The small "3 files" button on a session row; it opens the Session files window at that session.
+function filesButton(s) {
+  const n = Number(s.files) || 0;
+  if (n <= 0) return "";
+  return `<button class="text-btn files-btn" type="button" data-files-key="${escapeHtml(s.key)}" aria-label="${escapeHtml(`Show the ${n} ${n === 1 ? "file" : "files"} from ${s.name}`)}">${n} ${n === 1 ? "file" : "files"}</button>`;
+}
+
+function filesButtonFor(parent, key) {
+  return [...parent.querySelectorAll("button.files-btn")].find((b) => b.dataset.filesKey === key);
 }
 
 function resumeButton(key) {
@@ -507,11 +529,14 @@ function renderRecent(recent) {
   const html = recent.map(recentRow).join("");
   if (html === recentHtml) return;
   // A periodic update keeps keyboard focus on the Resume button it was on.
-  const focused = recentRowsEl.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+  const at = recentRowsEl.contains(document.activeElement) ? document.activeElement : null;
+  const focusedFiles = at && at.dataset.filesKey;
+  const focused = at && at.dataset.key;
   recentHtml = html;
   recentRowsEl.innerHTML = html;
   showRecent();
-  if (focused) resumeButton(focused)?.focus({ preventScroll: true });
+  if (focusedFiles) filesButtonFor(recentRowsEl, focusedFiles)?.focus({ preventScroll: true });
+  else if (focused) resumeButton(focused)?.focus({ preventScroll: true });
 }
 
 function showRecent(expand = recentExpanded) {
@@ -550,6 +575,18 @@ recentRowsEl.addEventListener("click", (e) => {
   e.stopPropagation();
   resumeRecent(button);
 });
+function openFilesFrom(e) {
+  const button = e.target.closest("button.files-btn");
+  if (!button) return;
+  e.stopPropagation();
+  window.usage.openFiles(button.dataset.filesKey);
+}
+recentRowsEl.addEventListener("click", openFilesFrom);
+document.getElementById("sessionRows").addEventListener("click", openFilesFrom);
+document.getElementById("sessionFiles").addEventListener("click", (e) => {
+  e.stopPropagation();
+  window.usage.openFiles();
+});
 recentMore.addEventListener("click", (e) => {
   e.stopPropagation();
   recentExpanded = !recentExpanded;
@@ -568,20 +605,32 @@ function renderSessions(view) {
     return;
   }
   const stopped = list.filter((s) => s.state === "limited").length;
-  document.getElementById("sessionCount").textContent = !list.length ? "" : stopped ? `${list.length} · ${stopped} at limit` : String(list.length);
+  const count = document.getElementById("sessionCount");
+  count.textContent = list.length ? `${list.length} running` : "";
+  if (stopped) {
+    const limit = document.createElement("span");
+    limit.className = "at-limit";
+    limit.textContent = ` · ${stopped} at limit`;
+    count.append(limit);
+  }
   document.getElementById("autoResumeRow").hidden = !view.can_resume;
   autoResume.checked = !!view.auto_resume;
   document.getElementById("autoResumeRow").title = 'Type "continue" into the terminal where a usage limit stopped a session, once the limit resets. Only while that terminal is open, still shows the limit message, and the session is idle.';
-  document.getElementById("sessionRows").innerHTML = list.map((s) => {
+  const rowsEl = document.getElementById("sessionRows");
+  const focusedFiles = rowsEl.contains(document.activeElement) ? document.activeElement.dataset.filesKey : null;
+  rowsEl.innerHTML = list.map((s) => {
     const [text, at] = sessionLine(s);
-    const tone = s.state === "limited" ? (s.resume === "failed" ? " alert" : " limited") : s.state === "working" ? " working" : "";
+    // "running" is a CLI that is open without saying whether it works or waits; anything else waits for the user.
+    const tone = s.state === "limited" ? (s.resume === "failed" ? " alert" : " limited") : s.state === "working" ? " working" : s.state === "running" ? "" : " waiting";
     return `<div class="session-row${tone} accent-${escapeHtml(s.tool)}" title="${escapeHtml(`${s.label || TOOL_NAMES[s.tool] || s.tool} · ${s.cwd}${showModel && s.model ? ` · ${s.model}` : ""}`)}">
-      <span class="session-who">${mark(s.tool)}</span>
-      <span class="session-name">${escapeHtml(s.name)}</span>
-      <span class="session-state${at ? "" : " wide"}">${modelPill(s.model)}${escapeHtml(text)}</span>
-      ${at ? `<span class="eta" data-reset="${escapeHtml(at)}">${formatEta(at)}</span>` : ""}
+      ${sessionCells(s)}
+      <span class="session-state">${escapeHtml(text)}</span>
+      ${at ? `<span class="session-when eta" data-reset="${escapeHtml(at)}">${formatEta(at)}</span>` : `<span class="session-when"></span>`}
+      <span class="session-files">${filesButton(s)}</span>
+      <span class="session-action"></span>
     </div>`;
   }).join("");
+  if (focusedFiles) filesButtonFor(rowsEl, focusedFiles)?.focus({ preventScroll: true });
   sessionEmpty.hidden = list.length > 0;
   renderRecent(recent);
   scheduleFit();

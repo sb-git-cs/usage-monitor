@@ -8,7 +8,7 @@ const source = process.argv.includes("--packaged")
   ? path.resolve(__dirname, "../dist/win-unpacked/resources/app.asar/src")
   : path.resolve(__dirname, "../src");
 // --only=flyout,settings checks some pages alone while working on them; all run by default.
-const CHECKS = ["flyout", "chips", "net", "settings", "insights"];
+const CHECKS = ["flyout", "chips", "net", "settings", "insights", "files"];
 const only = (process.argv.find((arg) => arg.startsWith("--only=")) || "--only=").slice(7).split(",").filter(Boolean);
 const wanted = (name) => !only.length || only.includes(name);
 app.setPath("userData", path.join(output, "electron-profile"));
@@ -44,6 +44,7 @@ let flyoutResizes = 0;
 // The window whose width requests are applied, as main does for the real panel.
 let fitWindow = null;
 const resumedKeys = [];
+const openedFiles = [];
 const accountSwitches = [];
 const future = new Date(Date.now() + 3600000).toISOString();
 const netSummary = {
@@ -173,7 +174,7 @@ async function check(file) {
       assert.match(result.net, /Used in the last hour ?↓ 120 MB\s↑ 8\.00 MB/);
       assert.ok(result.net.includes(`Now: ${hostile} 1.0 MB/s · Teams 80 KB/s`), "app names render as text");
       assert.equal(result.cards, 4);
-      assert.match(result.sessions, /^›_Sessions2 · 1 at limit Resume after limit Anthropic .* Limit reached · resumes in (1h 00m|59m) OpenAI api Working$/);
+      assert.match(result.sessions, /^›_Sessions2 running · 1 at limit Resume after limit Files › Anthropic .* Limit reached · resumes in (1h 00m|59m) OpenAI api Working$/);
       assert.ok(result.sessions.includes(hostile), "session names render as text");
       assert.equal(await win.webContents.executeJavaScript(`document.getElementById('autoResume').checked`), true);
       const past = new Date(Date.now() - 600000).toISOString();
@@ -206,6 +207,7 @@ async function check(file) {
       win.webContents.send("usage://prefs", { alert_threshold: 80, chips_show: {}, dark: true, show_session_model: true });
       await wait(100);
       assert.equal((await win.webContents.executeJavaScript(pills)).length, 3, "and brings them back");
+      await checkFilesButtons(win, withModels);
       win.webContents.send("usage://sessions", sessionsView);
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.deepEqual(result.widths, ["25%", "90%", "80%", "0%"]);
@@ -440,7 +442,7 @@ async function checkRecent(win) {
   assert.ok(card.text.includes(hostile), "recent names and folders render as text");
   assert.equal(card.injected, false);
   assert.deepEqual(card.labels, [`Resume ${hostile} in Claude Code`]);
-  assert.match(card.second, /exporter · 5m ago not installed$/);
+  assert.match(card.second, /exporter 5m ago not installed$/);
   assert.equal(card.secondButtons, 0, "a session that can't be resumed has no button");
   assert.equal(card.pill, "godmode");
   assert.match(card.title, /^Claude Code · D:\\work\\<img .* · closed .* · skips permissions$/);
@@ -917,6 +919,301 @@ async function checkInsights() {
   }
 }
 
+// A session row with files shows a count button that opens the Session files window at that session.
+async function checkFilesButtons(win, base) {
+  const js = (code) => win.webContents.executeJavaScript(code);
+  const counted = { ...base, sessions: base.sessions.map((s, i) => ({ ...s, files: i ? 0 : 3 })), recent: base.recent.map((r) => ({ ...r, files: 12 })) };
+  win.webContents.send("usage://sessions", counted);
+  await wait(150);
+  const buttons = await js(`[...document.querySelectorAll('button.files-btn')].map((b) => [b.dataset.filesKey, b.textContent, b.getAttribute('aria-label')])`);
+  assert.deepEqual(buttons, [
+    ["claude:a", "3 files", `Show the 3 files from ${hostile}`],
+    ["claude:r1", "12 files", "Show the 12 files from old"],
+  ], "only rows with files get the button");
+  const heights = await js(`[...document.querySelectorAll('#sessionRows .session-row, #recentRows .session-row:not([hidden])')].map((r) => Math.round(r.getBoundingClientRect().height))`);
+  assert.equal(new Set(heights).size, 1, `the button does not change the row height: ${heights}`);
+  assert.equal(await js(`document.querySelector('#sessionRows .session-row').scrollWidth <= document.querySelector('#sessionRows .session-row').clientWidth`), true, "the rows still fit the panel's width");
+  await js(`document.querySelector('#sessionRows button.files-btn').click()`);
+  await js(`document.querySelector('#recentRows button.files-btn').click()`);
+  await js(`document.getElementById('sessionFiles').click()`);
+  await js(`document.getElementById('files').click()`);
+  await wait(100);
+  assert.deepEqual(openedFiles.splice(0), ["claude:a", "claude:r1", null, null], "the buttons ask for the window at their session");
+  // A new reading keeps the keyboard focus on the button, as it does for Resume.
+  await js(`document.querySelector('#recentRows button.files-btn').focus()`);
+  win.webContents.send("usage://sessions", { ...counted });
+  await wait(100);
+  assert.equal(await js(`document.activeElement.dataset.filesKey`), "claude:r1", "focus stays on the files button of a recent row");
+  await js(`document.querySelector('#sessionRows button.files-btn').focus()`);
+  win.webContents.send("usage://sessions", { ...counted });
+  await wait(100);
+  assert.equal(await js(`document.activeElement.dataset.filesKey`), "claude:a", "and on a running row");
+  win.webContents.send("usage://sessions", base);
+  await wait(100);
+  assert.equal(await js(`document.querySelectorAll('button.files-btn').length`), 0, "no files, no button");
+}
+
+// The Session files window, opened through the real module with a scanner that returns demo data.
+async function checkFiles() {
+  const { nativeTheme, shell, clipboard } = require("electron");
+  const demo = require("./demo-data");
+  const filesWindow = require(path.join(source, "files-window"));
+  const dir = path.join(output, `files-demo-${process.pid}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+  const scan = demo.filesScan(dir);
+  const api = path.join(dir, "api-gateway");
+  // A name that would be markup, on a deleted file so that nothing has to be written for it.
+  scan.sessions[0].files.push({ path: path.join(api, hostile), name: hostile, kind: "created", at: new Date().toISOString(), exists: false, size: null, modified: null });
+  scan.sessions[2].name = hostile;
+  scan.sessions.push({ key: "cursor:x", tool: "cursor", label: "Cursor Agent", id: "x", name: "switched off", cwd: dir, started: null, last_active: new Date().toISOString(),
+    files: [{ path: path.join(dir, "off.md"), name: "off.md", kind: "created", at: new Date().toISOString(), exists: false, size: null, modified: null }] });
+  for (const s of scan.sessions) {
+    for (const f of s.files) {
+      if (!f.exists) continue;
+      fs.mkdirSync(path.dirname(f.path), { recursive: true });
+      fs.writeFileSync(f.path, "demo");
+    }
+  }
+  let result = scan;
+  const asked = [];
+  const scanner = { scan: async (options) => { asked.push(options); if (result instanceof Error) throw result; return result; } };
+  // Records what the page sends, then hands over to the real handlers.
+  const calls = [];
+  const realHandle = ipcMain.handle.bind(ipcMain);
+  ipcMain.handle = (channel, fn) => realHandle(channel, (e, ...args) => { calls.push([channel, ...args]); return fn(e, ...args); });
+  filesWindow.init({ scanner, providerOn: (tool) => tool !== "cursor", running: () => ["claude:demo"], prefs: () => ({ dark: true }), hidden: true });
+  ipcMain.handle = realHandle;
+  // Nothing is opened for real.
+  const opened = [];
+  const stubs = { openPath: shell.openPath, showItemInFolder: shell.showItemInFolder, writeText: clipboard.writeText };
+  shell.openPath = async (p) => { opened.push(["open", p]); return ""; };
+  shell.showItemInFolder = (p) => { opened.push(["reveal", p]); };
+  clipboard.writeText = (t) => { opened.push(["copy", t]); };
+
+  const before = new Set(BrowserWindow.getAllWindows());
+  const errors = [];
+  let win = null;
+  const js = (code) => win.webContents.executeJavaScript(code);
+  const text = (selector) => js(`[...document.querySelectorAll(${JSON.stringify(selector)})].map((n) => n.textContent.trim())`);
+  const names = () => text(".frow .f-name");
+  const sessionNames = () => text(".srow .s-name");
+  const counts = () => js(`['all', 'created', 'edited', 'generated'].map((k) => document.getElementById('n-' + k).textContent).join(' ')`);
+  const idOf = (name) => js(`[...document.querySelectorAll('.frow')].find((r) => r.querySelector('.f-name').textContent === ${JSON.stringify(name)}).dataset.id`);
+  const refresh = async () => { await js(`load(true)`); await wait(60); };
+  const selected = () => js(`document.querySelector('.srow[aria-current]')?.dataset.key ?? null`);
+  const type = async (value) => { await js(`(() => { const q = document.getElementById('query'); q.value = ${JSON.stringify(value)}; q.dispatchEvent(new Event('input', { bubbles: true })); })()`); await wait(40); };
+  const open = async (key) => {
+    filesWindow.open(key);
+    win = BrowserWindow.getAllWindows().find((w) => !before.has(w) && w.webContents.getURL().endsWith("files.html")) || BrowserWindow.getAllWindows().find((w) => !before.has(w));
+    win.webContents.on("console-message", (details) => { if (details.level === "error") errors.push(details.message); });
+    const until = Date.now() + 8000;
+    while (Date.now() < until && !(await js(`document.getElementById('stateBox').hidden && !document.getElementById('main').hidden`).catch(() => false))) await wait(50);
+    await wait(50);
+  };
+  try {
+    await open();
+    await win.webContents.insertCSS("*, *::before, *::after { animation: none !important; transition: none !important; }");
+    assert.equal(win.isVisible(), false, "the smoke test drives the window without showing it");
+    assert.deepEqual(asked.at(0), { days: 7 }, "the first reading is for 7 days");
+    assert.equal(await js(`typeof require`), "undefined");
+    assert.equal(await js(`document.title`), "Session files");
+
+    // Sessions and files; a switched-off tool does not appear; the deleted files are not counted.
+    assert.deepEqual(await sessionNames(), ["api-gateway", "Add pagination to the orders API", hostile]);
+    assert.deepEqual(await text(".srow .s-count"), ["5", "3", "1"]);
+    assert.equal(await js(`document.querySelectorAll('.srow .run-dot').length`), 1, "one session is running");
+    assert.equal(await js(`document.querySelector('.srow .run-dot').closest('.srow').dataset.key`), "claude:demo");
+    assert.equal(await counts(), "9 2 4 3");
+    assert.equal(await selected(), "claude:demo", "the newest session is shown first");
+    assert.deepEqual(await names(), ["q3-report.pdf", "server.js", "design-notes.md", "build.bat", "architecture-overview-with-a-very-long-name-for-the-wrapping-check.png"]);
+    assert.deepEqual(await text(".frow .kind"), ["Generated", "Edited", "Created", "Created", "Edited"]);
+    assert.match(await js(`document.querySelector('.kind-generated').title`), /Appeared in the session's folder while it was working/);
+    assert.deepEqual(await text(".frow .f-dir"), ["out", "src", "docs", "scripts", path.join(dir, "shared")], "folders are relative to the session's folder when inside it");
+    assert.match((await text(".d-strip .d-meta"))[0], /^Claude Code · started .* · last active /);
+    assert.equal((await text(".d-path"))[0], api);
+    assert.match(await text(".frow .c-size").then((t) => t.join("|")), /^248 KB\|17\.8 KB\|5\.20 KB\|310 B\|1\.40 MB$/);
+
+    // Open is for documents; a script gets Show in folder as its first action.
+    const rowButtons = (name) => js(`[...[...document.querySelectorAll('.frow')].find((r) => r.querySelector('.f-name').textContent === ${JSON.stringify(name)}).querySelectorAll('button')].map((b) => b.dataset.act + (b.classList.contains('primary') ? '*' : ''))`);
+    assert.deepEqual(await rowButtons("q3-report.pdf"), ["open*", "reveal", "copy"]);
+    assert.deepEqual(await rowButtons("build.bat"), ["reveal*", "copy"], "a .bat has no Open button");
+    assert.deepEqual(await rowButtons("server.js"), ["reveal*", "copy"], "a .js has no Open button");
+    assert.equal(await js(`[...document.querySelectorAll('.frow button')].every((b) => b.getAttribute('aria-label') && b.textContent.trim())`), true, "every button has text and a label");
+
+    // Search by name and by folder, then each kind.
+    await type("report");
+    assert.deepEqual(await names(), ["q3-report.pdf"]);
+    assert.equal(await counts(), "1 0 0 1");
+    assert.equal((await sessionNames()).length, 1);
+    await type("routes");
+    assert.deepEqual(await sessionNames(), ["Add pagination to the orders API"]);
+    assert.deepEqual(await names(), ["orders.ts"]);
+    await type("zzz");
+    assert.match(await js(`document.getElementById('stateBox').textContent`), /No files match\./);
+    await type("");
+    assert.equal(await js(`document.getElementById('stateBox').hidden`), true);
+    const chip = async (kind) => { await js(`document.querySelector('.kind-chip[data-kind="${kind}"]').click()`); await wait(40); };
+    await chip("generated");
+    assert.deepEqual(await sessionNames(), ["api-gateway", "Add pagination to the orders API", hostile]);
+    assert.deepEqual(await text(".srow .s-count"), ["1", "1", "1"]);
+    assert.deepEqual(await names(), ["q3-report.pdf"]);
+    assert.equal(await js(`document.querySelector('.kind-chip[data-kind="generated"]').getAttribute('aria-pressed')`), "true");
+    await chip("edited");
+    assert.deepEqual(await names(), ["server.js", "architecture-overview-with-a-very-long-name-for-the-wrapping-check.png"]);
+    assert.deepEqual(await sessionNames(), ["api-gateway", "Add pagination to the orders API"]);
+    await chip("created");
+    assert.deepEqual(await names(), ["design-notes.md", "build.bat"]);
+    assert.deepEqual(await sessionNames(), ["api-gateway"]);
+    await chip("all");
+    assert.equal((await names()).length, 5);
+
+    // Deleted files stay out until asked for; they can still be copied but not opened.
+    assert.equal((await names()).includes("old-draft.txt"), false);
+    await js(`(() => { const c = document.getElementById('deleted'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await wait(40);
+    assert.deepEqual((await names()).slice(-2), ["old-draft.txt", hostile], "deleted files follow when ticked");
+    assert.deepEqual(await rowButtons("old-draft.txt"), ["copy"]);
+    assert.equal(await js(`document.querySelectorAll('.frow.gone').length`), 2);
+    assert.equal(await js(`!!document.querySelector('img') || !!window.injected`), false, "names render as text");
+    assert.equal(await counts(), "11 4 4 3");
+    await js(`(() => { const c = document.getElementById('deleted'); c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await wait(40);
+
+    // The page sends ids, main resolves them and refuses anything else.
+    await js(`document.querySelector('[data-act="open"]').click()`);
+    await wait(100);
+    const pdfId = await idOf("q3-report.pdf");
+    assert.deepEqual(calls.at(-1), ["files:open", pdfId]);
+    assert.match(pdfId, /^[0-9a-f]{16}$/);
+    assert.deepEqual(opened.at(-1), ["open", path.join(api, "out", "q3-report.pdf")]);
+    await js(`document.querySelector('.frow [data-act="reveal"]').click()`);
+    await js(`document.querySelector('.frow [data-act="copy"]').click()`);
+    await js(`document.querySelector('[data-act="folder"]').click()`);
+    await wait(100);
+    assert.deepEqual(opened.slice(-3), [["reveal", path.join(api, "out", "q3-report.pdf")], ["copy", path.join(api, "out", "q3-report.pdf")], ["open", api]]);
+    assert.equal(await js(`document.getElementById('toast').textContent`), "Path copied.");
+    assert.deepEqual(calls.slice(-3).map((c) => c[0]), ["files:reveal", "files:copy", "files:open-folder"]);
+    assert.equal(calls.slice(-1)[0][1], "claude:demo", "a folder is asked for by session, not by path");
+    const mark = opened.length;
+    assert.deepEqual(await js(`filesApi.open(${JSON.stringify(await idOf("build.bat"))})`), { ok: false, error: "This type of file isn't opened from here. Use Show in folder." });
+    assert.equal((await js(`filesApi.open(${JSON.stringify(path.join(api, "out", "q3-report.pdf"))})`)).ok, false, "a path is not an id");
+    assert.equal((await js(`filesApi.reveal("0123456789abcdef")`)).ok, false);
+    assert.equal((await js(`filesApi.openFolder("claude:nope")`)).ok, false);
+    assert.equal((await js(`filesApi.copy({ path: ${JSON.stringify(api)} })`)).ok, false);
+    assert.equal(opened.length, mark, "nothing was opened by those");
+    fs.rmSync(path.join(api, "out", "q3-report.pdf"));
+    assert.deepEqual(await js(`filesApi.open(${JSON.stringify(pdfId)})`), { ok: false, error: "The file is gone." }, "the file is checked again when it is opened");
+    fs.writeFileSync(path.join(api, "out", "q3-report.pdf"), "demo");
+    // Enter on a row does its first action.
+    await js(`[...document.querySelectorAll('.frow')].find((r) => r.querySelector('.f-name').textContent === 'build.bat').focus()`);
+    await js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+    await wait(150);
+    assert.deepEqual(opened.at(-1), ["reveal", path.join(api, "scripts", "build.bat")], "Enter on a script shows it in its folder");
+    // A window other than this one gets nothing.
+    const stranger = new BrowserWindow({ show: false, webPreferences: { preload: path.join(source, "files-preload.js"), contextIsolation: true, sandbox: true } });
+    await stranger.loadURL("data:text/html,<p>x</p>");
+    assert.equal(await stranger.webContents.executeJavaScript(`filesApi.get(7)`), null, "only the Session files window may ask");
+    assert.equal(await stranger.webContents.executeJavaScript(`filesApi.open(${JSON.stringify(pdfId)})`), null);
+    stranger.destroy();
+
+    // A refresh keeps the selection, the search and the elements that did not change.
+    await js(`document.querySelectorAll('.srow')[1].click()`);
+    await wait(40);
+    assert.equal(await selected(), "codex:019a3c2e-58f1-7d40-b6a2-3e9c4f1d8a05");
+    await js(`document.querySelector('.srow').dataset.mark = "kept"; document.querySelector('.frow').dataset.mark = "kept"`);
+    const readings = asked.length;
+    await refresh();
+    assert.equal(asked.length, readings + 1);
+    assert.equal(await selected(), "codex:019a3c2e-58f1-7d40-b6a2-3e9c4f1d8a05", "the choice survives a refresh");
+    assert.equal(await js(`document.querySelector('.srow').dataset.mark + document.querySelector('.frow').dataset.mark`), "keptkept", "an unchanged reading rebuilds nothing");
+    await type("o");
+    result = { ...scan, sessions: scan.sessions.map((s, i) => i ? s : { ...s, files: [...s.files, { ...s.files[0], path: path.join(api, "out", "extra.pdf"), name: "extra.pdf" }] }) };
+    await refresh();
+    assert.equal(await js(`document.getElementById('query').value`), "o", "the search text survives a refresh");
+    assert.equal(await selected(), "codex:019a3c2e-58f1-7d40-b6a2-3e9c4f1d8a05");
+    await type("");
+    assert.deepEqual(await text(".srow .s-count"), ["6", "3", "1"], "a new file shows up");
+    assert.match(await js(`document.getElementById('updated').textContent`), /^Updated /);
+
+    // A session asked for from the panel.
+    filesWindow.open("grok:demo");
+    await wait(150);
+    assert.equal(await selected(), "grok:demo", "opening again selects the session");
+    assert.deepEqual(await names(), ["bundle.js"]);
+
+    // Narrow width: one column and nothing sideways.
+    win.setSize(700, 700);
+    await wait(250);
+    await js(`document.querySelectorAll('.srow')[0].click()`);
+    await wait(100);
+    const narrow = await js(`({
+      columns: getComputedStyle(document.getElementById('main')).gridTemplateColumns.split(' ').length,
+      page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      table: (() => { const w = document.querySelector('.table-wrap'); return w.scrollWidth - w.clientWidth; })(),
+      list: (() => { const w = document.querySelector('.sessions'); return w.scrollWidth - w.clientWidth; })(),
+      bar: (() => { const w = document.querySelector('.toolbar'); return w.scrollWidth - w.clientWidth; })(),
+    })`);
+    assert.deepEqual(narrow, { columns: 1, page: 0, table: 0, list: 0, bar: 0 }, "700 px has one column and no horizontal overflow");
+    fs.writeFileSync(path.join(output, "files-narrow.png"), (await win.webContents.capturePage()).toPNG());
+    win.setSize(980, 700);
+    await wait(250);
+
+    // The states: empty, another period, a failed reading, then coverage notes.
+    result = { sessions: [], coverage: { skipped: 0, truncated: false } };
+    await refresh();
+    assert.match(await js(`document.getElementById('stateBox').textContent`), /No session has produced a file in the last 7 days\./);
+    await js(`(() => { const d = document.getElementById('days'); d.value = '30'; d.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await wait(150);
+    assert.deepEqual(asked.at(-1), { days: 30 });
+    assert.match(await js(`document.getElementById('stateBox').textContent`), /last 30 days\./);
+    result = new Error("boom");
+    await refresh();
+    assert.equal(await js(`document.getElementById('banner').hidden`), false);
+    assert.equal(await js(`document.getElementById('bannerText').textContent`), "Couldn't read the session records.");
+    result = { ...scan, coverage: { skipped: 2, truncated: true } };
+    await js(`document.getElementById('retry').click()`);
+    await wait(150);
+    assert.equal(await js(`document.getElementById('banner').hidden`), true);
+    assert.match(await js(`document.getElementById('coverage').textContent`), /^2 session records couldn't be read\. A session or a folder was too large/);
+    result = scan;
+    await refresh();
+    assert.equal(await js(`document.getElementById('coverage').hidden`), true, "the note shows only when something was left out");
+    assert.deepEqual(errors, []);
+
+    // A session asked for before the window exists is the one shown first.
+    win.destroy();
+    await wait(100);
+    await open("codex:019a3c2e-58f1-7d40-b6a2-3e9c4f1d8a05");
+    assert.equal(await selected(), "codex:019a3c2e-58f1-7d40-b6a2-3e9c4f1d8a05");
+
+    // Light and dark.
+    win.setSize(980, 700);
+    for (const theme of ["light", "dark"]) {
+      nativeTheme.themeSource = theme;
+      await wait(250);
+      assert.equal(await js(`matchMedia('(prefers-color-scheme: dark)').matches`), theme === "dark");
+      assert.equal(await js(`getComputedStyle(document.body).backgroundColor`), theme === "dark" ? "rgb(18, 18, 17)" : "rgb(244, 244, 242)");
+      await js(`document.querySelectorAll('.srow')[0].click()`);
+      await wait(100);
+      // A hidden window paints only when asked.
+      for (let n = 0; n < 5; n++) { win.webContents.invalidate(); await wait(60); }
+      const shot = await win.webContents.capturePage();
+      assert.ok(!shot.isEmpty(), `files ${theme} must render`);
+      fs.writeFileSync(path.join(output, `files-${theme}.png`), shot.toPNG());
+    }
+    assert.deepEqual(errors, []);
+    console.log("files: sessions and files, kinds, search, deleted files, Open limits, ids instead of paths, refresh, states, narrow width and both themes passed");
+  } finally {
+    nativeTheme.themeSource = "system";
+    shell.openPath = stubs.openPath;
+    shell.showItemInFolder = stubs.showItemInFolder;
+    clipboard.writeText = stubs.writeText;
+    for (const w of BrowserWindow.getAllWindows()) if (!before.has(w)) w.destroy();
+    for (const channel of ["files:get", "files:open", "files:reveal", "files:copy", "files:open-folder"]) ipcMain.removeHandler(channel);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 app.whenReady().then(async () => {
   fs.mkdirSync(output, { recursive: true });
   ipcMain.on("usage://chips-resize", () => { resizes++; });
@@ -924,6 +1221,7 @@ app.whenReady().then(async () => {
   ipcMain.on("usage://flyout-resize", (e, _h, w) => {
     flyoutResizes++;    if (fitWindow && e.sender === fitWindow.webContents) fitWindow.setSize(Math.max(320, Math.min(860, Math.round(w))), fitWindow.getSize()[1]);
   });
+  ipcMain.on("usage://open-files", (_e, key) => { openedFiles.push(key); });
   ipcMain.handle("usage://resume-session", (_e, key) => { resumedKeys.push(key); return { ok: true, message: "Resumed for the test" }; });
   ipcMain.handle("usage://account", (_e, provider, accountId) => { accountSwitches.push([provider, accountId]); return { ok: true, message: "Switched for the test" }; });
   ipcMain.handle("usage://get-interval", () => 5);
@@ -951,6 +1249,7 @@ app.whenReady().then(async () => {
     if (wanted("net")) await checkNet();
     if (wanted("settings")) await checkSettings();
     if (wanted("insights")) await checkInsights();
+    if (wanted("files")) await checkFiles();
     app.exit(0);
   } catch (err) {
     console.error(err);

@@ -22,6 +22,8 @@ const { History } = require("./history");
 const { createSessionLog, resumeCommand } = require("./session-log");
 const { Insights, displayPrefs } = require("./insights");
 const insightsWindow = require("./insights-window");
+const filesWindow = require("./files-window");
+const { createSessionFiles } = require("./session-files");
 const { PhoneLink } = require("./phone");
 const accounts = require("./accounts");
 const accountVault = require("./account-vault");
@@ -52,6 +54,7 @@ let latestSystem;
 let sessionWatch;
 let latestSessions = null;
 let sessionLog;
+let sessionFiles;
 let history;
 let insights;
 let phone;
@@ -679,6 +682,7 @@ function showFlyout(bounds) {
   flyout.focus();
   broadcastNet();
   sendPairing();
+  refreshFileCounts();
   if (chips && !cfg.chips_hidden) keepWidgetOnTop(chips, cfg.chips_docked);
 }
 
@@ -700,11 +704,54 @@ function broadcast(snap) {
 function broadcastSessions(view) {
   // The log keeps recording while the list is off, so switching it on shows the history again.
   // A tool that is switched off drops out at once; the next scan leaves it out too.
-  const shown = (rows) => (rows || []).filter((row) => providerOn(row.tool));
+  const shown = (rows) => counted((rows || []).filter((row) => providerOn(row.tool)));
   latestSessions = { ...view, sessions: shown(view.sessions), recent: cfg.recent_sessions === false ? [] : shown(view.recent) };
+  sendSessions();
+  refreshFileCounts();
+}
+
+// A row with files carries their number; the panel reads a missing one as none.
+function counted(rows) {
+  return rows.map(({ files, ...row }) => (fileCounts.get(row.key) ? { ...row, files: fileCounts.get(row.key) } : row));
+}
+
+function sendSessions() {
   for (const win of [flyout, chips]) {
     if (win && !win.isDestroyed()) win.webContents.send("usage://sessions", latestSessions);
   }
+}
+
+// How many files each listed session produced, for the buttons on the panel rows. Read from the
+// session records at most once a minute, only while the panel is open, one scan at a time. A count
+// that changed re-sends the rows with sendSessions, which does not scan, so this cannot loop.
+const fileCounts = new Map();
+let fileCountKeys = "";
+let fileCountsAt = 0;
+let fileCountsBusy = false;
+function refreshFileCounts() {
+  if (!sessionFiles || fileCountsBusy || !latestSessions) return;
+  if (!(flyout && !flyout.isDestroyed() && flyout.isVisible())) return;
+  const keys = [...new Set([...latestSessions.sessions, ...latestSessions.recent].map((row) => row.key))].sort();
+  const id = keys.join("\n");
+  if (!keys.length || (id === fileCountKeys && Date.now() - fileCountsAt < 60000)) return;
+  fileCountsBusy = true;
+  fileCountKeys = id;
+  fileCountsAt = Date.now();
+  Promise.resolve().then(() => sessionFiles.scan({ days: 30, only: new Set(keys) })).then((result) => {
+    const found = new Map(((result && result.sessions) || []).map((s) => [s.key, (s.files || []).filter((f) => f.exists).length]));
+    let changed = false;
+    for (const key of [...fileCounts.keys()]) if (!keys.includes(key)) fileCounts.delete(key);
+    for (const key of keys) {
+      const n = found.get(key) || 0;
+      if ((fileCounts.get(key) || 0) !== n) changed = true;
+      if (n) fileCounts.set(key, n);
+      else fileCounts.delete(key);
+    }
+    if (changed && latestSessions) {
+      latestSessions = { ...latestSessions, sessions: counted(latestSessions.sessions), recent: counted(latestSessions.recent) };
+      sendSessions();
+    }
+  }).catch((err) => log.error("session file counts", err && err.message)).finally(() => { fileCountsBusy = false; });
 }
 
 // An event in Insights, plus a notification unless quiet hours or a snooze mute it.
@@ -831,6 +878,7 @@ function buildMenu() {
   return Menu.buildFromTemplate([
     { label: "Insights and reports…", click: () => insightsWindow.open() },
     { label: "Network usage…", click: () => netUsage.openWindow() },
+    { label: "Session files…", click: () => filesWindow.open() },
     { label: "Settings…", click: () => openSettings() },
     { type: "separator" },
     { label: "Show chips", click: () => restoreVisibility() },
@@ -1663,6 +1711,10 @@ function wireIpc() {
   ipcMain.handle("usage://get-prefs", () => prefs());
   ipcMain.on("usage://open-settings", () => openSettings());
   ipcMain.on("usage://open-insights", (_e, tab) => insightsWindow.open(tab === "battery" ? tab : undefined));
+  ipcMain.on("usage://open-files", (e, key) => {
+    if (!fromFlyout(e) || (key != null && (typeof key !== "string" || key.length > 200))) return;
+    filesWindow.open(key || undefined);
+  });
   ipcMain.handle("usage://get-battery", () => batteryView());
   ipcMain.on("usage://open-battery", () => {
     showFlyout();
@@ -1838,6 +1890,8 @@ if (!gotLock) {
 
     history = new History();
     sessionLog = createSessionLog({ file: path.join(cacheDir(), "recent-sessions.json") });
+    sessionFiles = createSessionFiles({ cacheFile: path.join(cacheDir(), "session-files.json") });
+    filesWindow.init({ scanner: sessionFiles, providerOn, running: () => (latestSessions?.sessions || []).map((s) => s.key), prefs });
     phone = new PhoneLink({
       getConfig: () => cfg,
       saveConfig: () => config.save(cfg),
@@ -1992,6 +2046,7 @@ function persistAll() {
   if (history) history.flush();
   if (sessionWatch) sessionWatch.stop();
   if (sessionLog) sessionLog.flush();
+  if (sessionFiles) sessionFiles.flush();
   if (insights) insights.save(true);
   if (phone) phone.stop();
   updater.stop();

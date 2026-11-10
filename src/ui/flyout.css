@@ -234,30 +234,54 @@ html.side-panel, html.side-panel body { width: 100%; height: 100%; overflow: hid
 .session-auto { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .session-auto[hidden] { display: none; }
 .session-auto input { margin: 0; accent-color: var(--accent); }
-#sessionRows { display: flex; flex-direction: column; gap: 5px; }
-.session-row {
-  display: grid; grid-template-columns: 14px minmax(60px, 1fr) minmax(0, max-content) max-content; gap: 8px;
-  align-items: center; font-size: 11.5px; color: var(--text-2);
+.session-count .at-limit { color: var(--warn-text); }
+.session-tools { display: inline-flex; align-items: center; gap: 10px; flex: none; }
+#sessionFiles { padding: 0 4px; line-height: 1.3; }
+/* Each list is one grid and its rows take their columns from it, so the marks, names, models,
+   states, times and buttons line up from row to row: mark, name, model, state, time, files, action. */
+.session-list {
+  display: grid; grid-template-columns: 20px minmax(72px, 1fr) repeat(2, minmax(0, max-content)) repeat(3, max-content);
+  column-gap: 8px; margin: 0 -6px;
 }
+/* A row's side padding comes out of its first and last columns, so the mark's column is 14px + 6px. */
+.session-row {
+  display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center;
+  min-height: 20px; padding: 1px 6px; border-radius: 6px; font-size: 11.5px; color: var(--text-2);
+}
+.session-row:hover { background: var(--surface-hover); }
 .session-who { display: inline-flex; color: var(--accent-color, var(--muted)); }
 .session-who .brand-mark { width: 13px; height: 13px; }
-.session-name { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 0; min-width: 100%; }
+.session-name { display: flex; align-items: center; gap: 6px; width: 0; min-width: 100%; }
+.session-title { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.session-name .pill, .session-tag .pill { flex: none; font-size: 9.5px; line-height: 1.4; }
+.session-tag { display: inline-flex; min-width: 0; }
 .session-state { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.session-state.wide { grid-column: span 2; text-align: right; }
-.session-row .eta { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+/* The dot before a running session's state carries the state's colour. */
+.session-row:not(.recent) .session-state::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%;
+  background: currentColor; vertical-align: 1px;
+}
+.session-when { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
 .session-row.working .session-state { color: var(--good-text); }
+.session-row.waiting .session-state { color: var(--text-2); }
+.session-row.waiting .session-state::before { background: var(--accent); }
 .session-row.limited .session-state, .session-row.limited .eta { color: var(--warn-text); }
 .session-row.alert .session-state { color: var(--bad-text); }
 .session-row[hidden] { display: none; }
+.session-files, .session-action { display: inline-flex; justify-content: flex-end; }
 .session-empty { margin-top: -2px; }
 .session-recent { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border); }
-.session-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.session-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .session-sub-title { font-size: 10.5px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-#recentRows { display: flex; flex-direction: column; gap: 5px; }
 .session-row .resume { padding: 0 4px; }
+/* The file count reads as a tag next to the row's action; it opens that session's files. */
+.session-row .files-btn {
+  padding: 0 7px; border: 1px solid var(--border-strong); border-radius: 99px; color: var(--text-2);
+  font-size: 10.5px; font-weight: 500; line-height: 1.5; font-variant-numeric: tabular-nums;
+}
+.session-row .files-btn:hover { border-color: var(--accent); color: var(--accent); background: transparent; text-decoration: none; }
 .text-btn:disabled { opacity: 0.5; cursor: default; background: transparent; text-decoration: none; }
 .session-note { font-size: 11px; color: var(--muted); white-space: nowrap; text-align: right; }
-.session-state .pill { margin-right: 6px; font-size: 9.5px; line-height: 1.4; }
 
 .net-row { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 10px; }
 .net-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

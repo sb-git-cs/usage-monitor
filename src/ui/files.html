@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
+  <title>Session files</title>
+  <link rel="stylesheet" href="net.css" />
+  <link rel="stylesheet" href="files.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="toolbar">
+      <div class="title">
+        <h1>Session files</h1>
+        <span class="state" id="updated" role="status"></span>
+      </div>
+      <div class="tools">
+        <label class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2a8 8 0 1 0 4.9 14.3l5.4 5.4 1.4-1.4-5.4-5.4A8 8 0 0 0 10 2zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12z"/></svg>
+          <input id="query" type="search" placeholder="Search file or folder" aria-label="Search by file name or folder" autocomplete="off" spellcheck="false" />
+        </label>
+        <select id="days" aria-label="Period">
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+        <button class="btn" id="refresh" type="button">Refresh</button>
+      </div>
+    </header>
+    <div class="filters">
+      <div class="kinds" role="group" aria-label="Kind of file">
+        <button class="kind-chip" type="button" data-kind="all" aria-pressed="true">All <span class="n" id="n-all">0</span></button>
+        <button class="kind-chip" type="button" data-kind="created" aria-pressed="false" title="The session created the file.">Created <span class="n" id="n-created">0</span></button>
+        <button class="kind-chip" type="button" data-kind="edited" aria-pressed="false" title="The session changed a file that was already there.">Edited <span class="n" id="n-edited">0</span></button>
+        <button class="kind-chip" type="button" data-kind="generated" aria-pressed="false" title="Appeared in the session's folder while it was working. A best guess.">Generated <span class="n" id="n-generated">0</span></button>
+      </div>
+      <label class="switch deleted-switch"><input type="checkbox" id="deleted" /> <span>Show deleted files</span></label>
+    </div>
+    <div class="banner error" id="banner" role="alert" hidden>
+      <span id="bannerText"></span>
+      <button class="btn" id="retry" type="button">Try again</button>
+    </div>
+    <main class="split" id="main" hidden>
+      <nav class="sessions" aria-label="Sessions">
+        <ul class="session-list" id="sessionList"></ul>
+      </nav>
+      <section class="detail" id="detail" aria-label="Files of the selected session" tabindex="-1"></section>
+    </main>
+    <div class="state-box" id="stateBox">
+      <span class="spinner" id="spinner" aria-hidden="true"></span>
+      <p id="stateText" role="status">Reading session records…</p>
+    </div>
+    <footer class="statusbar">
+      <span class="grow" id="legend">Generated files are a best guess: they appeared in the session's folder while it was working.</span>
+      <span id="coverage" hidden></span>
+    </footer>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="../models.js"></script>
+  <script src="../net/format.js"></script>
+  <script src="format.js"></script>
+  <script src="files.js"></script>
+</body>
+</html>
