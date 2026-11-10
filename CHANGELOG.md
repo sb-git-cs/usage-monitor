@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.17.0 — unreleased
+## 1.17.0 — 2026-11-10
 
 - **Session files.** A new window lists the files each coding session produced, session by session, for Claude Code, Codex and Grok Build sessions of the last 7 or 30 days. Open it from the panel's header, from **Files ›** on the Sessions card, from the file count on a session's row (it opens at that session), or from the tray menu (**Session files…**).
   - **Created** and **Edited** come from the session's own record: Claude Code's transcripts (with its sub-agents' and the file changes it recorded for shell commands), Codex's rollouts (completed file changes only) and Grok Build's session updates (completed calls only). A file the session created and later edited stays Created; one it deleted is dropped.
