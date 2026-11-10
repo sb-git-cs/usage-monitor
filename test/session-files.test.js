@@ -1,8 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const { DatabaseSync } = require("node:sqlite");
 const { createSessionFiles } = require("../src/session-files");
 
 // Record times sit well before any file the test writes, so a real creation time never lands in a turn.
@@ -29,7 +32,8 @@ const jsonl = (rows) => rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
 
 function scanner(root, extra = {}) {
   const none = path.join(root, "none");
-  return createSessionFiles({ claudeDir: () => none, codexDir: () => none, grokDir: () => none, now: () => NOW, ...extra });
+  return createSessionFiles({ claudeDir: () => none, codexDir: () => none, grokDir: () => none, cursorDir: () => none,
+    geminiDir: () => none, now: () => NOW, ...extra });
 }
 
 // Claude Code lines, keys in the order the CLI writes them.
@@ -394,4 +398,361 @@ test("scans asked for together share one run", async (t) => {
   assert.equal((await a).sessions.length, 1);
   assert.equal((await c).sessions.length, 1);
   assert.equal(reads, 1);
+});
+
+// Protobuf, as the two databases below hold it: a number is a varint, a string or Buffer is bytes.
+function varint(n) {
+  const out = [];
+  for (; n >= 128; n = Math.floor(n / 128)) out.push((n % 128) | 128);
+  out.push(n);
+  return Buffer.from(out);
+}
+
+const msg = (...fields) => Buffer.concat(fields.map(([no, v]) => (typeof v === "number"
+  ? Buffer.concat([varint(no * 8), varint(v)])
+  : Buffer.concat([varint(no * 8 + 2), varint(Buffer.byteLength(v)), Buffer.from(v)]))));
+const stamp = (ms) => msg([1, Math.floor(ms / 1000)], [2, (ms % 1000) * 1e6]);
+
+function sqlite(file, schema, fill) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  try {
+    db.exec(schema);
+    fill(db);
+  } finally {
+    db.close();
+  }
+}
+
+// Antigravity: a step's metadata holds when it was made, each state it went through, and a tool call.
+const AGY_SCHEMA = "CREATE TABLE IF NOT EXISTS steps (idx integer, step_type integer NOT NULL DEFAULT 0, status integer NOT NULL DEFAULT 0, "
+  + "metadata blob, render_info blob, step_payload blob, PRIMARY KEY (idx)); "
+  + "CREATE TABLE IF NOT EXISTS trajectory_metadata_blob (id text DEFAULT 'main', data blob, PRIMARY KEY (id));";
+const agyFile = (root, id) => path.join(root, "antigravity-cli", "conversations", `${id}.db`);
+const agyMeta = (at, states, call) => msg([1, stamp(at)], [3, 2], ...(call ? [[4, msg([1, "call_1"], [2, call.name], [3, JSON.stringify(call.args)])]] : []),
+  [26, msg(...states.map((s) => [1, msg([1, s], [2, stamp(at)])]))]);
+const userStep = (idx, at) => ({ idx, type: 14, status: 3, meta: agyMeta(at, [3]) });
+const replyStep = (idx, at) => ({ idx, type: 15, status: 3, meta: agyMeta(at, [8, 3]) });
+const toolStep = (idx, at, name, args, { states = [1, 2, 3], status = states[states.length - 1], verb = null } = {}) => ({
+  idx, type: 132, status, meta: agyMeta(at, states, { name, args }),
+  render: verb ? msg([5, verb], [6, "edit"], [9, msg([4, msg([1, "file:///D:/elsewhere.txt"])])]) : null,
+});
+
+function agyDb(root, id, steps, workspace = null) {
+  const file = agyFile(root, id);
+  sqlite(file, AGY_SCHEMA, (db) => {
+    const add = db.prepare("INSERT OR REPLACE INTO steps (idx, step_type, status, metadata, render_info, step_payload) VALUES (?, ?, ?, ?, ?, ?)");
+    for (const s of steps) add.run(s.idx, s.type, s.status, s.meta, s.render ?? null, Buffer.alloc(64));
+    if (workspace) db.prepare("INSERT OR REPLACE INTO trajectory_metadata_blob (id, data) VALUES ('main', ?)").run(msg([1, msg([1, workspace])]));
+  });
+  return file;
+}
+
+function agyConversations(root, conversations) {
+  write(path.join(root, "antigravity-cli", "cache", "conversation_metadata.json"), JSON.stringify({ conversations: Object.fromEntries(
+    Object.entries(conversations).map(([id, s]) => [id, { summary: { ID: id, Title: "", Preview: "", UpdatedAt: iso(T0 + 9000), WorkspaceURIs: [],
+      Internal: false, Cloud: false, ...s }, is_internal: s.is_internal === true }])) }));
+}
+
+test("Antigravity: each file tool, created or edited by its own label or by what the session had seen; unfinished steps not counted", async (t) => {
+  const dir = tmpdir(t);
+  const f = (n) => `D:\\work\\agy\\${n}`;
+  const steps = [
+    userStep(0, T0),
+    toolStep(1, T0 + 100, "view_file", { AbsolutePath: f("seen.py"), toolAction: "Reading" }),
+    toolStep(2, T0 + 200, "write_to_file", { CodeContent: "x", Overwrite: true, TargetFile: f("seen.py") }),
+    // The contents name another file; only the argument counts.
+    toolStep(3, T0 + 300, "write_to_file", { CodeContent: `{"TargetFile":"${f("inside.txt")}"}`, Description: "d", Overwrite: true, TargetFile: f("new.md") }),
+    toolStep(4, T0 + 400, "write_to_file", { Append: true, CodeContent: "line", TargetFile: f("log.txt") }),
+    toolStep(5, T0 + 500, "write_file", { ArtifactMetadata: { Path: f("nested.txt") }, Content: "a", Path: f("a.txt") }, { verb: "Created" }),
+    toolStep(6, T0 + 600, "write_file", { Content: "b", Overwrite: true, Path: f("b.txt") }, { verb: "Edited" }),
+    toolStep(7, T0 + 700, "edit_file", { Path: f("c.py"), Replacement: "r", Target: "t" }, { verb: "Edited" }),
+    toolStep(8, T0 + 800, "replace_file_content", { AllowMultiple: false, ReplacementContent: "r", TargetContent: "t", TargetFile: f("d.py") }),
+    toolStep(9, T0 + 900, "multi_replace_file_content", { ReplacementChunks: [{ ReplacementContent: "r" }], TargetFile: f("e.py") }),
+    toolStep(10, T0 + 1000, "str_replace_editor", { command: "create", file_text: "x", path: f("f.py") }),
+    toolStep(11, T0 + 1100, "str_replace_editor", { command: "str_replace", new_str: "b", old_str: "a", path: f("g.py") }),
+    toolStep(12, T0 + 1200, "write_to_file", { CodeContent: "x", TargetFile: f("failed.md") }, { states: [1, 2, 7] }),
+    toolStep(13, T0 + 1300, "edit_file", { Path: f("canceled.py"), Replacement: "r", Target: "t" }, { states: [1, 2, 6], verb: "Editing" }),
+    // Cleared from the conversation's context later: it still ran, as its own states say.
+    toolStep(14, T0 + 1400, "write_to_file", { CodeContent: "x", TargetFile: f("cleared.md") }, { status: 5 }),
+    toolStep(15, T0 + 1500, "write_to_file", { CodeContent: "x", TargetFile: f("cleared-failed.md") }, { states: [1, 2, 7], status: 5 }),
+    toolStep(16, T0 + 1600, "run_command", { CommandLine: "echo > shell.txt", Cwd: f("") }),
+    replyStep(17, T0 + 2000),
+  ];
+  agyDb(dir, "c1", steps);
+  agyConversations(dir, { c1: { Title: "Agy work", WorkspaceURIs: ["file:///D:/work/agy"] } });
+  const res = await scanner(dir, { geminiDir: () => dir, platform: "win32" }).scan();
+  const s = byKey(res, "gemini:c1");
+  assert.deepEqual({ ...s, files: undefined }, { key: "gemini:c1", tool: "gemini", label: "Antigravity", id: "c1", name: "Agy work",
+    cwd: "D:\\work\\agy", started: T0, last_active: T0 + 2000, files: undefined });
+  assert.deepEqual(s.files.map((x) => [x.kind, x.name, x.at]), [
+    ["created", "cleared.md", T0 + 1400],
+    ["edited", "g.py", T0 + 1100],
+    ["created", "f.py", T0 + 1000],
+    ["edited", "e.py", T0 + 900],
+    ["edited", "d.py", T0 + 800],
+    ["edited", "c.py", T0 + 700],
+    ["edited", "b.txt", T0 + 600],
+    ["created", "a.txt", T0 + 500],
+    ["edited", "log.txt", T0 + 400],
+    ["created", "new.md", T0 + 300],
+    ["edited", "seen.py", T0 + 200],
+  ]);
+});
+
+test("Antigravity: a step read while it ran is read again, and only it and the steps added since are read", async (t) => {
+  const dir = tmpdir(t);
+  const reads = [];
+  const s = scanner(dir, { geminiDir: () => dir, platform: "win32", onRead: (file, idx) => reads.push(idx) });
+  const file = agyDb(dir, "c1", [
+    userStep(0, T0),
+    toolStep(1, T0 + 100, "write_to_file", { CodeContent: "x", TargetFile: "D:\\w\\slow.md" }, { states: [1, 2] }),
+    replyStep(2, T0 + 200),
+  ]);
+  touch(file, T0 + 1);
+  assert.deepEqual((await s.scan()).sessions, [], "nothing finished yet");
+  assert.deepEqual(reads, [0, 1, 2]);
+  agyDb(dir, "c1", [
+    toolStep(1, T0 + 100, "write_to_file", { CodeContent: "x", TargetFile: "D:\\w\\slow.md" }),
+    toolStep(3, T0 + 300, "edit_file", { Path: "D:\\w\\slow.md", Replacement: "r", Target: "t" }),
+  ]);
+  touch(file, T0 + 2);
+  reads.length = 0;
+  assert.deepEqual(rows((await s.scan()).sessions[0]), [["created", "D:\\w\\slow.md"]]);
+  assert.deepEqual(reads, [1, 3]);
+  reads.length = 0;
+  await s.scan();
+  assert.deepEqual(reads, [], "an unchanged database is not opened again");
+});
+
+test("Antigravity: output files changed in the folder during its turns are generated", async (t) => {
+  const dir = tmpdir(t);
+  const proj = path.join(dir, "proj");
+  const at = (name, when) => {
+    write(path.join(proj, name), "data");
+    touch(path.join(proj, name), when);
+  };
+  at("report.pdf", T0 + 30_000);
+  at("written.md", T0 + 40_000);
+  at("late.pdf", T0 + 600_000);
+  at("chart.png", T0 + 3_630_000);
+  agyDb(dir, "c1", [
+    userStep(0, T0),
+    toolStep(1, T0 + 40_000, "write_to_file", { CodeContent: "x", TargetFile: path.join(proj, "written.md") }),
+    replyStep(2, T0 + 60_000),
+    userStep(3, T0 + 3_600_000),
+    replyStep(4, T0 + 3_660_000),
+  ]);
+  agyConversations(dir, { c1: { WorkspaceURIs: [pathToFileURL(proj).href] } });
+  const s = byKey(await scanner(dir, { geminiDir: () => dir }).scan(), "gemini:c1");
+  assert.equal(s.cwd, proj);
+  assert.equal(s.name, "proj");
+  assert.deepEqual(s.files.map((x) => [x.kind, x.name]), [["generated", "chart.png"], ["created", "written.md"], ["generated", "report.pdf"]]);
+});
+
+test("Antigravity names and folders: its metadata, then the prompt history, then the database; internal and cloud ones not opened", async (t) => {
+  const dir = tmpdir(t);
+  const opened = new Set();
+  const one = (id, workspace) => agyDb(dir, id, [userStep(0, T0), toolStep(1, T0 + 100, "write_file", { Content: "x", Path: `D:\\out\\${id}.txt` })], workspace);
+  for (const id of ["meta", "preview", "hist", "blob", "internal", "flagged", "cloud"]) one(id, id === "blob" ? "file:///D:/work/from%20blob" : "file:///D:/work/wrong");
+  agyConversations(dir, {
+    meta: { Title: "From metadata", Preview: "p", WorkspaceURIs: ["file:///D:/work/meta"] },
+    preview: { Preview: "Only a preview" },
+    internal: { Title: "i", Internal: true }, flagged: { Title: "f", is_internal: true }, cloud: { Title: "c", Cloud: true },
+  });
+  write(path.join(dir, "antigravity-cli", "history.jsonl"), jsonl([
+    { display: "ask about meta", timestamp: T0, workspace: "D:\\work\\other", conversationId: "meta" },
+    { display: "/help", timestamp: T0, workspace: "D:\\work\\hist-old", conversationId: "hist", type: "slash_command" },
+    { display: "fix the tests", timestamp: T0 + 1, workspace: "D:\\work\\hist-old", conversationId: "hist" },
+    { display: "and the docs", timestamp: T0 + 2, workspace: "D:\\work\\hist", conversationId: "hist" },
+  ]));
+  const res = await scanner(dir, { geminiDir: () => dir, platform: "win32", onRead: (file) => opened.add(path.basename(file)) }).scan();
+  assert.deepEqual(res.sessions.map((s) => [s.id, s.name, s.cwd]).sort(), [
+    ["blob", "from blob", "D:\\work\\from blob"],
+    ["hist", "fix the tests", "D:\\work\\hist"],
+    ["meta", "From metadata", "D:\\work\\meta"],
+    ["preview", "Only a preview", "D:\\work\\wrong"],
+  ]);
+  assert.deepEqual([...opened].sort(), ["blob.db", "hist.db", "meta.db", "preview.db"]);
+});
+
+// Cursor Agent: content-addressed blobs. The CLI's own records are protobuf (agent.v1): a user
+// message, and steps whose ToolCall holds a case (3 delete, 12 edit, 22 apply a sub-agent's diff),
+// its id (57), start (59) and end (60), and once finished a result whose first case is success.
+const CURSOR_SCHEMA = "CREATE TABLE IF NOT EXISTS blobs (id TEXT PRIMARY KEY, data BLOB); CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);";
+const cursorUser = (text, at) => msg([1, text], [2, "00000000-0000-0000-0000-000000000001"], [25, at], [26, at]);
+const cursorStep = (no, call, at = null) => msg([2, msg([no, call], [57, `tool_${crypto.randomUUID()}`], ...(at ? [[59, at - 100], [60, at]] : []))]);
+const cursorCall = (p, result) => msg([1, msg([1, p])], ...(result ? [[2, result]] : []));
+const editDone = (p, extra = []) => msg([1, msg([1, p], ...extra, [7, "after"])]);
+const cursorJson = (o) => Buffer.from(JSON.stringify(o));
+
+function cursorChat(root, id, meta, blobs) {
+  const dir = path.join(root, "chats", "0123abcd", id);
+  write(path.join(dir, "meta.json"), JSON.stringify({ schemaVersion: 1, hasConversation: true, ...meta }));
+  sqlite(path.join(dir, "store.db"), CURSOR_SCHEMA, (db) => {
+    const add = db.prepare("INSERT OR REPLACE INTO blobs (id, data) VALUES (?, ?)");
+    for (const b of blobs) add.run(crypto.createHash("sha256").update(b).digest("hex"), b);
+  });
+  return path.join(dir, "store.db");
+}
+
+test("Cursor Agent: file changes from the CLI's tool-call steps; failed, rejected and unfinished ones not counted", async (t) => {
+  const dir = tmpdir(t);
+  const f = (n) => `D:\\work\\cur\\${n}`;
+  cursorChat(dir, "chat-1", { createdAtMs: T0 - 1000, updatedAtMs: T0 + 9500, title: "Cursor chat", cwd: "D:\\work\\cur" }, [
+    cursorJson({ role: "system", content: "system prompt" }),
+    cursorUser("make the files", T0),
+    // The JSON copy of a call is not what is read.
+    cursorJson({ role: "assistant", content: [{ type: "tool-call", toolCallId: "tool_x", toolName: "Write", args: { path: f("json-only.txt") } }] }),
+    cursorStep(12, cursorCall(f("a.txt"), editDone(f("a.txt"))), T0 + 1000),
+    cursorStep(12, cursorCall(f("b.txt"), editDone(f("b.txt"), [[6, "before"]])), T0 + 2000),
+    cursorStep(12, cursorCall(f("c.txt"), editDone(f("c.txt"), [[4, 3]])), T0 + 3000),
+    cursorStep(12, cursorCall(f("error.txt"), msg([7, msg([1, f("error.txt")], [2, "no match"])])), T0 + 3500),
+    cursorStep(12, cursorCall(f("rejected.txt"), msg([6, msg([1, f("rejected.txt")])])), T0 + 3600),
+    cursorStep(12, cursorCall(f("running.txt"))),
+    cursorStep(12, cursorCall("src\\rel.js", editDone("")), T0 + 4000),
+    cursorStep(12, cursorCall(f("gone.txt"), editDone(f("gone.txt"))), T0 + 5000),
+    cursorStep(3, cursorCall(f("gone.txt"), msg([1, msg([1, f("gone.txt")], [2, "x"])])), T0 + 6000),
+    cursorStep(3, cursorCall(f("b.txt"), msg([2, msg([1, f("b.txt")])])), T0 + 6500),
+    cursorStep(22, msg([1, msg([1, "agent-1"])], [2, msg([1, msg(
+      [1, msg([1, f("sub-new.txt")], [2, 1])], [1, msg([1, f("sub-edit.txt")], [2, 2])], [1, msg([1, f("sub-bad.txt")], [2, 1], [5, "conflict"])],
+    )])]), T0 + 7000),
+    msg([1, msg([1, "done"], [2, T0 + 9000])]),
+  ]);
+  const res = await scanner(dir, { cursorDir: () => dir, platform: "win32" }).scan();
+  const s = byKey(res, "cursor:chat-1");
+  assert.deepEqual({ ...s, files: undefined }, { key: "cursor:chat-1", tool: "cursor", label: "Cursor Agent", id: "chat-1", name: "Cursor chat",
+    cwd: "D:\\work\\cur", started: T0 - 1000, last_active: T0 + 9500, files: undefined });
+  assert.deepEqual(s.files.map((x) => [x.kind, x.path, x.at]), [
+    ["edited", f("sub-edit.txt"), T0 + 7000],
+    ["created", f("sub-new.txt"), T0 + 7000],
+    ["created", f("src\\rel.js"), T0 + 4000],
+    ["edited", f("c.txt"), T0 + 3000],
+    ["edited", f("b.txt"), T0 + 2000],
+    ["created", f("a.txt"), T0 + 1000],
+  ]);
+});
+
+test("Cursor Agent: a chat with no timed step is one turn from start to last update, if that is at most 12 hours", async (t) => {
+  const dir = tmpdir(t);
+  const opened = new Set();
+  const chat = (id, hours, extra = {}) => {
+    const proj = path.join(dir, id);
+    write(path.join(proj, "report.pdf"), "pdf");
+    touch(path.join(proj, "report.pdf"), T0 + 60_000);
+    write(path.join(proj, "written.md"), "w");
+    touch(path.join(proj, "written.md"), T0 + 30_000);
+    cursorChat(dir, id, { createdAtMs: T0, updatedAtMs: T0 + hours * 3600_000, cwd: proj, ...extra }, [
+      cursorStep(12, cursorCall(path.join(proj, "written.md"), editDone(path.join(proj, "written.md")))),
+      cursorStep(12, cursorCall(path.join(proj, "missing.md"), editDone(path.join(proj, "missing.md")))),
+    ]);
+    return proj;
+  };
+  chat("short", 3);
+  chat("long", 13);
+  chat("empty", 3, { hasConversation: false });
+  const res = await scanner(dir, { cursorDir: () => dir, onRead: (file) => opened.add(path.basename(path.dirname(file))) }).scan();
+  assert.deepEqual(byKey(res, "cursor:short").files.map((x) => [x.kind, x.name, x.at]), [
+    ["created", "missing.md", T0 + 3 * 3600_000],
+    ["generated", "report.pdf", T0 + 60_000],
+    ["created", "written.md", T0 + 30_000],
+  ], "undated writes take the file's time, or the chat's last update");
+  assert.deepEqual(byKey(res, "cursor:long").files.map((x) => [x.kind, x.name]), [["created", "missing.md"], ["created", "written.md"]]);
+  assert.equal(byKey(res, "cursor:empty"), undefined);
+  assert.deepEqual([...opened].sort(), ["long", "short"]);
+});
+
+test("only: other chats' and conversations' databases are not opened", async (t) => {
+  const dir = tmpdir(t);
+  const opened = [];
+  for (const id of ["a1", "a2"]) agyDb(dir, id, [userStep(0, T0), toolStep(1, T0 + 1, "write_file", { Content: "x", Path: `D:\\w\\${id}.txt` })]);
+  for (const id of ["c1", "c2"]) cursorChat(dir, id, { createdAtMs: T0, updatedAtMs: T0 + 1, cwd: "D:\\w" }, [cursorStep(12, cursorCall(`D:\\w\\${id}.txt`, editDone(`D:\\w\\${id}.txt`)), T0 + 1)]);
+  const s = scanner(dir, { cursorDir: () => dir, geminiDir: () => dir, platform: "win32", onRead: (file) => opened.push(path.basename(path.dirname(file)) + "/" + path.basename(file)) });
+  const res = await s.scan({ only: ["gemini:a2", "cursor:c1"] });
+  assert.deepEqual(res.sessions.map((x) => x.key).sort(), ["cursor:c1", "gemini:a2"]);
+  assert.deepEqual([...new Set(opened)].sort(), ["c1/store.db", "conversations/a2.db"]);
+});
+
+test("a database that cannot be read is counted, and the rest still returns", async (t) => {
+  const dir = tmpdir(t);
+  agyDb(dir, "good", [userStep(0, T0), toolStep(1, T0 + 1, "write_file", { Content: "x", Path: "D:\\w\\good.txt" })]);
+  write(agyFile(dir, "text"), "not a database at all\n");
+  // A database of another shape.
+  sqlite(agyFile(dir, "other"), "CREATE TABLE things (x);", () => {});
+  cursorChat(dir, "c1", { createdAtMs: T0, updatedAtMs: T0 + 1, cwd: "D:\\w" }, []);
+  write(path.join(dir, "chats", "0123abcd", "c1", "store.db"), Buffer.alloc(4096, 7));
+  const res = await scanner(dir, { cursorDir: () => dir, geminiDir: () => dir, platform: "win32" }).scan();
+  assert.deepEqual(res.sessions.map((s) => s.key), ["gemini:good"]);
+  assert.equal(res.coverage.skipped, 3);
+});
+
+test("a WAL database: rows still in its -wal are read, and a read leaves no -wal or -shm beside it", async (t) => {
+  const dir = tmpdir(t);
+  const file = agyFile(dir, "c1");
+  sqlite(file, `PRAGMA journal_mode = WAL; ${AGY_SCHEMA}`, (db) => {
+    db.prepare("INSERT INTO steps (idx, step_type, status, metadata) VALUES (?, ?, ?, ?)").run(0, 132, 3,
+      agyMeta(T0, [1, 2, 3], { name: "write_file", args: { Content: "x", Path: "D:\\w\\one.txt" } }));
+  });
+  const s = scanner(dir, { geminiDir: () => dir, platform: "win32" });
+  assert.deepEqual(rows((await s.scan()).sessions[0]), [["created", "D:\\w\\one.txt"]]);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), ["c1.db"]);
+  // A writer still at work: its rows are in the -wal only.
+  const writer = new DatabaseSync(file);
+  try {
+    writer.exec("PRAGMA wal_autocheckpoint = 0;");
+    writer.prepare("INSERT INTO steps (idx, step_type, status, metadata) VALUES (?, ?, ?, ?)").run(1, 132, 3,
+      agyMeta(T0 + 1000, [1, 2, 3], { name: "write_file", args: { Content: "x", Path: "D:\\w\\two.txt" } }));
+    assert.ok(fs.statSync(`${file}-wal`).size > 0);
+    assert.deepEqual(rows((await s.scan()).sessions[0]), [["created", "D:\\w\\two.txt"], ["created", "D:\\w\\one.txt"]]);
+  } finally {
+    writer.close();
+  }
+});
+
+test("the cache file carries database parse states to a new scanner, which opens nothing unchanged", async (t) => {
+  const dir = tmpdir(t);
+  const cacheFile = path.join(dir, "cache", "session-files.json");
+  agyDb(dir, "a1", [userStep(0, T0), toolStep(1, T0 + 100, "view_file", { AbsolutePath: "D:\\w\\x.txt" }),
+    toolStep(2, T0 + 200, "write_to_file", { CodeContent: "x", TargetFile: "D:\\w\\x.txt" }),
+    toolStep(3, T0 + 300, "write_to_file", { CodeContent: "x", TargetFile: "D:\\w\\y.txt" }, { states: [1, 2] }),
+    toolStep(4, T0 + 350, "read_file", { Path: "D:\\w\\z.txt" })]);
+  cursorChat(dir, "c1", { createdAtMs: T0, updatedAtMs: T0 + 1, cwd: "D:\\w" }, [cursorUser("go", T0), cursorStep(12, cursorCall("D:\\w\\c.txt", editDone("D:\\w\\c.txt")), T0 + 1)]);
+  const opts = { cursorDir: () => dir, geminiDir: () => dir, platform: "win32", cacheFile };
+  const first = await scanner(dir, opts).scan();
+  assert.deepEqual(first.sessions.map((s) => [s.key, rows(s)]).sort(), [
+    ["cursor:c1", [["created", "D:\\w\\c.txt"]]],
+    ["gemini:a1", [["edited", "D:\\w\\x.txt"]]],
+  ]);
+  const reads = [];
+  const again = scanner(dir, { ...opts, onRead: (f, key) => reads.push(key) });
+  assert.deepEqual(await again.scan(), first);
+  assert.deepEqual(reads, []);
+  // The unfinished step and what the session had seen survive the round trip.
+  agyDb(dir, "a1", [toolStep(3, T0 + 300, "write_to_file", { CodeContent: "x", TargetFile: "D:\\w\\y.txt" }),
+    toolStep(5, T0 + 400, "write_to_file", { CodeContent: "x", TargetFile: "D:\\w\\z.txt" })]);
+  touch(agyFile(dir, "a1"), T0 + 5);
+  assert.deepEqual(rows(byKey(await again.scan(), "gemini:a1")), [["edited", "D:\\w\\z.txt"], ["created", "D:\\w\\y.txt"], ["edited", "D:\\w\\x.txt"]]);
+  assert.deepEqual(reads, [3, 5]);
+});
+
+test("Cursor Agent: a later scan reads only the blobs added since, and starts over when a read blob's row was taken by another", async (t) => {
+  const dir = tmpdir(t);
+  const reads = [];
+  const s = scanner(dir, { cursorDir: () => dir, platform: "win32", onRead: (f, rowid) => reads.push(rowid) });
+  const edit = (n, at) => cursorStep(12, cursorCall(`D:\\w\\${n}`, editDone(`D:\\w\\${n}`)), at);
+  const file = cursorChat(dir, "c1", { createdAtMs: T0, updatedAtMs: T0 + 9, cwd: "D:\\w" }, [edit("a.txt", T0 + 1), edit("b.txt", T0 + 2)]);
+  assert.deepEqual(rows((await s.scan()).sessions[0]), [["created", "D:\\w\\b.txt"], ["created", "D:\\w\\a.txt"]]);
+  assert.deepEqual(reads, [1, 2]);
+  cursorChat(dir, "c1", {}, [edit("c.txt", T0 + 3)]);
+  touch(file, T0 + 1);
+  reads.length = 0;
+  assert.equal((await s.scan()).sessions[0].files.length, 3);
+  assert.deepEqual(reads, [3]);
+  // The newest blob deleted and another stored in its row: read from the start.
+  sqlite(file, "", (db) => db.prepare("DELETE FROM blobs WHERE rowid = 3").run());
+  cursorChat(dir, "c1", {}, [edit("d.txt", T0 + 4)]);
+  touch(file, T0 + 2);
+  reads.length = 0;
+  assert.deepEqual(rows((await s.scan()).sessions[0]), [["created", "D:\\w\\d.txt"], ["created", "D:\\w\\b.txt"], ["created", "D:\\w\\a.txt"]]);
+  assert.deepEqual(reads, [1, 2, 3]);
 });

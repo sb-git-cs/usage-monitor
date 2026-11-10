@@ -1,15 +1,18 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { performance } = require("node:perf_hooks");
-const { claudeConfigDir, codexHome, grokHome, home } = require("./paths");
+const { claudeConfigDir, codexHome, grokHome, cursorCliDir, geminiHome, home } = require("./paths");
 const { clip, baseName } = require("./session-log");
+const { fromFileUri } = require("./session-records");
 
 // The files each coding CLI session wrote, from the CLI's own records: what the record says it
 // created or edited, plus output files that appeared in the session's folder while it was working
 // (a guess, shown as "generated"). Transcripts run to gigabytes and this runs in the main process
 // beside the widgets, so each record file is read once: its parse state is kept (and saved to
 // cacheFile) and a later scan reads only the bytes appended since. Lines are searched as bytes;
-// only the few that hold a write are decoded.
+// only the few that hold a write are decoded. Cursor Agent and Antigravity keep SQLite databases
+// instead: those are opened read-only and only the rows added since are read.
 
 const DAY_MS = 86400_000;
 const CHUNK = 4 * 1024 * 1024;
@@ -29,7 +32,35 @@ const WALK_BATCH = 8;
 const GENERATED_MAX = 500;
 const PAD_MS = 5000;
 const STAT_LIMIT = 32;
-const LABELS = { claude: "Claude Code", codex: "Codex", grok: "Grok Build" };
+const LABELS = { claude: "Claude Code", codex: "Codex", grok: "Grok Build", cursor: "Cursor Agent" };
+// A protobuf message with more fields than this is not one of the records read here.
+const PB_FIELDS = 4096;
+// Antigravity's step states (CortexStepStatus). A step in any other state can still change, so it
+// is read again next time, up to REDO_MAX of them.
+const AGY_DONE = 3;
+const AGY_FINAL = new Set([3, 4, 5, 6, 7, 12]); // done, invalid, cleared, canceled, error, interrupted
+const AGY_USER_INPUT = 14;
+const AGY_TOOL_CALL = 132;
+const REDO_MAX = 64;
+const SEEN_MAX = 5000;
+// Antigravity's file tools: the argument naming the file, and what a call does to it. A "write"
+// creates the file unless the session had already read or written it, as Antigravity's own
+// Created / Edited labels on write_file do.
+const AGY_WRITERS = {
+  write_to_file: ["TargetFile", "write"], write_file: ["Path", "write"], edit_file: ["Path", "edit"],
+  replace_file_content: ["TargetFile", "edit"], multi_replace_file_content: ["TargetFile", "edit"],
+  str_replace_editor: ["path", "editor"],
+};
+const AGY_READERS = { view_file: "AbsolutePath", read_file: "Path" };
+const AGY_VERBS = { Created: "created", Edited: "edited" };
+// Cursor Agent's ToolCall cases (agent.v1) that change files, and AppliedAgentChange.ChangeType.
+const CURSOR_DELETE = 3;
+const CURSOR_EDIT = 12;
+const CURSOR_AGENT_DIFF = 22;
+const CURSOR_CHANGE = { 1: "created", 2: "edited", 3: "deleted" };
+// A chat with no timed step stands for one turn from its start to its last update, unless it was
+// left open so long it would claim everything made in its folder.
+const CURSOR_SPAN_MAX = 12 * 3600_000;
 // Folders the walk for generated files leaves out: dependencies, and the build, cache, upload and
 // scratch folders that fill with files a session's test or build run made, not ones it handed over.
 const SKIP_DIRS = new Set(["node_modules", "__pycache__", "venv", "env", "site-packages", "vendor", "build", "target", "obj",
@@ -60,6 +91,8 @@ const XAI_TOOL = bytes('"x.ai/tool":{');
 const AGENT_MS = bytes('"agentTimestampMs":');
 const OLD_EMPTY = bytes('"old_string":""');
 const BEGIN_PATCH = bytes("*** Begin Patch");
+const APPEND_TRUE = bytes('"Append":true');
+const KEY_NEEDLES = new Map();
 
 const yieldTurn = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -184,6 +217,10 @@ const FRESH = {
   codex: () => ({ n: 0, w: {}, pw: {}, ev: false, iv: [], cur: null, first: null, last: null, meta: false, cwd: "", started: null }),
   "grok-updates": () => ({ n: 0, w: {}, pend: {}, first: null, last: null }),
   "grok-events": () => ({ n: 0, iv: [], cur: null, first: null, last: null }),
+  // offset: the next step idx to read; redo: steps read before they finished; ui: the last user input's idx.
+  agy: () => ({ n: 0, w: {}, seen: {}, ns: 0, redo: [], ui: -1, uri: "", iv: [], cur: null, first: null, last: null }),
+  // offset: the last blob rowid read, top: that blob's id.
+  cursor: () => ({ n: 0, w: {}, top: "", iv: [], cur: null, first: null, last: null }),
 };
 
 // Claude Code transcripts. User lines put "type" before the message; assistant and attachment lines
@@ -403,6 +440,229 @@ function grokEvent(st, line) {
 
 const LINE = { claude: claudeLine, codex: codexLine, "grok-updates": grokUpdate, "grok-events": grokEvent };
 
+// Protobuf, read defensively: every length is checked against the bytes left, a message stops at
+// PB_FIELDS fields, and a field is decoded only when asked for. Fields are [number, wire type,
+// value], the value a number for a varint and a view of the bytes for a length-delimited field.
+function varint(buf, pos) {
+  let v = 0;
+  for (let i = 0, mul = 1; i < 10 && pos < buf.length; i++, mul *= 128) {
+    const b = buf[pos++];
+    v += (b & 0x7f) * mul;
+    if (b < 0x80) return [v, pos];
+  }
+  return null;
+}
+
+function pbFields(buf) {
+  if (!buf) return null;
+  const out = [];
+  let pos = 0;
+  while (pos < buf.length) {
+    const tag = out.length < PB_FIELDS ? varint(buf, pos) : null;
+    if (!tag || tag[0] < 8) return null;
+    const wt = tag[0] % 8;
+    pos = tag[1];
+    if (wt === 0) {
+      const v = varint(buf, pos);
+      if (!v) return null;
+      out.push([Math.floor(tag[0] / 8), 0, v[0]]);
+      pos = v[1];
+    } else if (wt === 2) {
+      const n = varint(buf, pos);
+      if (!n || n[0] > buf.length - n[1]) return null;
+      out.push([Math.floor(tag[0] / 8), 2, buf.subarray(n[1], n[1] + n[0])]);
+      pos = n[1] + n[0];
+    } else if (wt === 1 || wt === 5) {
+      pos += wt === 1 ? 8 : 4;
+      if (pos > buf.length) return null;
+    } else return null;
+  }
+  return out;
+}
+
+function pbGet(fields, no, wt) {
+  for (const f of fields || []) if (f[0] === no && f[1] === wt) return f[2];
+  return undefined;
+}
+
+const pbBytes = (fields, no) => pbGet(fields, no, 2);
+const pbNum = (fields, no) => pbGet(fields, no, 0);
+
+function pbStr(fields, no) {
+  const b = pbBytes(fields, no);
+  return b && b.length <= 8192 ? b.toString("utf8") : "";
+}
+
+// A google.protobuf.Timestamp, in milliseconds.
+function pbTime(buf) {
+  const f = pbFields(buf);
+  const s = pbNum(f, 1);
+  return s > 0 ? s * 1000 + Math.floor((pbNum(f, 2) || 0) / 1e6) : null;
+}
+
+// A field holding milliseconds since 1970, or null for anything else.
+function pbMs(fields, no) {
+  const v = pbNum(fields, no);
+  return v > 1e12 && v < 1e14 ? v : null;
+}
+
+const asBuffer = (v) => (v instanceof Uint8Array ? Buffer.from(v.buffer, v.byteOffset, v.byteLength) : null);
+
+// A top-level string value of a JSON object, found without decoding the rest. A key's quotes are
+// bare only outside strings, so a match is never inside a value, and the arguments' keys are
+// sorted, so the path comes after any nested object: the last match is the top-level key.
+function jsonString(buf, key) {
+  let needle = KEY_NEEDLES.get(key);
+  if (!needle) KEY_NEEDLES.set(key, (needle = bytes(`"${key}":"`)));
+  return stringAt(buf, buf.lastIndexOf(needle), needle);
+}
+
+function argPath(st, args, keys) {
+  for (const k of keys) {
+    const v = jsonString(args, k);
+    if (v) return v;
+  }
+  if (args.length > PARSE_MAX) {
+    st.cut = true;
+    return null;
+  }
+  try {
+    const j = JSON.parse(args.toString("utf8"));
+    return keys.map((k) => j?.[k]).find((v) => typeof v === "string") ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// One Antigravity step: { idx, step_type, status, metadata, render_info }. Its metadata holds when
+// it was made (field 1), each state it went through with the time (26), and for a tool call the
+// call's name and JSON arguments (4). again: the step was read before, while it was unfinished.
+function agyStep(st, row, ctx, again) {
+  const meta = pbFields(asBuffer(row.metadata));
+  if (!meta) return;
+  st.n++;
+  const made = pbTime(pbBytes(meta, 1));
+  let at = made;
+  let state = null;
+  for (const [no, wt, v] of meta) {
+    if (no !== 26 || wt !== 2) continue;
+    for (const [n, w, t] of pbFields(v) || []) {
+      if (n !== 1 || w !== 2) continue;
+      const f = pbFields(t);
+      if (pbNum(f, 1) != null) state = pbNum(f, 1);
+      const when = pbTime(pbBytes(f, 2));
+      if (when) at = Math.max(at || 0, when);
+    }
+  }
+  if (!AGY_FINAL.has(row.status) && !st.redo.includes(row.idx)) {
+    st.redo.push(row.idx);
+    if (st.redo.length > REDO_MAX) st.redo.shift();
+  }
+  if (row.step_type === AGY_USER_INPUT && !again) {
+    openTurn(st, made ?? at);
+    stamp(st, made ?? at);
+    st.ui = row.idx;
+  }
+  // A step that finished after a later prompt does not stretch that turn back.
+  if (!again || row.idx > st.ui) stamp(st, at);
+  else if (Number.isFinite(at)) st.last = Math.max(st.last ?? at, at);
+  // A step the context was compacted past is marked cleared; how it ended is the last state it recorded.
+  if (row.step_type !== AGY_TOOL_CALL || (state ?? row.status) !== AGY_DONE) return;
+  const call = pbFields(pbBytes(meta, 4));
+  const name = pbStr(call, 2);
+  const args = pbBytes(call, 3);
+  const writer = Object.hasOwn(AGY_WRITERS, name) ? AGY_WRITERS[name] : null;
+  const reader = Object.hasOwn(AGY_READERS, name) ? AGY_READERS[name] : null;
+  if (!args || (!writer && !reader)) return;
+  const file = nativePath(argPath(st, args, writer ? [writer[0], "TargetFile", "Path"] : [reader]), ctx.platform);
+  if (!file) return;
+  const key = keyFor(file, ctx.platform);
+  if (reader) {
+    if (st.seen[key] !== 1 && st.ns < SEEN_MAX) {
+      st.seen[key] = 1;
+      st.ns++;
+    }
+    return;
+  }
+  // Antigravity's own label, when the step has one, says which it was.
+  const verb = pbStr(pbFields(asBuffer(row.render_info)), 5);
+  const kind = Object.hasOwn(AGY_VERBS, verb) ? AGY_VERBS[verb] : agyKind(writer[1], args, st.w[key] || st.seen[key] === 1);
+  if (kind) put(st.w, key, file, kind, at);
+}
+
+function agyKind(how, args, known) {
+  const fresh = known ? "edited" : "created";
+  if (how === "edit") return "edited";
+  if (how === "editor") {
+    const cmd = jsonString(args, "command");
+    return cmd === "create" ? fresh : cmd === "str_replace" || cmd === "insert" ? "edited" : null;
+  }
+  return args.indexOf(APPEND_TRUE) !== -1 ? "edited" : fresh;
+}
+
+// One Cursor Agent blob. Its JSON blobs are the chat's messages as sent upstream; the protobuf ones
+// are the CLI's own (agent.v1): a user message is dated (field 25), and a step that ran a tool
+// (ConversationStep field 2) carries the call's start and end (ToolCall 59, 60) and, once it
+// finished, a result saying whether it worked.
+function cursorBlob(st, data, ctx, cwd) {
+  if (!data || !data.length || data[0] === 0x7b) return;
+  if (data.length > PARSE_MAX) {
+    st.cut = true;
+    return;
+  }
+  const top = pbFields(data);
+  if (!top || !top.length) return;
+  st.n++;
+  const [no, wt, v] = top[0];
+  if (top.length === 1 && wt === 2 && no === 2) return cursorToolCall(st, pbFields(v), ctx, cwd);
+  if (top.length === 1 && wt === 2 && (no === 1 || no === 3)) {
+    // A reply (AssistantMessage: started 2, completed 3) or a thought (ThinkingMessage: started 3, completed 4).
+    const m = pbFields(v);
+    const at = no === 1 ? pbMs(m, 3) ?? pbMs(m, 2) : pbMs(m, 4) ?? pbMs(m, 3);
+    if (at) stamp(st, at);
+    return;
+  }
+  const sent = pbMs(top, 25);
+  const id = pbBytes(top, 2);
+  if (sent && id && id.length === 36 && pbBytes(top, 1)) {
+    openTurn(st, sent);
+    stamp(st, sent);
+  }
+}
+
+function cursorToolCall(st, call, ctx, cwd) {
+  if (!call) return;
+  const at = pbMs(call, 60) ?? pbMs(call, 59);
+  if (at) stamp(st, at);
+  const when = at ?? 0;
+  // Each result is a oneof whose first case is success; a call with no result has not finished.
+  const result = (c) => pbFields(pbBytes(c, 2));
+  const edit = pbFields(pbBytes(call, CURSOR_EDIT));
+  if (edit) {
+    const ok = pbFields(pbBytes(result(edit), 1));
+    if (!ok) return;
+    // Nothing before the edit means the edit made the file.
+    const made = pbBytes(ok, 6) === undefined && !(pbNum(ok, 4) > 0);
+    return addWrite(st.w, pbStr(ok, 1) || pbStr(pbFields(pbBytes(edit, 1)), 1), made ? "created" : "edited", when, ctx, cwd);
+  }
+  const del = pbFields(pbBytes(call, CURSOR_DELETE));
+  if (del) {
+    const ok = pbFields(pbBytes(result(del), 1));
+    if (ok) addWrite(st.w, pbStr(ok, 1) || pbStr(pbFields(pbBytes(del, 1)), 1), "deleted", when, ctx, cwd);
+    return;
+  }
+  // A sub-agent's changes applied to the workspace; a failed apply still lists the ones it made.
+  const diff = result(pbFields(pbBytes(call, CURSOR_AGENT_DIFF)));
+  const ok = pbFields(pbBytes(diff, 1));
+  const field = ok ? 1 : 2;
+  for (const [n, w, c] of ok || pbFields(pbBytes(diff, 2)) || []) {
+    const change = n === field && w === 2 ? pbFields(c) : null;
+    // A change with an error was not made.
+    const kind = change && !pbBytes(change, 5) ? CURSOR_CHANGE[pbNum(change, 2)] : null;
+    if (kind) addWrite(st.w, pbStr(change, 1), kind, when, ctx, cwd);
+  }
+}
+
 // Bytes were read but not one line was a JSON object: not a record this module can use.
 const garbage = (e) => e.offset > 0 && e.st.n === 0;
 
@@ -442,19 +702,31 @@ function extOf(name) {
   return i > 0 ? name.slice(i + 1).toLowerCase() : "";
 }
 
+// Read-only, and nothing made beside the database: one in WAL mode whose -wal holds no frames is
+// opened immutable, which creates no -wal or -shm; one whose -wal holds frames is opened plainly,
+// so the rows still in the -wal are seen.
+function openDb(file, wal) {
+  const { DatabaseSync } = require("node:sqlite");
+  return new DatabaseSync(wal ? file : `${pathToFileURL(file).href}?immutable=1`, { readOnly: true });
+}
+
+const walSig = (stat) => (stat && stat.size > 0 ? `${stat.size}:${stat.mtimeMs}` : "");
+const activeAt = (stat, wal) => Math.max(stat.mtimeMs, wal && wal.size > 0 ? wal.mtimeMs : 0);
+
 function createSessionFiles({
-  claudeDir = claudeConfigDir, codexDir = codexHome, grokDir = grokHome, cacheFile = null,
-  now = Date.now, platform = process.platform, onRead = null,
+  claudeDir = claudeConfigDir, codexDir = codexHome, grokDir = grokHome, cursorDir = cursorCliDir,
+  geminiDir = geminiHome, cacheFile = null, now = Date.now, platform = process.platform, onRead = null,
 } = {}) {
   const ctx = { platform, sub: false };
   const subCtx = { platform, sub: true };
-  const files = new Map(); // record file -> { kind, size, mtimeMs, offset, st }
+  const files = new Map(); // record file -> { kind, size, mtimeMs, offset, st } (+ wal for a database)
   const walks = new Map(); // folder key -> { at, promise }
   const inflight = new Map();
   let chain = Promise.resolve();
   let loaded = false;
   let dirty = false;
   let index = { sig: "", names: new Map() };
+  let agyIndex = { sig: "", meta: new Map(), history: new Map() };
 
   function load() {
     if (loaded) return;
@@ -561,6 +833,96 @@ function createSessionFiles({
     files.set(file, e);
     if (e.st.cut) run.coverage.truncated = true;
     return e;
+  }
+
+  // Rows of a query, a slice at a time. A row of another shape is passed over.
+  async function eachRow(file, stmt, params, key, fn) {
+    let t0 = performance.now();
+    for (const row of stmt.iterate(...params)) {
+      if (onRead) onRead(file, row[key], 1);
+      try {
+        fn(row);
+      } catch {
+        /* a row of another shape */
+      }
+      if (performance.now() - t0 > SLICE_MS) {
+        await yieldTurn();
+        t0 = performance.now();
+      }
+    }
+  }
+
+  // A database's parse state, reading only the rows added since the last scan. It is read again
+  // only when the database or its -wal changed.
+  async function dbRecord(file, kind, stat, walStat, run, read) {
+    run.seen.add(file);
+    const wal = walSig(walStat);
+    let e = files.get(file);
+    if (e && e.kind === kind && e.size === stat.size && e.mtimeMs === stat.mtimeMs && e.wal === wal) return e;
+    if (!stat.isFile()) throw new Error("not a file");
+    if (!e || e.kind !== kind || stat.size < e.size) e = { kind, size: 0, mtimeMs: 0, offset: 0, wal: "", st: FRESH[kind]() };
+    // A read that fails part way starts over next time.
+    files.delete(file);
+    dirty = true;
+    const db = openDb(file, wal);
+    try {
+      await read(db, e);
+    } finally {
+      try {
+        db.close();
+      } catch {
+        /* the rows are already in hand */
+      }
+    }
+    // Opened immutable, a database that changed under the read may have been read torn.
+    if (!wal) {
+      const after = await statOf(file);
+      if (!after || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) throw new Error("changed while read");
+    }
+    Object.assign(e, { size: stat.size, mtimeMs: stat.mtimeMs, wal });
+    files.set(file, e);
+    if (e.st.cut) run.coverage.truncated = true;
+    return e;
+  }
+
+  // Steps not yet read, and the ones read before they finished. Each query walks idx in order, so
+  // no row waits on a sort.
+  async function agyRead(db, e, file) {
+    const st = e.st;
+    try {
+      const blob = db.prepare("SELECT data FROM trajectory_metadata_blob WHERE id = 'main'").get();
+      st.uri = pbStr(pbFields(pbBytes(pbFields(asBuffer(blob?.data)), 1)), 1) || st.uri;
+    } catch {
+      /* an older database: the folder comes from elsewhere */
+    }
+    const cols = "SELECT idx, step_type, status, metadata, render_info FROM steps";
+    const again = st.redo;
+    st.redo = [];
+    if (again.length) {
+      const stmt = db.prepare(`${cols} WHERE idx IN (${again.map(() => "?").join(",")}) ORDER BY idx`);
+      await eachRow(file, stmt, again, "idx", (row) => agyStep(st, row, ctx, true));
+    }
+    let next = e.offset;
+    await eachRow(file, db.prepare(`${cols} WHERE idx >= ? ORDER BY idx`), [e.offset], "idx", (row) => {
+      next = Math.max(next, row.idx + 1);
+      agyStep(st, row, ctx, false);
+    });
+    e.offset = next;
+  }
+
+  // Blobs are only added, or replaced by the same bytes, but one can be deleted and its rowid
+  // taken by the next: when the last row read is not the blob remembered, the chat is read again.
+  async function cursorRead(db, e, file, cwd) {
+    if (e.offset > 0 && db.prepare("SELECT id FROM blobs WHERE rowid = ?").get(e.offset)?.id !== e.st.top) {
+      e.offset = 0;
+      e.st = FRESH.cursor();
+    }
+    const st = e.st;
+    await eachRow(file, db.prepare("SELECT rowid AS r, id, data FROM blobs WHERE rowid > ? ORDER BY rowid"), [e.offset], "r", (row) => {
+      e.offset = row.r;
+      st.top = String(row.id);
+      cursorBlob(st, asBuffer(row.data), ctx, cwd);
+    });
   }
 
   async function claude(run) {
@@ -770,6 +1132,162 @@ function createSessionFiles({
     return out;
   }
 
+  // Cursor Agent: chats/<hash>/<chat id>/ holds meta.json and the chat's store.db.
+  async function cursor(run) {
+    const root = path.join(cursorDir(), "chats");
+    const found = [];
+    for (const group of await entries(root)) {
+      if (!group.isDirectory()) continue;
+      for (const ent of await entries(path.join(root, group.name))) {
+        if (ent.isDirectory() && (!run.only || run.only.has(`cursor:${ent.name}`))) found.push({ id: ent.name, dir: path.join(root, group.name, ent.name) });
+      }
+    }
+    const stats = await mapLimit(found, STAT_LIMIT, (f) => Promise.all([statOf(path.join(f.dir, "store.db")), statOf(path.join(f.dir, "store.db-wal"))]));
+    const out = [];
+    for (let i = 0; i < found.length; i++) {
+      const { id, dir } = found[i];
+      const [stat, walStat] = stats[i];
+      if (!stat) continue;
+      const file = path.join(dir, "store.db");
+      run.seen.add(file);
+      const active = activeAt(stat, walStat);
+      if (active < run.since) continue;
+      let meta = null;
+      try {
+        meta = JSON.parse(await fs.promises.readFile(path.join(dir, "meta.json"), "utf8"));
+      } catch {
+        /* counted below */
+      }
+      if (!meta || typeof meta !== "object") {
+        run.coverage.skipped++;
+        continue;
+      }
+      if (meta.hasConversation === false) continue;
+      const cwd = typeof meta.cwd === "string" ? meta.cwd : "";
+      let e;
+      try {
+        e = await dbRecord(file, "cursor", stat, walStat, run, (db, x) => cursorRead(db, x, file, cwd));
+      } catch {
+        run.coverage.skipped++;
+        continue;
+      }
+      const st = e.st;
+      const started = ms(meta.createdAtMs);
+      const updated = ms(meta.updatedAtMs);
+      // A write with no time of its own is dated by the file, or else by the chat's last update.
+      const writes = Object.values(st.w).map((w) => [...w]);
+      const undated = writes.filter((w) => !(w[2] > 0));
+      (await mapLimit(undated, STAT_LIMIT, (w) => statOf(w[0]))).forEach((s, j) => { undated[j][2] = s ? s.mtimeMs : updated ?? active; });
+      const span = started != null && updated != null && updated >= started && updated - started <= CURSOR_SPAN_MAX ? [[started, updated]] : [];
+      const lasts = [updated, st.last].filter(Number.isFinite);
+      out.push({
+        tool: "cursor", id, name: typeof meta.title === "string" ? meta.title : "", cwd, started: started ?? st.first,
+        last_active: lasts.length ? Math.max(...lasts) : active, writes: [writes], intervals: st.first != null ? turns(st) : span,
+      });
+    }
+    return out;
+  }
+
+  // Antigravity's titles and folders: its metadata cache, then the prompt history. Both are small
+  // and read again only when they change.
+  async function agyInfo(root) {
+    const metaFile = path.join(root, "cache", "conversation_metadata.json");
+    const historyFile = path.join(root, "history.jsonl");
+    const [metaStat, historyStat] = await Promise.all([statOf(metaFile), statOf(historyFile)]);
+    const sig = [metaStat, historyStat].map((s) => (s ? `${s.size}:${s.mtimeMs}` : "")).join("|");
+    if (sig === agyIndex.sig) return agyIndex;
+    const meta = new Map();
+    let data = null;
+    // Rewritten whole: a read that lands mid-write is tried once more.
+    for (let i = 0; metaStat && i < 2 && !data; i++) {
+      try {
+        data = JSON.parse(await fs.promises.readFile(metaFile, "utf8"));
+      } catch {
+        /* mid-write */
+      }
+    }
+    const conversations = data && data.conversations && typeof data.conversations === "object" ? data.conversations : {};
+    for (const [key, c] of Object.entries(conversations)) {
+      const s = (c && c.summary) || {};
+      const updated = ms(s.UpdatedAt);
+      meta.set(typeof s.ID === "string" && s.ID ? s.ID : key, {
+        title: s.Title || s.Preview || "", cwd: fromFileUri(Array.isArray(s.WorkspaceURIs) ? s.WorkspaceURIs[0] : null, platform),
+        updated: updated > 0 ? updated : null, skip: s.Internal === true || c?.is_internal === true || s.Cloud === true,
+      });
+    }
+    const history = new Map();
+    let text = "";
+    try {
+      text = historyStat ? await fs.promises.readFile(historyFile, "utf8") : "";
+    } catch {
+      /* no history yet */
+    }
+    for (const line of text.split("\n")) {
+      let h;
+      try {
+        h = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const at = ms(h?.timestamp);
+      if (typeof h?.conversationId !== "string" || at == null) continue;
+      const e = history.get(h.conversationId) || { title: "", titleAt: Infinity, cwd: "", cwdAt: -Infinity };
+      // The first thing asked names the conversation; a slash command does not.
+      if (typeof h.display === "string" && h.display && h.type !== "slash_command" && !h.display.startsWith("/") && at < e.titleAt) {
+        e.title = h.display;
+        e.titleAt = at;
+      }
+      if (typeof h.workspace === "string" && h.workspace && at >= e.cwdAt) {
+        e.cwd = h.workspace;
+        e.cwdAt = at;
+      }
+      history.set(h.conversationId, e);
+    }
+    agyIndex = { sig: metaStat && !data ? "" : sig, meta, history };
+    return agyIndex;
+  }
+
+  // Antigravity: one database per conversation in antigravity-cli/conversations.
+  async function antigravity(run) {
+    const root = path.join(geminiDir(), "antigravity-cli");
+    const dir = path.join(root, "conversations");
+    const found = [];
+    for (const ent of await entries(dir)) {
+      const id = ent.isFile() && ent.name.endsWith(".db") ? ent.name.slice(0, -3) : "";
+      if (id && (!run.only || run.only.has(`gemini:${id}`))) found.push({ id, file: path.join(dir, ent.name) });
+    }
+    if (!found.length) return [];
+    const info = await agyInfo(root);
+    const stats = await mapLimit(found, STAT_LIMIT, (f) => Promise.all([statOf(f.file), statOf(`${f.file}-wal`)]));
+    const out = [];
+    for (let i = 0; i < found.length; i++) {
+      const { id, file } = found[i];
+      const [stat, walStat] = stats[i];
+      const c = info.meta.get(id);
+      if (!stat) continue;
+      run.seen.add(file);
+      // Internal and cloud conversations are not the user's.
+      if (c?.skip) continue;
+      const active = activeAt(stat, walStat);
+      if (active < run.since) continue;
+      let e;
+      try {
+        e = await dbRecord(file, "agy", stat, walStat, run, (db, x) => agyRead(db, x, file));
+      } catch {
+        run.coverage.skipped++;
+        continue;
+      }
+      const st = e.st;
+      const h = info.history.get(id);
+      out.push({
+        tool: "gemini", label: "Antigravity", id, name: c?.title || h?.title || "",
+        cwd: c?.cwd || h?.cwd || fromFileUri(st.uri, platform), started: st.first,
+        last_active: st.last ?? c?.updated ?? active, writes: [Object.values(st.w)], intervals: turns(st),
+      });
+    }
+    return out;
+  }
+
   // The folder a session ran in, walked once per scan for every session in it, and kept a while.
   function walkFolder(cwd, run) {
     const dir = String(cwd || "").replace(/^\\\\\?\\/, "");
@@ -848,7 +1366,7 @@ function createSessionFiles({
     const run = { days, only, now: at, since: at - days * DAY_MS, seen: new Set(), coverage: { skipped: 0, truncated: false } };
     for (const [key, w] of walks) if (at - w.at >= WALK_TTL_MS) walks.delete(key);
     const found = [];
-    for (const store of [claude, codex, grok]) {
+    for (const store of [claude, codex, grok, cursor, antigravity]) {
       try {
         found.push(...(await store(run)));
       } catch {
@@ -878,9 +1396,11 @@ function createSessionFiles({
           rows.push(...generated(walk, merged(s.intervals), written, run));
         }
         if (!rows.length) continue;
+        // Antigravity is listed under the tool "gemini", beside the Gemini CLI, with its own label.
+        const label = s.label || LABELS[s.tool];
         sessions.push({
-          key: `${s.tool}:${s.id}`, tool: s.tool, label: LABELS[s.tool], id: s.id,
-          name: clip(s.name) || baseName(s.cwd) || LABELS[s.tool], cwd: s.cwd,
+          key: `${s.tool}:${s.id}`, tool: s.tool, label, id: s.id,
+          name: clip(s.name) || baseName(s.cwd) || label, cwd: s.cwd,
           started: Number.isFinite(s.started) ? s.started : null, last_active: s.last_active, files: rows,
         });
       } catch {

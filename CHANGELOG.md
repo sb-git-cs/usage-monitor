@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.17.1 — 2026-11-10
+
+- **Session files for Antigravity and Cursor Agent.** The Session files window lists the files these sessions created, edited or generated, next to the Claude Code, Codex and Grok Build ones, and their recent rows on the Sessions card get a file count.
+  - **Antigravity** is read from each conversation's database: the file tools' completed calls (`write_file`, `write_to_file`, `edit_file`, `replace_file_content`, `multi_replace_file_content`), with the time each one finished. A call that failed or was cancelled is not counted; one that a long conversation has since compacted away still is. Antigravity's own "Created" or "Edited" label is used where a step has one; otherwise a written file counts as created unless the conversation had already read or written it. The title and folder come from Antigravity's conversation list, then its prompt history, then the database.
+  - **Cursor Agent** is read from each chat's `store.db`: completed edits and deletions, and changes applied from a sub-agent, with their times. No Cursor Agent session with a file write was available where this was built, so this reader follows the record layout in Cursor's own program and has not been checked against a real one.
+  - Both databases are opened read-only and nothing is created beside them: one that is not in use is opened as an unchanging file, and one that is being written is read with its pending rows. Only rows added since the last read are read again.
+
 ## 1.17.0 — 2026-11-10
 
 - **Session files.** A new window lists the files each coding session produced, session by session, for Claude Code, Codex and Grok Build sessions of the last 7 or 30 days. Open it from the panel's header, from **Files ›** on the Sessions card, from the file count on a session's row (it opens at that session), or from the tray menu (**Session files…**).
