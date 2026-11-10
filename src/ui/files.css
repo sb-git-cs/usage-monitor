@@ -60,6 +60,7 @@
 .kind-chip:hover { color: var(--text); border-color: var(--axis); }
 .kind-chip[aria-pressed="true"] { background: var(--selected); border-color: var(--accent); color: var(--text); font-weight: 600; }
 .kind-chip .n { margin-left: 4px; color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 400; }
+.shows { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .deleted-switch { align-items: center; color: var(--text-2); }
 .deleted-switch input { margin: 0; }
 

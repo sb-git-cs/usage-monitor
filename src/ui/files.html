@@ -33,7 +33,10 @@
         <button class="kind-chip" type="button" data-kind="edited" aria-pressed="false" title="The session changed a file that was already there.">Edited <span class="n" id="n-edited">0</span></button>
         <button class="kind-chip" type="button" data-kind="generated" aria-pressed="false" title="Appeared in the session's folder while it was working. A best guess.">Generated <span class="n" id="n-generated">0</span></button>
       </div>
-      <label class="switch deleted-switch"><input type="checkbox" id="deleted" /> <span>Show deleted files</span></label>
+      <div class="shows">
+        <label class="switch deleted-switch" title="Scripts, code and notes a session wrote, and the images it put into its documents"><input type="checkbox" id="working" /> <span>Show working files</span></label>
+        <label class="switch deleted-switch"><input type="checkbox" id="deleted" /> <span>Show deleted files</span></label>
+      </div>
     </div>
     <div class="banner error" id="banner" role="alert" hidden>
       <span id="bannerText"></span>
@@ -50,7 +53,7 @@
       <p id="stateText" role="status">Reading session records…</p>
     </div>
     <footer class="statusbar">
-      <span class="grow" id="legend">Generated files are a best guess: they appeared in the session's folder while it was working.</span>
+      <span class="grow" id="legend">Output files are listed: documents, pages, data exports and images. Generated ones are a best guess: they appeared in the session's folder while it was working.</span>
       <span id="coverage" hidden></span>
     </footer>
   </div>

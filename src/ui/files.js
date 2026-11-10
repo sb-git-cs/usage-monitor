@@ -18,7 +18,8 @@ let loading = true;
 let selectedKey = null;
 let seq = 0;
 let lastScan = 0;
-const filter = { kind: "all", query: "", deleted: false };
+// working: also the scripts, code and notes a session wrote, not only its documents.
+const filter = { kind: "all", query: "", deleted: false, working: false };
 let listHtml = "";
 let detailHtml = "";
 
@@ -53,6 +54,7 @@ function toast(text) {
 
 function matches(f) {
   if (!filter.deleted && !f.exists) return false;
+  if (!filter.working && !f.output) return false;
   const q = filter.query.trim().toLowerCase();
   return !q || f.name.toLowerCase().includes(q) || f.dir.toLowerCase().includes(q);
 }
@@ -182,7 +184,11 @@ function render() {
   const shown = shownSessions();
   if (!shown.length) {
     const hidden = !filter.deleted && view.sessions.some((s) => s.files.some((f) => !f.exists));
-    return showState(`No files match.${hidden ? " Deleted files are hidden." : ""}`, false);
+    // Nothing but working files, with no other filter in the way.
+    if (!filter.working && filter.kind === "all" && !filter.query.trim() && !view.sessions.some((s) => s.files.some((f) => f.output && (filter.deleted || f.exists)))) {
+      return showState(`No session has produced an output file in the last ${view.days} days. Tick Show working files for the scripts, code and notes.`, false);
+    }
+    return showState(`No files match.${hidden ? " Deleted files are hidden." : ""}${filter.working ? "" : " Working files are hidden."}`, false);
   }
   $("stateBox").hidden = true;
   $("main").hidden = false;
@@ -231,8 +237,10 @@ function selectKey(key) {
       filter.kind = "all";
       filter.query = "";
       filter.deleted = filter.deleted || known.files.every((f) => !f.exists);
+      filter.working = filter.working || !known.files.some((f) => f.output && (filter.deleted || f.exists));
       $("query").value = "";
       $("deleted").checked = filter.deleted;
+      $("working").checked = filter.working;
       syncKinds();
     }
   }
@@ -323,6 +331,10 @@ $("query").addEventListener("input", () => {
 });
 $("deleted").addEventListener("change", () => {
   filter.deleted = $("deleted").checked;
+  render();
+});
+$("working").addEventListener("change", () => {
+  filter.working = $("working").checked;
   render();
 });
 $("days").addEventListener("change", () => {

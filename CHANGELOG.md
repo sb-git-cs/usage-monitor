@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.17.2 — 2026-11-10
+
+- **Session files lists what a session handed over, not what it used to get there.** The window now shows output files only, and a session that produced none is not listed, until you tick **Show working files**.
+  - **Outputs** are documents (PDF, Word `.doc`/`.docx`, PowerPoint `.ppt`/`.pptx`, Excel `.xls`/`.xlsx`, OpenDocument, RTF, EPUB), HTML pages, CSV exports and images.
+  - **An image that went into something else is not an output.** One whose bytes are inside a Word, PowerPoint, Excel or OpenDocument file the session produced is recognised exactly, from the checksums in that file's list of contents. One made earlier in the same turn that ended with a document or page (the chart drawn just before the PDF it is for) is taken as a step towards it; a PDF cannot be looked into, so for PDFs this timing is the only test.
+  - **Batches and review pictures are not outputs.** More than five images from one session in one folder (screenshots, page renders), and images in `qa`, `screenshots`, `screens`, `shots` or `verification` folders, are working files.
+  - **Program source and scratch work are not outputs.** A page, CSV file or image under `src`, `templates`, `static`, `assets`, `tests` and similar folders is code; anything in a hidden folder, `tmp`, `temp` or `cache` is scratch work, whatever its type.
+  - **Working files** are everything else a session wrote: build scripts, code, notes, archives, and the files left out above. Word's `~$` lock file beside an open document is never listed.
+  - The file count on a session's row in the panel counts output files. Opening the window at a session that has none turns **Show working files** on, so the session you asked for is shown.
+
 ## 1.17.1 — 2026-11-10
 
 - **Session files for Antigravity and Cursor Agent.** The Session files window lists the files these sessions created, edited or generated, next to the Claude Code, Codex and Grok Build ones, and their recent rows on the Sessions card get a file count.

@@ -721,7 +721,7 @@ function sendSessions() {
   }
 }
 
-// How many files each listed session produced, for the buttons on the panel rows. Read from the
+// How many output files (documents, pages, data exports, images of its own) each listed session produced, for the buttons on the panel rows. Read from the
 // session records at most once a minute, only while the panel is open, one scan at a time. A count
 // that changed re-sends the rows with sendSessions, which does not scan, so this cannot loop.
 const fileCounts = new Map();
@@ -738,7 +738,7 @@ function refreshFileCounts() {
   fileCountKeys = id;
   fileCountsAt = Date.now();
   Promise.resolve().then(() => sessionFiles.scan({ days: 30, only: new Set(keys) })).then((result) => {
-    const found = new Map(((result && result.sessions) || []).map((s) => [s.key, (s.files || []).filter((f) => f.exists).length]));
+    const found = new Map(((result && result.sessions) || []).map((s) => [s.key, (s.files || []).filter((f) => f.exists && f.output).length]));
     let changed = false;
     for (const key of [...fileCounts.keys()]) if (!keys.includes(key)) fileCounts.delete(key);
     for (const key of keys) {

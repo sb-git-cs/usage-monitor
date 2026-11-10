@@ -60,7 +60,8 @@ const sessionsView = { auto_resume: true, can_resume: true, sessions: [
 // creates; the files marked as existing are written there. The keys are those of the sessions above.
 function filesScan(dir) {
   const path = require("node:path");
-  const file = (p, kind, minutesAgo, exists, size) => ({ path: p, name: path.basename(p), kind, at: agoMin(minutesAgo), exists, size: exists ? size : null, modified: exists ? now - minutesAgo * MIN : null });
+  const file = (p, kind, minutesAgo, exists, size) => ({ path: p, name: path.basename(p), kind, at: agoMin(minutesAgo), exists, size: exists ? size : null, modified: exists ? now - minutesAgo * MIN : null,
+    output: /\.(pdf|docx|pptx|xlsx|csv|html|png)$/.test(p) });
   const api = path.join(dir, "api-gateway");
   const orders = path.join(dir, "orders-api");
   return {

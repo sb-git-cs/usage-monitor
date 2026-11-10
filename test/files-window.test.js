@@ -42,8 +42,8 @@ const scan = {
   sessions: [
     { key: "claude:1", tool: "claude", label: "Claude Code", name: "api", cwd: "D:\\work\\api", started: "2026-01-01T10:00:00Z", last_active: "2026-01-01T11:00:00Z", files: [
       { path: "D:\\work\\api\\src\\a.js", name: "a.js", kind: "edited", at: "2026-01-01T10:30:00Z", exists: true, size: 10, modified: 5 },
-      { path: "D:\\work\\api\\out\\r.pdf", name: "r.pdf", kind: "generated", at: "2026-01-01T10:40:00Z", exists: true, size: 20, modified: 6 },
-      { path: "D:\\work\\api\\gone.pdf", name: "gone.pdf", kind: "created", at: "2026-01-01T10:20:00Z", exists: false, size: null, modified: null },
+      { path: "D:\\work\\api\\out\\r.pdf", name: "r.pdf", kind: "generated", at: "2026-01-01T10:40:00Z", exists: true, size: 20, modified: 6, output: true },
+      { path: "D:\\work\\api\\gone.pdf", name: "gone.pdf", kind: "created", at: "2026-01-01T10:20:00Z", exists: false, size: null, modified: null, output: true },
     ] },
     { key: "cursor:9", tool: "cursor", label: "Cursor Agent", name: "off", cwd: "D:\\x", files: [{ path: "D:\\x\\z.md", name: "z.md", kind: "created", at: "x", exists: true }] },
     { key: "codex:2", tool: "codex", name: "tool", cwd: "D:\\work\\api", files: [{ path: "D:\\work\\api\\src\\a.js", name: "a.js", kind: "edited", at: "x", exists: true }] },
@@ -59,6 +59,7 @@ test("the view carries ids and folders, never a path", () => {
   assert.deepEqual(view.coverage, { skipped: 3, truncated: true });
   const files = view.sessions[0].files;
   assert.deepEqual(files.map((f) => [f.name, f.dir, f.can_open, f.exists]), [["a.js", "src", false, true], ["r.pdf", "out", true, true], ["gone.pdf", "", false, false]]);
+  assert.deepEqual(files.map((f) => f.output), [false, true, true], "what the reader called an output is passed on, and nothing else is one");
   assert.equal(JSON.stringify(view).includes("D:\\\\work\\\\api\\\\src\\\\a.js"), false, "no full path is sent");
   for (const f of files) assert.match(f.id, /^[0-9a-f]{16}$/);
   // The same file in two sessions has two ids.

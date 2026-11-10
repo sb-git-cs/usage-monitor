@@ -296,7 +296,20 @@ async function main() {
 
   // Session files: the demo sessions' files under a made-up folder; nothing is read from disk.
   const scan = filesScan("D:\\work");
+  // The window lists documents; the demo's scripts and notes are behind its Show working files switch.
+  const doc = (session, name, kind, minutesAgo, size) => {
+    const file = path.join(session.cwd, "out", name);
+    session.files.push({ path: file, name, kind, at: new Date(now - minutesAgo * MIN).toISOString(), exists: true, size, modified: now - minutesAgo * MIN, output: true });
+  };
+  doc(scan.sessions[0], "q3-report.docx", "generated", 4, 96 * 1024);
+  doc(scan.sessions[0], "q3-board-deck.pptx", "generated", 6, 2.3 * MB);
+  doc(scan.sessions[0], "q3-figures.xlsx", "generated", 11, 41 * 1024);
+  doc(scan.sessions[0], "cover-letter.docx", "created", 26, 18 * 1024);
+  doc(scan.sessions[1], "orders-api-spec.pdf", "generated", 82, 310 * 1024);
+  doc(scan.sessions[1], "pagination-notes.docx", "edited", 96, 22 * 1024);
+  doc(scan.sessions[2], "dashboard-review.pptx", "generated", 33, 1.8 * MB);
   for (const f of scan.sessions[0].files) if (f.name.length > 40) f.name = "architecture-overview.png";
+  for (const s of scan.sessions) s.files.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const filesView = require("../src/files-window").buildView(scan, { days: 7, running: ["claude:demo"] }).view;
   ipcMain.handle("files:get", () => filesView);
   const filesImage = await renderPage("files", { width: 1080, height: 640, setup: async () => {} });

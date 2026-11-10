@@ -105,7 +105,7 @@ test("Claude Code writes: creates, updates and edits, both slash styles as one f
     ["edited", "d:\\WORK\\api\\readme.md", T0 + 4000],
   ], "created then edited stays created; the deleted file is dropped");
   assert.deepEqual(s.files[0], { path: "D:\\work\\api\\src\\new.js", name: "new.js", kind: "created", at: T0 + 9000,
-    exists: false, size: null, modified: null });
+    exists: false, size: null, modified: null, output: false });
 });
 
 test("Claude Code titles: the generated title, then the session's name, then the first prompt, then the folder", async (t) => {
@@ -250,12 +250,15 @@ test("generated files: output files changed in the session's folder during its t
     touch(path.join(proj, file), when);
   };
   at("report.pdf", T0 + 30_000, "pdf bytes");
-  at(path.join("sub", "deep", "chart.png"), T0 + 3_663_000);
+  at(path.join("sub", "deep", "deck.pptx"), T0 + 3_663_000);
   at("late.pdf", T0 + 600_000);
   at("notes.js", T0 + 30_000);
+  // Images and data are working files, and Office's lock file beside an open document is not a document.
+  at("chart.png", T0 + 30_000);
+  at("~$report.docx", T0 + 30_000);
   at(path.join(".hidden", "inside.pdf"), T0 + 30_000);
-  at(path.join("node_modules", "pkg", "readme.md"), T0 + 30_000);
-  at(path.join("Build", "bundle.zip"), T0 + 30_000);
+  at(path.join("node_modules", "pkg", "readme.pdf"), T0 + 30_000);
+  at(path.join("Build", "out.pdf"), T0 + 30_000);
   at("written.md", T0 + 40_000);
   write(claudeFile(dir, "proj", sid), jsonl([
     prompt(sid, proj, T0, "build the report"),
@@ -274,21 +277,121 @@ test("generated files: output files changed in the session's folder during its t
   ]));
   const res = await scanner(dir, { claudeDir: () => dir }).scan();
   // What one session's record says it wrote is not the other's generated file; the report is anyone's guess.
-  assert.deepEqual(byKey(res, "claude:g2").files.map((f) => [f.kind, f.name]), [["created", "other.md"], ["generated", "report.pdf"]]);
+  assert.deepEqual(byKey(res, "claude:g2").files.map((f) => [f.kind, f.name]), [["created", "other.md"], ["generated", "chart.png"], ["generated", "report.pdf"]]);
   const s = byKey(res, `claude:${sid}`);
   assert.deepEqual(s.files.map((f) => [f.kind, path.relative(proj, f.path)]), [
-    ["generated", path.join("sub", "deep", "chart.png")],
+    ["generated", path.join("sub", "deep", "deck.pptx")],
     ["created", "gone.txt"],
     ["created", "written.md"],
+    ["generated", "chart.png"],
     ["generated", "report.pdf"],
   ]);
+  // The documents are outputs; the chart made in the turn that ended with the report was a step towards it.
+  assert.deepEqual(s.files.filter((f) => f.output).map((f) => f.name), ["deck.pptx", "report.pdf"]);
   const report = s.files.find((f) => f.name === "report.pdf");
   assert.equal(report.at, T0 + 30_000);
   assert.equal(report.exists, true);
   assert.equal(report.size, "pdf bytes".length);
   assert.equal(report.modified, T0 + 30_000);
   assert.deepEqual(s.files.find((f) => f.name === "gone.txt"), { path: path.join(proj, "gone.txt"), name: "gone.txt", kind: "created",
-    at: T0 + 50_000, exists: false, size: null, modified: null });
+    at: T0 + 50_000, exists: false, size: null, modified: null, output: false });
+});
+
+// A zip with stored entries: [name, bytes] pairs. Enough of the format for a document's directory.
+function zipOf(entries) {
+  const zlib = require("node:zlib");
+  const locals = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, data] of entries) {
+    const n = Buffer.from(name);
+    const head = Buffer.alloc(30);
+    head.writeUInt32LE(0x04034b50, 0);
+    head.writeUInt16LE(20, 4);
+    head.writeUInt32LE(zlib.crc32(data), 14);
+    head.writeUInt32LE(data.length, 18);
+    head.writeUInt32LE(data.length, 22);
+    head.writeUInt16LE(n.length, 26);
+    const dir = Buffer.alloc(46);
+    dir.writeUInt32LE(0x02014b50, 0);
+    dir.writeUInt16LE(20, 4);
+    dir.writeUInt16LE(20, 6);
+    dir.writeUInt32LE(zlib.crc32(data), 16);
+    dir.writeUInt32LE(data.length, 20);
+    dir.writeUInt32LE(data.length, 24);
+    dir.writeUInt16LE(n.length, 28);
+    dir.writeUInt32LE(offset, 42);
+    locals.push(head, n, data);
+    central.push(dir, n);
+    offset += 30 + n.length + data.length;
+  }
+  const dirBytes = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(dirBytes.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, dirBytes, end]);
+}
+
+test("outputs: documents, and pages, data and images that are not part of something else", async (t) => {
+  const dir = tmpdir(t);
+  const proj = path.join(dir, "proj");
+  const sid = "o1";
+  const at = (file, when, data = "data") => {
+    fs.mkdirSync(path.dirname(path.join(proj, file)), { recursive: true });
+    fs.writeFileSync(path.join(proj, file), data);
+    touch(path.join(proj, file), when);
+  };
+  const HOUR = 3_600_000;
+  const picture = Buffer.from("the bytes of a picture that went into the deck");
+  // Turn 1 makes pictures and nothing else; turn 2 builds a deck from one of them; turn 3 makes a
+  // chart and then the PDF it is for; turn 4 leaves a page, an export and a picture of their own.
+  at("in-deck.png", T0 + 10_000, picture);
+  at("logo.png", T0 + 20_000, "a picture nobody put anywhere");
+  at("deck.pptx", T0 + HOUR + 10_000, zipOf([["ppt/slides/slide1.xml", Buffer.from("<p/>")], ["ppt/media/image1.png", picture]]));
+  at("figure.png", T0 + 2 * HOUR + 10_000);
+  at("report.pdf", T0 + 2 * HOUR + 20_000);
+  at("prototype.html", T0 + 3 * HOUR + 10_000);
+  at("export.csv", T0 + 3 * HOUR + 20_000);
+  at("diagram.svg", T0 + 3 * HOUR + 30_000);
+  // Parts of a program, and scratch work.
+  at(path.join("templates", "page.html"), T0 + 3 * HOUR + 30_000);
+  at(path.join("src", "assets", "icon.png"), T0 + 3 * HOUR + 30_000);
+  at(path.join("tests", "fixtures", "rows.csv"), T0 + 3 * HOUR + 30_000);
+  at(path.join("work", "temp", "draft.pdf"), T0 + 3 * HOUR + 30_000);
+  write(claudeFile(dir, "proj", sid), jsonl([
+    prompt(sid, proj, T0, "draw the pictures"),
+    reply(sid, proj, T0 + 30_000),
+    prompt(sid, proj, T0 + HOUR, "now the deck"),
+    reply(sid, proj, T0 + HOUR + 30_000),
+    prompt(sid, proj, T0 + 2 * HOUR, "and the report"),
+    reply(sid, proj, T0 + 2 * HOUR + 30_000),
+    prompt(sid, proj, T0 + 3 * HOUR, "a prototype and the data"),
+    result(sid, proj, T0 + 3 * HOUR + 5_000, create(path.join(proj, ".work", "notes.pdf"))),
+    reply(sid, proj, T0 + 3 * HOUR + 40_000),
+    // A page finished later in a turn takes the pictures made before it in that turn as its own.
+    prompt(sid, proj, T0 + 4 * HOUR, "one more page"),
+    reply(sid, proj, T0 + 4 * HOUR + 30_000),
+  ]));
+  at("hero.png", T0 + 4 * HOUR + 5_000);
+  at("landing.html", T0 + 4 * HOUR + 20_000);
+  // Pictures taken to check the work, and a batch of renders: none is a result by itself.
+  at(path.join("outputs", "qa", "home.png"), T0 + 20_000);
+  for (let i = 1; i <= 6; i++) at(path.join("renders", `page-${i}.png`), T0 + 20_000 + i);
+  const s = byKey(await scanner(dir, { claudeDir: () => dir }).scan(), `claude:${sid}`);
+  const flags = Object.fromEntries(s.files.map((f) => [path.relative(proj, f.path).split(path.sep).join("/"), f.output]));
+  assert.deepEqual(flags, {
+    "landing.html": true, "hero.png": false,
+    "prototype.html": true, "export.csv": true, "diagram.svg": true,
+    "templates/page.html": false, "src/assets/icon.png": false, "tests/fixtures/rows.csv": false, ".work/notes.pdf": false,
+    "report.pdf": true, "figure.png": false,
+    "deck.pptx": true,
+    "logo.png": true, "in-deck.png": false,
+    "outputs/qa/home.png": false,
+    ...Object.fromEntries([1, 2, 3, 4, 5, 6].map((i) => [`renders/page-${i}.png`, false])),
+  });
 });
 
 test("only: other sessions' records are not read", async (t) => {
@@ -535,7 +638,7 @@ test("Antigravity: output files changed in the folder during its turns are gener
   at("report.pdf", T0 + 30_000);
   at("written.md", T0 + 40_000);
   at("late.pdf", T0 + 600_000);
-  at("chart.png", T0 + 3_630_000);
+  at("deck.pptx", T0 + 3_630_000);
   agyDb(dir, "c1", [
     userStep(0, T0),
     toolStep(1, T0 + 40_000, "write_to_file", { CodeContent: "x", TargetFile: path.join(proj, "written.md") }),
@@ -547,7 +650,7 @@ test("Antigravity: output files changed in the folder during its turns are gener
   const s = byKey(await scanner(dir, { geminiDir: () => dir }).scan(), "gemini:c1");
   assert.equal(s.cwd, proj);
   assert.equal(s.name, "proj");
-  assert.deepEqual(s.files.map((x) => [x.kind, x.name]), [["generated", "chart.png"], ["created", "written.md"], ["generated", "report.pdf"]]);
+  assert.deepEqual(s.files.map((x) => [x.kind, x.name]), [["generated", "deck.pptx"], ["created", "written.md"], ["generated", "report.pdf"]]);
 });
 
 test("Antigravity names and folders: its metadata, then the prompt history, then the database; internal and cloud ones not opened", async (t) => {

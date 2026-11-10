@@ -65,8 +65,29 @@ const CURSOR_SPAN_MAX = 12 * 3600_000;
 // scratch folders that fill with files a session's test or build run made, not ones it handed over.
 const SKIP_DIRS = new Set(["node_modules", "__pycache__", "venv", "env", "site-packages", "vendor", "build", "target", "obj",
   "tmp", "temp", "cache", "storage", "media", "staticfiles", "coverage", "logs", "log"]);
-const OUTPUT_EXT = new Set(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "csv", "md",
-  "txt", "html", "png", "jpg", "jpeg", "gif", "svg", "webp", "mp3", "mp4", "wav", "zip", "epub"]);
+// What a session hands over: documents, spreadsheets and decks always; pages, data exports and
+// images when they are not part of something else (see outputType and the image rules in runScan).
+// The scripts, code and notes it wrote on the way are its working files.
+const OUTPUT_TYPES = {
+  doc: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "epub"],
+  page: ["html", "htm"],
+  data: ["csv"],
+  image: ["png", "jpg", "jpeg", "gif", "svg", "webp"],
+};
+const TYPE_OF = new Map(Object.entries(OUTPUT_TYPES).flatMap(([type, exts]) => exts.map((ext) => [ext, type])));
+// Documents that are zip archives: the pictures put into one are listed in its directory.
+const ZIP_DOCS = new Set(["docx", "pptx", "xlsx", "odt", "ods", "odp", "epub"]);
+// A file under one of these folders is scratch work, whatever its type.
+const SCRATCH_DIRS = new Set(["tmp", "temp", "appdata", "cache"]);
+// A page, data file or image under one of these is part of a program's source, not a result.
+const SOURCE_DIRS = new Set(["src", "app", "lib", "templates", "views", "components", "partials", "layouts", "includes", "resources",
+  "static", "public", "assets", "test", "tests", "__tests__", "fixtures"]);
+// Pictures taken to check the work, by the folder they were put in.
+const REVIEW_DIRS = new Set(["qa", "screenshots", "screens", "shots", "verification"]);
+// More pictures than this from one session in one folder are a batch (renders, screenshots), not results.
+const IMAGE_BATCH = 5;
+const ZIP_DIR_MAX = 4 * 1024 * 1024;
+const IMAGE_READ_MAX = 32 * 1024 * 1024;
 const UUID = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 
 // The body of a JSON string, escapes left in.
@@ -702,6 +723,56 @@ function extOf(name) {
   return i > 0 ? name.slice(i + 1).toLowerCase() : "";
 }
 
+// "doc", "page", "data" or "image" for a file that can be an output by its name, else null. Office
+// keeps a "~$name" lock file beside a document that is open.
+function typeByName(name) {
+  return name.startsWith("~$") ? null : TYPE_OF.get(extOf(name)) || null;
+}
+
+// The same for a file a session wrote or made, by where it is too: nothing in a hidden or scratch
+// folder is an output, and a page, data file or image inside a program's source folders is code.
+function outputType(file, cwd, platform) {
+  const P = platform === "win32" ? path.win32 : path.posix;
+  const type = typeByName(P.basename(file));
+  if (!type) return null;
+  const inside = cwd && keyFor(file, platform).startsWith(keyFor(cwd.endsWith(P.sep) ? cwd : cwd + P.sep, platform));
+  const dirs = (inside ? file.slice(cwd.length) : file).split(/[\\/]/).slice(0, -1).map((d) => d.toLowerCase());
+  if (dirs.some((d) => d.startsWith(".") || SCRATCH_DIRS.has(d))) return null;
+  if (type === "image" && dirs.some((d) => REVIEW_DIRS.has(d))) return null;
+  return type !== "doc" && dirs.some((d) => SOURCE_DIRS.has(d)) ? null : type;
+}
+
+// The pictures inside a zip document, as uncompressed size -> checksums, read from the directory at
+// its end without unpacking anything. null for a file that is not such a zip.
+async function zipPictures(file, size) {
+  const fh = await fs.promises.open(file, "r");
+  try {
+    const tail = Buffer.alloc(Math.min(size, 66_000));
+    await fh.read(tail, 0, tail.length, size - tail.length);
+    const end = tail.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    if (end === -1 || end + 22 > tail.length) return null;
+    const length = tail.readUInt32LE(end + 12);
+    const start = tail.readUInt32LE(end + 16);
+    if (!length || length > ZIP_DIR_MAX || start + length > size) return null;
+    const dir = Buffer.alloc(length);
+    await fh.read(dir, 0, length, start);
+    const found = new Map();
+    for (let pos = 0; pos + 46 <= dir.length && dir.readUInt32LE(pos) === 0x02014b50;) {
+      const nameLength = dir.readUInt16LE(pos + 28);
+      const name = dir.toString("latin1", pos + 46, Math.min(dir.length, pos + 46 + nameLength));
+      if (TYPE_OF.get(extOf(name)) === "image") {
+        const bytes = dir.readUInt32LE(pos + 24);
+        if (!found.has(bytes)) found.set(bytes, new Set());
+        found.get(bytes).add(dir.readUInt32LE(pos + 16));
+      }
+      pos += 46 + nameLength + dir.readUInt16LE(pos + 30) + dir.readUInt16LE(pos + 32);
+    }
+    return found;
+  } finally {
+    await fh.close();
+  }
+}
+
 // Read-only, and nothing made beside the database: one in WAL mode whose -wal holds no frames is
 // opened immutable, which creates no -wal or -shm; one whose -wal holds frames is opened plainly,
 // so the rows still in the -wal are seen.
@@ -1324,7 +1395,7 @@ function createSessionFiles({
           }
           if (ent.isDirectory()) {
             if (depth < WALK_DEPTH && !ent.name.startsWith(".") && !SKIP_DIRS.has(ent.name.toLowerCase())) queue.push([path.join(dir, ent.name), depth + 1]);
-          } else if (ent.isFile() && OUTPUT_EXT.has(extOf(ent.name))) outputs.push(path.join(dir, ent.name));
+          } else if (ent.isFile() && typeByName(ent.name)) outputs.push(path.join(dir, ent.name));
         }
       }
       const stats = await mapLimit(outputs, STAT_LIMIT, statOf);
@@ -1349,15 +1420,71 @@ function createSessionFiles({
         for (let i = lowerBound(list, s, field); i < list.length && list[i][field] <= e + PAD_MS; i++) {
           const f = list[i];
           if (taken.has(f.key) || out.has(f.key)) continue;
-          if (out.size >= GENERATED_MAX) {
-            run.coverage.truncated = true;
-            return [...out.values()];
-          }
           out.set(f.key, { path: f.path, name: path.basename(f.path), kind: "generated", at: f.m });
         }
       }
     }
-    return [...out.values()];
+    const rows = [...out.values()];
+    if (rows.length <= GENERATED_MAX) return rows;
+    // Too many to list: documents first, then the newest of the rest.
+    run.coverage.truncated = true;
+    const doc = (r) => (typeByName(r.name) === "doc" ? 0 : 1);
+    return rows.sort((a, b) => doc(a) - doc(b) || b.at - a.at).slice(0, GENERATED_MAX);
+  }
+
+  // A cached read, kept while the file's size and time stay the same.
+  const probes = new Map();
+  async function probed(kind, r, read) {
+    const key = `${kind}|${r.path}`;
+    const sig = `${r.size}:${r.modified}`;
+    const hit = probes.get(key);
+    if (hit && hit.sig === sig) return hit.value;
+    let value = null;
+    try {
+      value = await read();
+    } catch {
+      /* gone, locked or not what its name says */
+    }
+    if (probes.size >= 2000) probes.delete(probes.keys().next().value);
+    probes.set(key, { sig, value });
+    return value;
+  }
+
+  // Marks each of a session's files as an output or not. An image is not one when it is one of a
+  // batch in its folder, or went into something else the session made: its bytes are inside a zip
+  // document of the session's, or the session finished a document or page later in the same turn,
+  // the image being a step on the way.
+  async function markOutputs(s, turns) {
+    const P = platform === "win32" ? path.win32 : path.posix;
+    const typed = s.files.map((r) => [r, outputType(r.path, s.cwd, platform)]);
+    const wholes = typed.filter(([, type]) => type === "doc" || type === "page").map(([r]) => r);
+    const zips = wholes.filter((r) => r.exists && ZIP_DOCS.has(extOf(r.name)));
+    const perFolder = new Map();
+    const folderOf = (r) => keyFor(P.dirname(r.path), platform);
+    for (const [r, type] of typed) if (type === "image") perFolder.set(folderOf(r), (perFolder.get(folderOf(r)) || 0) + 1);
+    for (const [r, type] of typed) {
+      r.output = !!type;
+      if (type !== "image") continue;
+      if (perFolder.get(folderOf(r)) > IMAGE_BATCH) {
+        r.output = false;
+        continue;
+      }
+      const turn = turns.find(([from, to]) => r.at >= from && r.at <= to + PAD_MS);
+      if (turn && wholes.some((d) => d.at >= r.at - 2000 && d.at <= turn[1] + PAD_MS)) {
+        r.output = false;
+        continue;
+      }
+      if (!r.exists || r.size > IMAGE_READ_MAX) continue;
+      for (const z of zips) {
+        const sums = (await probed("zip", z, () => zipPictures(z.path, z.size)))?.get(r.size);
+        if (!sums) continue;
+        const sum = await probed("sum", r, async () => require("node:zlib").crc32(await fs.promises.readFile(r.path)));
+        if (sums.has(sum)) {
+          r.output = false;
+          break;
+        }
+      }
+    }
   }
 
   async function runScan(days, only) {
@@ -1385,17 +1512,20 @@ function createSessionFiles({
       }
     }
     const sessions = [];
+    const turnsOf = new Map();
     for (const s of found) {
       try {
         const w = {};
         for (const [file, kind, when] of s.writes.flat().sort((a, b) => a[2] - b[2])) put(w, keyFor(file, platform), file, kind, when);
         const rows = Object.values(w).filter((x) => x[1] !== "deleted").map(([file, kind, when]) => ({ path: file, name: P.basename(file), kind, at: when }));
         const walk = walked.get(s.cwd);
+        const turns = merged(s.intervals);
         if (walk) {
           if (walk.truncated) run.coverage.truncated = true;
-          rows.push(...generated(walk, merged(s.intervals), written, run));
+          rows.push(...generated(walk, turns, written, run));
         }
         if (!rows.length) continue;
+        turnsOf.set(`${s.tool}:${s.id}`, turns);
         // Antigravity is listed under the tool "gemini", beside the Gemini CLI, with its own label.
         const label = s.label || LABELS[s.tool];
         sessions.push({
@@ -1414,6 +1544,10 @@ function createSessionFiles({
       const st = stats[i];
       Object.assign(r, { exists: !!st, size: st ? st.size : null, modified: st ? st.mtimeMs : null });
     });
+    for (const s of sessions) {
+      await markOutputs(s, turnsOf.get(s.key) || []);
+      await yieldTurn();
+    }
     for (const s of sessions) s.files.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
     sessions.sort((a, b) => b.last_active - a.last_active);
     if (!only) await prune(run);

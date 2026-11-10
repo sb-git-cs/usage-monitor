@@ -1018,6 +1018,14 @@ async function checkFiles() {
     assert.equal(await js(`typeof require`), "undefined");
     assert.equal(await js(`document.title`), "Session files");
 
+    // Only output files at first: the scripts, code and notes a session wrote are behind a switch.
+    assert.deepEqual(await sessionNames(), ["api-gateway", "Add pagination to the orders API"], "a session with no output file is not listed at first");
+    assert.deepEqual(await names(), ["q3-report.pdf", "architecture-overview-with-a-very-long-name-for-the-wrapping-check.png"]);
+    assert.equal(await counts(), "3 0 1 2");
+    assert.equal(await js(`document.getElementById('working').checked`), false);
+    const working = async (on) => { await js(`(() => { const c = document.getElementById('working'); c.checked = ${on}; c.dispatchEvent(new Event('change', { bubbles: true })); })()`); await wait(40); };
+    await working(true);
+
     // Sessions and files; a switched-off tool does not appear; the deleted files are not counted.
     assert.deepEqual(await sessionNames(), ["api-gateway", "Add pagination to the orders API", hostile]);
     assert.deepEqual(await text(".srow .s-count"), ["5", "3", "1"]);
@@ -1183,8 +1191,9 @@ async function checkFiles() {
     // A session asked for before the window exists is the one shown first.
     win.destroy();
     await wait(100);
-    await open("codex:019a3c2e-58f1-7d40-b6a2-3e9c4f1d8a05");
-    assert.equal(await selected(), "codex:019a3c2e-58f1-7d40-b6a2-3e9c4f1d8a05");
+    await open("grok:demo");
+    assert.equal(await selected(), "grok:demo");
+    assert.equal(await js(`document.getElementById('working').checked`), true, "a session with no output file is shown with its working files");
 
     // Light and dark.
     win.setSize(980, 700);

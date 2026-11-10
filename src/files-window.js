@@ -50,7 +50,7 @@ function buildView(result, { days, running = [], providerOn = () => true, select
       const id = fileId(s.key, f.path);
       index.set(id, { key: s.key, path: f.path });
       files.push({ id, name: f.name || f.path.split(/[\\/]/).pop(), dir: relDir(f.path, s.cwd), kind: f.kind, at: f.at,
-        exists: !!f.exists, size: f.size ?? null, modified: f.modified ?? null, can_open: !!f.exists && canOpen(f.path) });
+        exists: !!f.exists, size: f.size ?? null, modified: f.modified ?? null, can_open: !!f.exists && canOpen(f.path), output: f.output === true });
     }
     if (!files.length) continue;
     sessions.push({ key: s.key, tool: s.tool, label: s.label, name: s.name, cwd: s.cwd, started: s.started, last_active: s.last_active,
