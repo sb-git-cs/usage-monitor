@@ -155,3 +155,32 @@ test("the report names the requested period and omits the unit when no budget li
   const named = generateReport({ days: 7, burn: [{ provider: "claude", label: "5h", used: 50, burn_rate: 2, safe_rate: 10, hours_to_reset: 3, status: "sustainable" }] });
   assert.match(named, /\| Claude Code \(5h\) \| 50% \| 2%\/h \| 10%\/h \| 3h \| On pace \|/);
 });
+
+test("the report shows each session's tokens and cost per model, and the totals per model across sessions", () => {
+  const module = { exports: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../src/insights-window.js"), "utf8"), {
+    module, __dirname: path.join(__dirname, "../src"), process,
+    require: (id) => id === "electron" ? { app: {}, BrowserWindow: class {}, ipcMain: {}, dialog: {}, nativeTheme: {} } : id === "./insights" ? { displayPrefs } : id === "./tokens" ? require("../src/tokens") : require(id),
+  });
+  const { generateReport } = module.exports;
+  const counts = (total, cost, priced = true) => ({ total, input: total, output: 0, cache_read: 0, cache_write: 0, reasoning: 0, turns: 2, cost, priced, unpriced: priced ? 0 : total });
+  const report = generateReport({ days: 7, tokens: {
+    summary: { ...counts(3000, 1.5, false), cache_efficiency_pct: 0, avg_turn_tokens: 750, sessions: 2, turns: 4 },
+    pricing: { checked: "2026-11-17" },
+    by_model: [{ ...counts(2000, 1.5), id: "a", provider: "claude", model: "opus-5-5", pct: 67, sessions: 2, avg_session_tokens: 1000, avg_session_cost: 0.75, daily: [] },
+      { ...counts(1000, 0, false), id: "b", provider: "claude", model: "mystery", pct: 33, sessions: 1, avg_session_tokens: 1000, avg_session_cost: 0, daily: [] }],
+    by_session: [
+      { ...counts(2500, 1.25, false), id: "s1", provider: "claude", title: "Fix *checkout* | pay", folder: "shop", agents: 1, first: 0, last: 1000,
+        models: [{ ...counts(1500, 1.25), model: "opus-5-5" }, { ...counts(1000, 0, false), model: "mystery" }] },
+      { ...counts(500, 0.25), id: "abcdef12", provider: "claude", title: null, folder: "api", agents: 0, first: 0, last: 1000, models: [{ ...counts(500, 0.25), model: "opus-5-5" }] },
+    ] } });
+  assert.match(report, /API-equivalent cost\*\*: \$1\.50\* over 2 sessions/);
+  assert.match(report, /## Models across sessions[\s\S]*\| Claude Code \/ opus-5-5 \| 2 \| 2 \| 2,000 \| 67% \| \$1\.50 \| 1,000 \| \$0\.75 \|/);
+  assert.match(report, /\| Claude Code \/ mystery \| 1 \|[^\n]*\| — \|/, "a model without a price has no cost, not $0");
+  assert.match(report, /\| \*\*All models\*\* \| \*\*2\*\* \|/);
+  // A title cannot break the table or add formatting.
+  assert.match(report, /## Sessions by model[\s\S]*\| Claude Code · Fix \\\*checkout\\\* \\\| pay \(\+1 sub-agent\) \| shop \|[^\n]*\| opus-5-5 \| 2 \| 1,500 \| \$1\.25 \|/);
+  assert.match(report, /\| \| \| \| mystery \| 2 \| 1,000 \| — \|\n\| \| \| \| \*Session total\* \| 2 \| 2,500 \| \$1\.25\* \|/);
+  assert.match(report, /\| Claude Code · session abcdef12 \| api \|/);
+  assert.match(report, /checked 2026-11-17/);
+});

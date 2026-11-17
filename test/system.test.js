@@ -1,35 +1,23 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { EventEmitter } = require("node:events");
-const { PassThrough } = require("node:stream");
-const { cpuUsage, storageUsage, percent, createWorker, spawnWorker } = require("../src/system");
+const { cpuUsage, storageUsage, percent } = require("../src/system");
 const { load } = require("./helpers");
 
-// A stand-in for the PowerShell worker: answer(n) decides the reply to the nth "sample" line
-// (a value to send as JSON, or undefined to stay silent).
-function fakeWorker(answer = () => ({ gpuPresent: false, gpu: null, disks: [] })) {
-  const procs = [];
-  const start = () => {
-    const proc = new EventEmitter();
-    proc.pid = 1000 + procs.length;
-    proc.stdout = new PassThrough();
-    proc.stdin = new PassThrough();
-    proc.killed = false;
-    proc.kill = () => { proc.killed = true; setImmediate(() => proc.emit("exit", null)); };
-    let n = 0;
-    proc.written = "";
-    proc.stdin.on("data", (chunk) => {
-      proc.written += chunk;
-      for (const line of String(chunk).split("\n")) {
-        if (line !== "sample" && line !== "sample storage") continue;
-        const reply = answer(n++, proc, line);
-        if (reply !== undefined) proc.stdout.write(`${JSON.stringify(reply)}\n`);
-      }
-    });
-    procs.push(proc);
-    return proc;
+// A stand-in for the resident Windows helper's "sys" channel: answer(n, request) gives the nth
+// reply, as a value (sent as JSON), a string (sent as is), or undefined to never answer.
+function fakeHelper(answer = () => ({ gpuPresent: false, gpu: null, disks: [] })) {
+  const requests = [];
+  let n = 0;
+  return {
+    requests,
+    request(channel, payload) {
+      assert.equal(channel, "sys");
+      requests.push(payload);
+      const reply = answer(n++, payload);
+      if (reply === undefined) return new Promise(() => {});
+      return Promise.resolve(typeof reply === "string" ? reply : JSON.stringify(reply));
+    },
   };
-  return { start, procs };
 }
 
 test("CPU uses elapsed ticks across every core, never lifetime average", () => {
@@ -49,65 +37,28 @@ test("storage highlights the fullest drive and excludes unavailable volumes", ()
 });
 
 test("hardware normalizes Windows samples and keeps missing readings unknown", async () => {
-  if (process.platform !== "win32") return;
-  const fake = fakeWorker(() => ({ gpuPresent: true, gpu: null, disks: [{ name: "C:", busy: 15 }, { name: "D:", busy: 70 }] }));
-  const api = load("src/system.js", { "node:child_process": {
-    spawn(cmd, args, opts) {
-      assert.equal(cmd, "powershell.exe");
-      assert.ok(args.includes("-EncodedCommand"));
-      assert.equal(opts.windowsHide, true);
-      return fake.start();
-    },
-  } }, ["hardwareSample"]);
-  const sample = await api.hardwareSample();
+  const fake = fakeHelper(() => ({ gpuPresent: true, gpu: null, disks: [{ name: "C:", busy: 15 }, { name: "D:", busy: 70 }] }));
+  const api = load("src/system.js", { "./winhelper": fake }, ["hardwareSample"]);
+  const sample = await api.hardwareSample(false, "win32");
   assert.equal(sample.disk, 70);
   assert.equal(sample.gpu, null);
   assert.equal(sample.gpuPresent, true);
-  await api.hardwareSample();
-  assert.equal(fake.procs.length, 1, "one PowerShell process answers every sample");
+  assert.equal(sample.space, undefined, "drives are read only when asked");
+  const withStorage = await api.hardwareSample(true, "win32");
+  assert.equal(withStorage.space, undefined, "a sample without volumes leaves storage unknown");
+  assert.deepEqual(fake.requests, ["sample", "sample storage"]);
 });
 
-test("the hardware worker answers many samples from one process", async () => {
-  const fake = fakeWorker((n) => ({ gpuPresent: true, gpu: n, disks: [] }));
-  const worker = createWorker({ start: fake.start });
-  for (let i = 0; i < 5; i++) assert.equal((await worker.sample()).gpu, i);
-  assert.equal(fake.procs.length, 1);
-  worker.stop();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.match(fake.procs[0].written, /exit\n$/, "stop asks the loop to end");
-});
-
-test("a stuck or crashed worker is replaced, but not more often than every 30 seconds", async () => {
-  let clock = 0;
-  const fake = fakeWorker((n, proc) => (proc.pid === 1000 ? undefined : { gpuPresent: true, gpu: 5, disks: [] }));
-  const worker = createWorker({ start: fake.start, timeoutMs: 20, restartGapMs: 30000, now: () => clock });
-  await assert.rejects(worker.sample(), /timed out/);
-  assert.equal(fake.procs[0].killed, true, "a hung sampler is killed");
-  clock += 1000;
-  await assert.rejects(worker.sample(), /restarting/, "no restart storm");
-  clock += 30000;
-  assert.equal((await worker.sample()).gpu, 5);
-  assert.equal(fake.procs.length, 2);
-  fake.procs[1].emit("exit", 1);
-  clock += 30000;
-  assert.equal((await worker.sample()).gpu, 5, "a crashed sampler is started again");
-  assert.equal(fake.procs.length, 3);
-  worker.stop();
-});
-
-test("the real PowerShell worker returns samples from one process", { skip: process.platform !== "win32" }, async () => {
-  const worker = createWorker({ start: spawnWorker, timeoutMs: 30000 });
+test("the real helper's samples come through as hardware and storage readings", { skip: process.platform !== "win32" }, async () => {
+  const api = load("src/system.js", {}, ["hardwareSample"]);
   try {
-    const first = await worker.sample();
-    const pid = worker.pid;
-    const second = await worker.sample();
-    assert.equal(worker.pid, pid);
-    for (const s of [first, second]) {
+    for (const s of [await api.hardwareSample(true), await api.hardwareSample(false)]) {
       assert.ok(Array.isArray(s.disks), JSON.stringify(s));
       assert.ok(s.gpu === null || (s.gpu >= 0 && s.gpu <= 100));
+      assert.ok(s.disk === null || (s.disk >= 0 && s.disk <= 100));
     }
   } finally {
-    worker.stop();
+    require("../src/winhelper").stop();
   }
 });
 
@@ -117,7 +68,7 @@ test("collector consumes failed probes and does not publish results after stoppi
     mem: async () => ({ total: 100, available: 20 }),
     fsSize: () => new Promise(resolve => { finishStorage = resolve; }),
     graphics: async () => { throw new Error("unavailable"); }, fsStats: async () => ({ rx_sec: null, wx_sec: null }),
-  }, "node:child_process": { spawn() { throw new Error("unavailable"); } } });
+  }, "./winhelper": { request: async () => { throw new Error("unavailable"); } } });
   const seen = [];
   const poll = api.start(s => seen.push(s));
   await new Promise(resolve => setImmediate(resolve));
@@ -146,14 +97,14 @@ test("memory is read from os on Windows without starting systeminformation's Pow
 test("a stalled hardware probe clears its readings but keeps the GPU chip", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"] });
   let hardwareCalls = 0;
-  const fake = fakeWorker((n) => (n === 0 ? { gpuPresent: true, gpu: 40, disks: [] } : undefined));
+  const fake = fakeHelper((n) => (n === 0 ? { gpuPresent: true, gpu: 40, disks: [] } : undefined));
   const api = load("src/system.js", {
     systeminformation: {
       mem: async () => ({ total: 100, available: 50 }), fsSize: async () => [],
       graphics: async () => (hardwareCalls++ === 0 ? { controllers: [{ utilizationGpu: 40 }] } : new Promise(() => {})),
       fsStats: async () => ({ rx_sec: 1, wx_sec: 1 }),
     },
-    "node:child_process": { spawn: () => fake.start() },
+    "./winhelper": fake,
   });
   const seen = [];
   const poll = api.start(s => seen.push(s));
@@ -169,14 +120,12 @@ test("a stalled hardware probe clears its readings but keeps the GPU chip", asyn
 
 test("on Windows the hardware helper also reads the drives, every sixth sample", { skip: process.platform !== "win32" }, async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"] });
-  const requests = [];
-  const fake = fakeWorker((n, _proc, line) => {
-    requests.push(line);
-    return { gpuPresent: false, gpu: null, disks: [], ...(line === "sample storage" ? { volumes: [{ mount: "C:", used: 90, size: 100 }] } : {}) };
-  });
+  const fake = fakeHelper((n, line) => (
+    { gpuPresent: false, gpu: null, disks: [], ...(line === "sample storage" ? { volumes: [{ mount: "C:", used: 90, size: 100 }] } : {}) }));
+  const requests = fake.requests;
   const api = load("src/system.js", {
     systeminformation: { fsSize: async () => { throw new Error("si.fsSize starts PowerShell on Windows"); } },
-    "node:child_process": { spawn: () => fake.start() },
+    "./winhelper": fake,
   });
   const seen = [];
   const poll = api.start((s) => seen.push(s));
@@ -191,11 +140,11 @@ test("on Windows the hardware helper also reads the drives, every sixth sample",
 test("paused sampling stops reading until it resumes", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"] });
   let reads = 0;
-  const fake = fakeWorker(() => { reads++; return { gpuPresent: false, gpu: null, disks: [] }; });
+  const fake = fakeHelper(() => { reads++; return { gpuPresent: false, gpu: null, disks: [] }; });
   const api = load("src/system.js", {
     // Off Windows the GPU list is cached, so the disk probe is what each sample reads.
     systeminformation: { fsSize: async () => [], graphics: async () => { reads++; return { controllers: [] }; }, fsStats: async () => { reads++; return { rx_sec: 0, wx_sec: 0 }; }, mem: async () => ({ total: 1, available: 1 }) },
-    "node:child_process": { spawn: () => fake.start() },
+    "./winhelper": fake,
   });
   const poll = api.start(() => {});
   const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -225,4 +174,37 @@ test("off Windows the GPU list is re-read every 10 minutes unless it reports uti
   assert.equal((await api.hardwareSample(false, "linux")).gpu, 30);
   await api.hardwareSample(false, "linux");
   assert.equal(reads, 3, "a GPU that reports utilization is read every sample");
+});
+
+
+test("hardware and battery requests go to the helper's sys channel, and simultaneous callers share a reading", async () => {
+  const fake = fakeHelper((n, line) => ({ request: line }));
+  const api = load("src/system.js", { "./winhelper": fake }, ["windowsSample", "stopWindowsWorker"]);
+  const hardware = api.windowsSample("sample storage");
+  const battery = api.batterySample();
+  assert.equal(api.batterySample(), battery, "simultaneous battery callers share a reading");
+  assert.deepEqual(await hardware, { request: "sample storage" });
+  assert.deepEqual(await battery, { request: "battery" });
+  assert.notEqual(api.batterySample(), battery, "a finished reading is not reused");
+  assert.deepEqual(fake.requests, ["sample storage", "battery", "battery"]);
+});
+
+test("stopping the sampler forgets its shared readings and leaves the helper to the app", async () => {
+  let stopped = 0;
+  const fake = { ...fakeHelper(() => undefined), stop: () => { stopped++; } };
+  const api = load("src/system.js", { "./winhelper": fake }, ["windowsSample", "stopWindowsWorker"]);
+  const battery = api.batterySample();
+  api.stopWindowsWorker();
+  assert.notEqual(api.batterySample(), battery, "a reading asked for after stopping is a new one");
+  assert.equal(stopped, 0, "the sessions and the taskbar still use the helper");
+});
+
+test("a failed shared request does not poison the next request", async () => {
+  const fake = fakeHelper((n, line) => (n === 0 ? "invalid json" : { request: line }));
+  const api = load("src/system.js", { "./winhelper": fake }, ["windowsSample", "stopWindowsWorker"]);
+  const hardware = api.windowsSample();
+  const battery = api.batterySample();
+  await assert.rejects(hardware, SyntaxError);
+  assert.deepEqual(await battery, { request: "battery" });
+  assert.deepEqual(await api.windowsSample(), { request: "sample" }, "the failed reading is not kept");
 });

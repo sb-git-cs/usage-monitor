@@ -190,6 +190,7 @@ function open(key) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      spellcheck: false,
     },
   });
   win.setMenuBarVisibility(false);

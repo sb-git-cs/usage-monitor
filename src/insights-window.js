@@ -2,20 +2,16 @@ const { app, BrowserWindow, ipcMain, dialog, nativeTheme } = require("electron")
 const fs = require("node:fs");
 const path = require("node:path");
 const { displayPrefs } = require("./insights");
-const { modelExport } = require("./tokens");
-let scanTokens = () => null;
+const tokens = require("./tokens");
+const { modelExport } = tokens;
+// By absolute path, like burn below: some test loaders resolve bare relative paths from their own folder.
+const { createOffload } = require(path.join(__dirname, "offload"));
 let analyzeBurn = () => [];
 let computeHealth = () => ({ score: 100, label: "Good", grade: "A", recommendations: [] });
 
-try {
-  const tokensModule = require(path.join(__dirname, "tokens"));
-  scanTokens = tokensModule.scanTokens || scanTokens;
-} catch {
-  try {
-    const tokensModule = require("./tokens");
-    scanTokens = tokensModule.scanTokens || scanTokens;
-  } catch {}
-}
+// Token reports read weeks of transcripts; they run in a utility process that ends a minute after
+// the last one, so what they allocate never stays with the main process.
+const tokenReports = createOffload(path.join(__dirname, "tokens.js"), { inline: tokens, name: "token report" });
 
 try {
   const burnModule = require(path.join(__dirname, "burn"));
@@ -58,6 +54,9 @@ function generateReport(v) {
   const NAMES = { claude: "Claude Code", codex: "Codex", gemini: "Gemini", grok: "Grok Build", cursor: "Cursor", copilot: "Copilot", windsurf: "Windsurf", kiro: "Kiro", amp: "Amp", opencode: "OpenCode", qwen: "Qwen Code", kimi: "Kimi Code", x_subscription: "X Subscription" };
   const STATUS = { exhausted: "Used up", critical: "Runs out", elevated: "Watch", sustainable: "On pace", cooling: "Falling", idle: "Idle" };
   const gb = (n) => `${((Number(n) || 0) / 1e9).toFixed(2)} GB`;
+  // Cost at API list prices; "—" when nothing in the row has a published price.
+  const usd = (x) => (x && Number.isFinite(x.cost) && (x.priced || x.cost > 0) ? `$${x.cost < 0.01 && x.cost > 0 ? "<0.01" : x.cost.toFixed(2)}${x.priced === false ? "*" : ""}` : "—");
+  const when = (t) => (Number.isFinite(t) ? new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
   const lines = [
     "# Usage Monitor report",
     `Generated: ${new Date().toLocaleString()}`,
@@ -67,6 +66,7 @@ function generateReport(v) {
     `- **Quota health**: ${v.health?.score ?? 100}/100 (${v.health?.label || "Good"})`,
     `- **Windows recorded**: ${v.series?.length || 0}`,
     `- **Tokens**: ${v.tokens?.summary?.total ? v.tokens.summary.total.toLocaleString() : "0"} (${v.tokens?.summary?.cache_efficiency_pct || 0}% of prompt tokens read from cache)`,
+    ...(v.tokens?.summary?.total ? [`- **API-equivalent cost**: ${usd(v.tokens.summary)} over ${(v.tokens.summary.sessions || 0).toLocaleString()} sessions, at list prices`] : []),
     `- **Network this cycle**: ${v.budget?.used ? gb(v.budget.used) : "0 GB"} / ${v.budget?.limit ? gb(v.budget.limit) : "No limit set"}`,
     "",
     "## Recommendations",
@@ -88,7 +88,10 @@ function generateReport(v) {
       `- **Read from cache**: ${sm.cache_read.toLocaleString()} (${sm.cache_efficiency_pct}% of prompt tokens)`,
       `- **Written to cache**: ${sm.cache_write.toLocaleString()}`,
       `- **Output**: ${sm.output.toLocaleString()} (reasoning ${sm.reasoning.toLocaleString()})`,
-      `- **Model responses**: ${sm.turns.toLocaleString()} (${sm.avg_turn_tokens.toLocaleString()} tokens each on average)`
+      `- **Model responses**: ${sm.turns.toLocaleString()} (${sm.avg_turn_tokens.toLocaleString()} tokens each on average)`,
+      `- **Sessions**: ${(sm.sessions || 0).toLocaleString()}`,
+      `- **API-equivalent cost**: ${usd(sm)} at pay-as-you-go list prices (subscription plans are not billed per token)` +
+        (sm.unpriced ? `; ${sm.unpriced.toLocaleString()} tokens from models without a published price are not included` : "")
     );
   }
   lines.push(
@@ -98,11 +101,42 @@ function generateReport(v) {
     `- **Cycle**: ${v.budget?.start ? new Date(v.budget.start).toLocaleDateString() : "—"} to ${v.budget?.end ? new Date(v.budget.end).toLocaleDateString() : "—"}`
   );
   lines.push("", "## Model usage", "Observed Claude Code and Codex transcript tokens. Reasoning is included in output; totals count cached input once.",
-    "| Provider / model | Total | Uncached input | Cache read | Cache write | Output | Reasoning subset |", "|---|---:|---:|---:|---:|---:|---:|");
+    "| Provider / model | Total | Uncached input | Cache read | Cache write | Output | Reasoning subset | API cost |", "|---|---:|---:|---:|---:|---:|---:|---:|");
   for (const m of v.tokens?.by_model || []) {
-    lines.push(`| ${md(NAMES[m.provider] || m.provider)} / ${md(m.model)} | ${m.total} | ${m.input} | ${m.cache_read} | ${m.cache_write} | ${m.output} | ${m.reasoning} |`);
+    lines.push(`| ${md(NAMES[m.provider] || m.provider)} / ${md(m.model)} | ${m.total} | ${m.input} | ${m.cache_read} | ${m.cache_write} | ${m.output} | ${m.reasoning} | ${usd(m)} |`);
   }
-  for (const m of v.tokens?.by_model || []) lines.push("", `Daily trend for ${md(m.model)}:`, ...(m.daily || []).map((d) => `- ${md(d.date)}: ${d.total} recorded tokens`), "");
+  for (const m of v.tokens?.by_model || []) lines.push("", `Daily trend for ${md(m.model)}:`, ...(m.daily || []).map((d) => `- ${md(d.date)}: ${d.total} recorded tokens, ${usd(d)}`), "");
+  // Cumulative over the period: how many sessions used each model and what they spent on it.
+  const models = v.tokens?.by_model || [];
+  if (models.length) {
+    lines.push("", "## Models across sessions", "| Provider / model | Sessions | Responses | Tokens | Share | API cost | Tokens per session | Cost per session |", "|---|---:|---:|---:|---:|---:|---:|---:|");
+    for (const m of models) {
+      lines.push(`| ${md(NAMES[m.provider] || m.provider)} / ${md(m.model)} | ${m.sessions ?? "—"} | ${m.turns.toLocaleString()} | ${m.total.toLocaleString()} | ${m.pct}% | ${usd(m)} | ` +
+        `${(m.avg_session_tokens ?? 0).toLocaleString()} | ${usd({ cost: m.avg_session_cost, priced: m.priced })} |`);
+    }
+    const sm = v.tokens.summary;
+    lines.push(`| **All models** | **${(sm.sessions || 0).toLocaleString()}** | **${sm.turns.toLocaleString()}** | **${sm.total.toLocaleString()}** | 100% | **${usd(sm)}** | | |`);
+  }
+  // Each session, newest first, with what each model used in it.
+  const sessions = v.tokens?.by_session || [];
+  if (sessions.length) {
+    const SHOWN = 50;
+    lines.push("", "## Sessions by model", `Sessions are named by their folder and the title the tool gave them${sessions.length > SHOWN ? `; the newest ${SHOWN} of ${sessions.length} are listed (the session CSV export has them all)` : ""}.`,
+      "| Session | Folder | Active | Model | Responses | Tokens | API cost |", "|---|---|---|---|---:|---:|---:|");
+    for (const s of sessions.slice(0, SHOWN)) {
+      const name = `${md(NAMES[s.provider] || s.provider)} · ${md(s.title || `session ${String(s.id).slice(0, 8)}`)}${s.agents ? ` (+${s.agents} sub-agent${s.agents === 1 ? "" : "s"})` : ""}`;
+      (s.models || []).forEach((m, i) => {
+        lines.push(i === 0 ? `| ${name} | ${md(s.folder || "—")} | ${md(when(s.first))} – ${md(when(s.last))} | ${md(m.model)} | ${m.turns.toLocaleString()} | ${m.total.toLocaleString()} | ${usd(m)} |`
+          : `| | | | ${md(m.model)} | ${m.turns.toLocaleString()} | ${m.total.toLocaleString()} | ${usd(m)} |`);
+      });
+      if ((s.models || []).length > 1) lines.push(`| | | | *Session total* | ${s.turns.toLocaleString()} | ${s.total.toLocaleString()} | ${usd(s)} |`);
+    }
+  }
+  if (v.tokens?.pricing) {
+    lines.push("", `Costs are what the tokens would cost at the providers' pay-as-you-go API list prices (checked ${md(v.tokens.pricing.checked)}), ` +
+      "including cache reads and writes, long-prompt rates and fast mode where the transcripts record them; Codex cache writes are priced at the shortest retention. " +
+      "Subscription plans are not billed per token. * marks a row with tokens from a model without a published price.");
+  }
   if (v.battery) {
     const r = v.battery.latest;
     lines.push("", "## Battery", `- Current: ${r?.percent ?? "Unknown"}% · ${require("./battery-model").label(r)}`,
@@ -118,7 +152,7 @@ const tokenScans = new Map();
 function tokensFor(days) {
   const cached = tokenScans.get(days);
   if (cached && Date.now() - cached.at < TOKENS_TTL_MS) return cached.result;
-  const result = Promise.resolve().then(() => scanTokens({ days })).catch(() => null);
+  const result = tokenReports.call("scanTokens", { days }).catch(() => null);
   tokenScans.set(days, { at: Date.now(), result });
   return result;
 }
@@ -220,9 +254,9 @@ function init(context) {
   });
 
   ipcMain.handle("insights:export", async (e, format, days, model) => {
-    if (!own(e) || !["csv", "json", "diagnostics", "report", "battery-csv", "models-csv", "models-daily-csv", "models-json"].includes(format)) return null;
+    if (!own(e) || !["csv", "json", "diagnostics", "report", "battery-csv", "models-csv", "models-daily-csv", "models-json", "sessions-csv"].includes(format)) return null;
     if (model != null && model !== "all" && !/^[a-f0-9]{16}$/.test(model)) return { error: "Select a valid model." };
-    const ext = ["csv", "battery-csv", "models-csv", "models-daily-csv"].includes(format) ? "csv" : format === "report" ? "md" : "json";
+    const ext = ["csv", "battery-csv", "models-csv", "models-daily-csv", "sessions-csv"].includes(format) ? "csv" : format === "report" ? "md" : "json";
     const result = await dialog.showSaveDialog(win, {
       defaultPath: path.join(app.getPath("downloads"), `usage-${format}.${ext}`),
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
@@ -231,7 +265,7 @@ function init(context) {
     try {
       let content;
       if (format === "diagnostics") content = JSON.stringify(diagnostic(), null, 2);
-      else if (format.startsWith("models-")) content = modelExport((await view(days)).tokens, format, model);
+      else if (format.startsWith("models-") || format === "sessions-csv") content = modelExport((await view(days)).tokens, format, model);
       else if (format === "report") content = generateReport(await view(days));
       else if (format === "battery-csv") content = ctx.battery.csv(days);
       else if (format === "json") content = JSON.stringify({ ...JSON.parse(ctx.insights.export(days, format)), battery: ctx.battery?.view(days) }, null, 2);
@@ -263,6 +297,7 @@ function open(tab) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      spellcheck: false,
     },
   });
   win.setMenuBarVisibility(false);

@@ -39,6 +39,15 @@ jobs:
           $run = Start-Process "$env:RUNNER_TEMP\UsageMonitorNetHelper.exe" -ArgumentList "--selftest", "$env:RUNNER_TEMP\selftest.json" -Wait -PassThru
           Get-Content "$env:RUNNER_TEMP\selftest.json"
           if ($run.ExitCode -ne 0) { Write-Error "Network helper self-test failed (exit $($run.ExitCode))"; exit 1 }
+      - name: Build and self-test the app's Windows helper
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          node scripts/build-helper.js
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $run = Start-Process "helpers\windows\bin\UsageMonitorHelper.exe" -ArgumentList "--selftest", "$env:RUNNER_TEMP\helper-selftest.json" -Wait -PassThru
+          Get-Content "$env:RUNNER_TEMP\helper-selftest.json"
+          if ($run.ExitCode -ne 0) { Write-Error "Windows helper self-test failed (exit $($run.ExitCode))"; exit 1 }
       - run: npm audit --audit-level=high
         if: runner.os == 'Linux'
       - name: Build (Windows)
@@ -55,6 +64,13 @@ jobs:
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: npx electron-builder --linux --x64 --dir --publish never
+      # The built app runs in a throwaway profile and reports its processes, painting and crashes.
+      - name: Packaged app smoke run
+        if: runner.os != 'Linux'
+        run: node scripts/packaged-smoke.js
+      - name: Packaged app smoke run (virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/packaged-smoke.js
 
   android:
     runs-on: ubuntu-latest

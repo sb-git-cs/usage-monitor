@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.18.0 — 2026-11-17
+
+- **Tokens and cost per session and per model.** Insights and its report now say which coding session used how many tokens, of which model, and what they would cost at API list prices, with a cumulative view per model.
+  - **Each session by name.** Sessions are named as the Recent list names them: the title the tool gave the session (Claude Code's generated title, Codex's thread name) and its folder. A Claude Code sub-agent's tokens count toward the session that started it. Message content is never read into the report.
+  - **Each model within a session**, with its tokens and cost, and a session total when it used more than one.
+  - **Across sessions, per model:** how many sessions used it, its responses, tokens, share, cost, and tokens and cost per session; Insights' model table gains Sessions and API cost columns, and a cost card.
+  - **The cost is an API-equivalent figure**, what the tokens would cost at the providers' pay-as-you-go prices: input, cache reads, 5-minute and 1-hour cache writes (as Claude Code records them), long prompts (Haiku 5.5 over 100K tokens, OpenAI models over 272K), fast mode and US-only inference. Prices for every current Claude model and the OpenAI models Codex runs come from the providers' pricing pages as of 2026-11-17. Subscription plans are not billed per token. A model without a published price is shown as unpriced, never guessed, and the totals say how many tokens that left out.
+  - **In the report:** the summary's cost line, **Models across sessions** and **Sessions by model**. **Session CSV** exports a row per session and model with every token type and the cost, and the model CSV and JSON exports carry costs and session counts.
+  - Codex's newly cached prompt tokens are counted as cache writes instead of uncached input; totals are unchanged.
+- **Token reports and Session files run in their own short-lived process.** They read weeks of transcripts; run in the main process, a 30-day report left 34 MB of memory behind there. Now each runs in a utility process that ends a minute (Session files: 90 seconds) after its last use, and the main process keeps under 1 MB of it.
+- **macOS and Linux:** the network service runs inside the main process (and on Linux the GPU process too), and Linux builds leave out software Vulkan (`libvk_swiftshader.so`, `libvulkan.so.1`). macOS builds keep every file, as removing any would break the Electron framework's signature. CI now starts each built app in a throwaway profile and checks that nothing crashed, every window painted, the screen shows what was painted, and only the expected processes run.
+- **Much lighter on Windows.** Measured at idle on the same PC over the same minute, strip docked and panel closed: 3 processes instead of 14, about 137 MB of private memory instead of 763 MB (242 MB working set instead of 1.19 GB), and 0.9 s of CPU a minute instead of 2.0 s. The new build was measured without the network monitor running, which adds a little to the main process.
+  - **One small helper instead of PowerShell.** Hardware, battery, coding sessions, the taskbar and Credential Manager are read by one 28 KB helper, `UsageMonitorHelper.exe` (24 MB in memory), instead of three PowerShell processes that stayed open (70–100 MB each). A Gemini or account sign-in check no longer starts PowerShell and compiles C# about once a minute. The helper is built with the C# compiler that ships with Windows and closes with the app.
+  - **GPU and disk load come from the performance counters Task Manager uses** instead of a WMI query every 5 seconds. GPU load is no longer rounded to a whole percent.
+  - **The main process no longer keeps the Antigravity CLI in memory.** Finding Gemini's sign-in client read the whole `agy` binary (221 MB here) into one string, and the client id and secret kept it alive for as long as the app ran. The binary is now searched a few megabytes at a time; the main process went from 317 MB to 83 MB.
+  - **Two fewer Chromium processes.** With software rendering, the GPU and network-service processes run inside the main process.
+  - **The panel is created when you open it** and released after 60 seconds hidden, with its state restored when it opens again.
+  - **No spellchecker.** It loaded, and on first use downloaded, dictionaries no window here needs.
+- **A smaller Windows download.** The Windows build leaves out Chromium's WebGPU, WebGL and Direct3D shader components, which this app never loads with hardware acceleration off: 36.7 MB less installed, about 13 MB less to download.
+- **Token reports read transcripts as a stream.** Insights' model usage no longer loads a whole transcript at once; a 30-day report over this PC's transcripts peaked at 122 MB instead of 377 MB.
+- **A tidier repository.** The release reviews kept in a root `review.md` moved into `docs/review.md`.
+
 ## 1.17.2 — 2026-11-10
 
 - **Session files lists what a session handed over, not what it used to get there.** The window now shows output files only, and a session that produced none is not listed, until you tick **Show working files**.

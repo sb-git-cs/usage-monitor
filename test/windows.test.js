@@ -14,7 +14,7 @@ function mainHarness(taskbar = {}, area = { x: 0, y: 0, width: 1920, height: 103
   const signals = new Map(["SIGHUP", "SIGINT"].map(name => [name, new Set(process.listeners(name))]));
   const api = load("src/main.js", {
     electron, "./config": { save() {} }, "./poller": {}, "./alerts": {}, "./taskbarLayout": taskbar, "./autostart": {}, "./updater": {},
-  }, ["wireIpc", "keepWidgetOnTop", "placeFlyoutRight", "placeChipsDocked", "noteTaskbarShown", "recoverChipsIfNeeded", "setState: (state) => { cfg = state.cfg; chips = state.chips; flyout = state.flyout; }"]);
+  }, ["wireIpc", "hideFlyout", "showFlyout", "createWindows", "stubWindows: (create, chips) => { createFlyout = create; createChips = chips; broadcastNet = sendPairing = refreshFileCounts = () => {}; }", "keepWidgetOnTop", "placeFlyoutRight", "placeChipsDocked", "noteTaskbarShown", "recoverChipsIfNeeded", "setState: (state) => { cfg = state.cfg; chips = state.chips; flyout = state.flyout; }"]);
   for (const [name, existing] of signals) {
     for (const listener of process.listeners(name)) if (!existing.has(listener)) process.removeListener(name, listener);
   }
@@ -180,38 +180,40 @@ test("portable autostart points to the durable executable, not the extraction fo
   }
 });
 
-test("docked chips are handed to the taskbar probe with this process id, and released when undocked", () => {
-  const calls = [];
-  const layout = load("src/taskbarLayout.js", {
-    electron: { screen: { screenToDipRect: (_w, r) => r } },
-    child_process: { execFile: (_cmd, args, _opts, cb) => { calls.push(args); cb(null, JSON.stringify({ tray: { x: 0, y: 0, w: 100, h: 48 }, occupied: [], owner: "123456:1:0", ownerApplied: true })); } },
-  });
+// A stand-in for the Windows helper's "bar" channel: records lines sent, and can emit lines or exit.
+function fakeTaskbarHelper({ up = () => true } = {}) {
+  const sent = [];
+  const listeners = [];
+  const exits = [];
+  return {
+    sent,
+    send(channel, line) { assert.equal(channel, "bar"); if (!up()) return false; sent.push(line); return true; },
+    on(channel, fn) { assert.equal(channel, "bar"); listeners.push(fn); return () => {}; },
+    onExit(fn) { exits.push(fn); return () => {}; },
+    emit(line) { for (const fn of listeners) fn(line); },
+    exit() { for (const fn of exits) fn(); },
+  };
+}
+
+test("docked chips are handed to the taskbar helper with this process id, and released when undocked", () => {
+  const helper = fakeTaskbarHelper();
+  const layout = load("src/taskbarLayout.js", { electron: { screen: { screenToDipRect: (_w, r) => r } }, "./winhelper": helper });
   layout.setChipsOwner("not-a-handle", true);
   layout.setChipsOwner("123456", true);
+  helper.emit("layout=" + JSON.stringify({ tray: { x: 0, y: 0, w: 100, h: 48 }, occupied: [], owner: "123456:1:0", ownerApplied: true }));
   layout.setChipsOwner("123456", true);
   layout.setChipsOwner("123456", false);
   if (process.platform !== "win32") {
-    assert.deepEqual(calls, [], "only Windows has a taskbar to own the chips");
+    assert.deepEqual(helper.sent, [], "only Windows has a taskbar to own the chips");
     return;
   }
-  assert.equal(calls.length, 2, "invalid handles are ignored and an applied state is not re-sent");
-  const flag = (args, name) => args[args.indexOf(name) + 1];
-  assert.deepEqual([flag(calls[0], "-Hwnd"), flag(calls[0], "-Own"), flag(calls[0], "-AppPid")], ["123456", "1", String(process.pid)]);
-  assert.equal(flag(calls[1], "-Own"), "0");
+  assert.deepEqual(helper.sent, ["watch", `own 123456 1 0 ${process.pid}`, `own 123456 0 0 ${process.pid}`],
+    "invalid handles are ignored and an applied state is not re-sent");
 });
 
-test("a taskbar read starts at most one probe, and the running watch answers without spawning", () => {
-  const execCalls = [];
-  let execCb = null;
-  const spawned = [];
-  const child_process = {
-    execFile: (_cmd, args, _opts, cb) => { execCalls.push(args); execCb = cb; },
-    spawn: () => {
-      const proc = { stdin: { writable: true, write() {}, on() {} }, stdout: { setEncoding() {}, on(ev, fn) { if (ev === "data") proc.emit = fn; } }, on() {}, kill() {} };
-      spawned.push(proc);
-      return proc;
-    },
-  };
+test("a taskbar read starts the helper's watch once, and reads use the layouts it streams", () => {
+  let up = false;
+  const helper = fakeTaskbarHelper({ up: () => up });
   const electron = {
     app: { isPackaged: false },
     screen: {
@@ -220,26 +222,69 @@ test("a taskbar read starts at most one probe, and the running watch answers wit
       getPrimaryDisplay: () => ({ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, workArea: { x: 0, y: 0, width: 1920, height: 1032 } }),
     },
   };
-  const layout = load("src/taskbarLayout.js", { child_process, electron });
+  const layout = load("src/taskbarLayout.js", { electron, "./winhelper": helper });
   const tray = (h) => JSON.stringify({ tray: { x: 0, y: 1080 - h, w: 1920, h }, occupied: [], owner: null, ownerApplied: false, shown: true });
 
-  // Several reads before the first result resolves must share one probe (no queued rerun).
+  // While the helper cannot start, the screen's work area stands in.
+  assert.equal(layout.loadLayout().tray.h, 48);
+  up = true;
   for (let i = 0; i < 5; i++) { layout.loadLayout(); layout.dockRoom(200, 44, []); layout.snapDocked(1500, 1034, 200, 44, []); }
   if (process.platform !== "win32") {
-    assert.equal(execCalls.length, 0, "only Windows probes a taskbar");
+    assert.deepEqual(helper.sent, [], "only Windows probes a taskbar");
     return;
   }
-  assert.equal(execCalls.length, 1, "repeated reads within the cache window start a single probe");
-  execCb(null, tray(48));
-  for (let i = 0; i < 5; i++) layout.loadLayout();
-  assert.equal(execCalls.length, 1, "a fresh cache needs no further probe");
-
-  // Once the watch is running it streams layouts; a read spawns no probe even with a stale cache.
-  layout.watchTaskbar(() => {});
-  assert.equal(spawned.length, 1);
-  spawned[0].emit("layout=" + tray(60) + "\n");
-  layout.invalidate();
-  for (let i = 0; i < 5; i++) layout.loadLayout();
-  assert.equal(execCalls.length, 1, "the watch feeds layouts, so reads spawn no extra probe");
+  assert.deepEqual(helper.sent, ["watch"], "repeated reads start a single watch");
+  helper.emit("layout=" + tray(60));
   assert.equal(layout.loadLayout().tray.h, 60, "the streamed layout is used");
+  const shown = [];
+  layout.watchTaskbar((value) => shown.push(value));
+  helper.emit("shown=0");
+  helper.emit("layout=not json");
+  assert.deepEqual(shown, [false]);
+  assert.equal(layout.loadLayout().tray.h, 60, "a bad line keeps the previous layout");
+  layout.invalidate();
+  assert.deepEqual(helper.sent, ["watch", "probe"]);
+  // A helper that was restarted lost its watch; the next read starts it again.
+  helper.exit();
+  layout.loadLayout();
+  assert.deepEqual(helper.sent, ["watch", "probe", "watch"]);
+  layout.stopTaskbarWatch();
+  assert.equal(helper.sent.at(-1), "stop");
+});
+
+
+test("panel is lazy, hidden panels are released, and reopening cancels release", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { api, ipc } = mainHarness();
+  let created = 0, strips = 0, destroyed = 0, visible = false;
+  const cfg = { chips_hidden: true, flyout_docked: false };
+  const win = {
+    isDestroyed: () => false, isVisible: () => visible, isMinimized: () => false,
+    getBounds: () => ({ x: 0, y: 0, width: 620, height: 1032 }), setBounds() {},
+    show() { visible = true; }, focus() {}, hide() { visible = false; },
+    destroy() { destroyed++; api.setState({ cfg, flyout: null }); },
+  };
+  api.setState({ cfg, flyout: null });
+  api.stubWindows(() => { created++; api.setState({ cfg, flyout: win }); }, () => { strips++; });
+  api.createWindows();
+  assert.equal(strips, 1);
+  assert.equal(created, 0, "startup needs no panel renderer");
+  ipc["usage://flyout-toggle"]();
+  assert.equal(created, 1);
+  api.hideFlyout(true);
+  t.mock.timers.tick(59_000);
+  assert.equal(destroyed, 0);
+  api.showFlyout();
+  t.mock.timers.tick(2_000);
+  assert.equal(destroyed, 0, "a reopened panel must survive its old timer");
+  api.hideFlyout(true);
+  t.mock.timers.tick(60_000);
+  assert.equal(destroyed, 1);
+  ipc["usage://flyout-toggle"]();
+  assert.equal(created, 2, "chips can recreate the released panel");
+  cfg.flyout_docked = true;
+  api.hideFlyout(false);
+  t.mock.timers.tick(60_000);
+  assert.equal(visible, true);
+  assert.equal(destroyed, 1, "docked panel stays alive");
 });

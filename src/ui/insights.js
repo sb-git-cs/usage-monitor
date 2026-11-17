@@ -46,6 +46,13 @@ function message(result, done = "Saved.") {
   if (result?.ok) message.timer = setTimeout(() => { if (el.textContent === text) { el.textContent = ""; el.className = ""; } }, 4000);
 }
 
+// Cost at API list prices: "—" when nothing in the row has a published price, * when part of it has none.
+function formatUsd(x) {
+  if (!x || !Number.isFinite(x.cost) || !(x.priced || x.cost > 0)) return "—";
+  const text = x.cost > 0 && x.cost < 0.01 ? "<$0.01" : `$${x.cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return x.priced === false ? `${text}*` : text;
+}
+
 function formatTokens(n) {
   const num = Number(n) || 0;
   if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`;
@@ -673,11 +680,11 @@ function renderTokenIntelligence(allTokens) {
     rows.replaceChildren();
     for (const m of tokens?.by_model || []) {
       const row = node("tr");
-      for (const text of [`${names[m.provider] || m.provider || ""} · ${m.model}`, m.total, m.input, m.cache_read, m.cache_write, m.output, m.reasoning, m.turns])
+      for (const text of [`${names[m.provider] || m.provider || ""} · ${m.model}`, m.sessions ?? "—", m.total, m.input, m.cache_read, m.cache_write, m.output, m.reasoning, m.turns, formatUsd(m)])
         row.append(node("td", typeof text === "number" ? text.toLocaleString() : text));
       rows.append(row);
     }
-    if (!rows.children.length) { const row = node("tr"), cell = node("td", "No model usage observed in this period.", "empty-cell"); cell.colSpan = 8; row.append(cell); rows.append(row); }
+    if (!rows.children.length) { const row = node("tr"), cell = node("td", "No model usage observed in this period.", "empty-cell"); cell.colSpan = 10; row.append(cell); rows.append(row); }
   }
   const kpiGrid = $("tokenKpiGrid");
   if (kpiGrid) {
@@ -689,7 +696,9 @@ function renderTokenIntelligence(allTokens) {
       fact("Prompt / output", `${formatTokens(sm.input + sm.cache_read + sm.cache_write)} / ${formatTokens(sm.output)}`, "Prompt includes cached tokens"),
       fact("Reasoning", formatTokens(sm.reasoning), "Counted within output"),
       fact("Per response", sm.avg_turn_tokens.toLocaleString(), "Average tokens"),
-      fact("Written to cache", formatTokens(sm.cache_write), "Prompt tokens stored for reuse")
+      fact("Written to cache", formatTokens(sm.cache_write), "Prompt tokens stored for reuse"),
+      fact("API-equivalent cost", formatUsd(sm), `${(sm.sessions || 0).toLocaleString()} sessions · at list prices` +
+        (sm.unpriced ? ` · ${formatTokens(sm.unpriced)} tokens without a price` : ""))
     );
   }
 
@@ -1032,13 +1041,31 @@ function renderSessionUsage(s) {
   active.replaceChildren(); rows.replaceChildren();
   for (const session of s.active_sessions || []) active.append(node("p", `${session.label || names[session.tool] || session.tool} · ${session.name || session.label || "Session"} · ${session.state || "Unknown"}`, "battery-session"));
   if (!active.children.length) active.append(node("p", "No running coding sessions.", "fine"));
-  for (const session of s.tokens?.by_session || []) {
+  // Each session by its title and folder, and each model's tokens and cost within it.
+  const sessions = s.tokens?.by_session || [];
+  const when = (t) => (Number.isFinite(t) ? new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
+  for (const session of sessions) {
     const row = node("tr");
-    for (const text of [`${names[session.provider] || session.provider} · ${session.id.slice(0, 8)}`, session.models.join(", "),
-      `${new Date(session.first).toLocaleString()} · ${new Date(session.last).toLocaleString()}`, session.total.toLocaleString()]) row.append(node("td", text));
+    const name = node("td");
+    name.append(node("div", session.title || `Session ${String(session.id).slice(0, 8)}`, "session-title"));
+    const where = node("div", [names[session.provider] || session.provider, session.folder,
+      session.agents ? `+${session.agents} sub-agent${session.agents === 1 ? "" : "s"}` : null].filter(Boolean).join(" · "), "fine");
+    if (session.cwd) where.title = session.cwd;
+    name.append(where);
+    const models = node("td");
+    for (const m of session.models || []) models.append(node("div", `${m.model} · ${formatTokens(m.total)} · ${formatUsd(m)}`));
+    row.append(name, models, node("td", `${when(session.first)} – ${when(session.last)}`), node("td", formatTokens(session.total)), node("td", formatUsd(session)));
     rows.append(row);
   }
-  if (!rows.children.length) { const row = node("tr"), cell = node("td", "No session usage recorded in this period.", "empty-cell"); cell.colSpan = 4; row.append(cell); rows.append(row); }
+  if (!rows.children.length) { const row = node("tr"), cell = node("td", "No session usage recorded in this period.", "empty-cell"); cell.colSpan = 5; row.append(cell); rows.append(row); }
+  const summary = $("sessionUsageSummary");
+  if (summary) {
+    const sm = s.tokens?.summary;
+    summary.textContent = sessions.length && sm
+      ? `${sessions.length.toLocaleString()} sessions · ${formatTokens(sm.total)} tokens · ${formatUsd(sm)} at API list prices` +
+        (s.tokens.pricing?.checked ? ` (prices checked ${s.tokens.pricing.checked})` : "")
+      : "";
+  }
 }
 function recentTime(iso) {
   const t = Date.parse(iso);
@@ -1092,6 +1119,6 @@ $("recentSessionRows").addEventListener("click", async (e) => {
   message(r, r?.message || "Opening a terminal…");
 });
 $("tokenModel").onchange = () => { tokenModel = $("tokenModel").value; if (state) renderTokenIntelligence(state.tokens); };
-for (const [id, format] of [["modelsCsv", "models-csv"], ["modelsDailyCsv", "models-daily-csv"], ["modelsJson", "models-json"]]) {
+for (const [id, format] of [["modelsCsv", "models-csv"], ["modelsDailyCsv", "models-daily-csv"], ["sessionsCsv", "sessions-csv"], ["modelsJson", "models-json"]]) {
   $(id).onclick = async () => message(await api.export(format, Number($("period").value), tokenModel), "Export saved.");
 }

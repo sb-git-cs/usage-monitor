@@ -1,23 +1,15 @@
-const { execFile } = require("child_process");
-const path = require("path");
+// The taskbar is read by the resident Windows helper ("bar" channel). Any command starts its watch
+// loop, which reports "shown=0|1" when an auto-hide taskbar slides away or back, and "layout=<json>"
+// every 8 seconds, on a change and on "probe". It keeps the chips owned by the taskbar ("own ..."),
+// which also re-attaches them after Explorer restarts and replaces the taskbar.
+const winhelper = require("./winhelper");
 
-function layoutScript() {
-  try {
-    const { app } = require("electron");
-    if (app.isPackaged) return path.join(process.resourcesPath, "taskbar-layout.ps1");
-  } catch {
-    /* unpackaged */
-  }
-  return path.join(__dirname, "..", "scripts", "taskbar-layout.ps1");
-}
 const PAD = 6;
 let cache = { at: 0, data: null };
-let refreshing = false;
-let rerun = false;
-// Which window (chips) should be owned by the taskbar; the probe script applies it on every run,
-// which also re-attaches the chips after Explorer restarts and replaces the taskbar.
+// Which window (chips) should be owned by the taskbar.
 const owner = { hwnd: null, own: false, capture: false, applied: null };
-let watchProc = null;
+let watching = false;
+let subscribed = false;
 let watchCallbacks = [];
 let watchRestart = null;
 
@@ -69,50 +61,55 @@ function ownerCommand() {
   return `own ${owner.hwnd} ${owner.own ? 1 : 0} ${owner.capture ? 1 : 0} ${process.pid}`;
 }
 
-// Sends a line to the long-lived watch process; false when it is not running.
-function sendToWatch(line) {
-  if (!watchProc || !watchProc.stdin || !watchProc.stdin.writable) return false;
-  try {
-    watchProc.stdin.write(`${line}\n`);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function applyLayout(parsed) {
   if (!parsed) return;
   if (parsed.tray) cache = { at: Date.now(), data: toDipLayout(parsed) };
   if (parsed.ownerApplied && typeof parsed.owner === "string") owner.applied = parsed.owner;
 }
 
-// A one-shot probe, used only before the watch process is up (or if it has stopped). A read
-// (allowRerun false) never queues a second probe; an owner change does, so its new state applies.
-function refreshAsync(allowRerun = false) {
-  // Only Windows has a taskbar to probe; elsewhere the screen work area is used.
-  if (process.platform !== "win32") return;
-  if (refreshing) {
-    if (allowRerun) rerun = true;
-    return;
+function onLine(line) {
+  if (line === "shown=0" || line === "shown=1") {
+    for (const cb of watchCallbacks) cb(line === "shown=1");
+  } else if (line.startsWith("layout=")) {
+    try {
+      applyLayout(JSON.parse(line.slice(7)));
+    } catch {
+      /* keep previous */
+    }
   }
-  refreshing = true;
-  const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", layoutScript()];
-  const want = ownerWant();
-  if (want) args.push("-Hwnd", owner.hwnd, "-Own", owner.own ? "1" : "0", "-Capture", owner.capture ? "1" : "0", "-AppPid", String(process.pid));
-  execFile("powershell.exe", args, { encoding: "utf8", timeout: 6000, windowsHide: true }, (err, stdout) => {
-    refreshing = false;
-    if (!err && stdout) {
-      try {
-        applyLayout(JSON.parse(String(stdout).trim()));
-      } catch {
-        /* keep previous */
-      }
-    }
-    if (rerun) {
-      rerun = false;
-      refreshAsync(allowRerun);
-    }
-  });
+}
+
+// A helper that stopped (it is restarted after a stuck request) takes the watch with it. While
+// something listens for the taskbar, the watch is started again after a short pause.
+function ended() {
+  watching = false;
+  if (!watchCallbacks.length || watchRestart) return;
+  watchRestart = setTimeout(() => {
+    watchRestart = null;
+    startTaskbarWatch();
+  }, 5000);
+  if (watchRestart.unref) watchRestart.unref();
+}
+
+// Starts the helper's watch loop, handing it the current owner; false when the helper cannot start now.
+function startTaskbarWatch() {
+  // Only Windows has a taskbar to probe; elsewhere the screen work area is used.
+  if (process.platform !== "win32") return false;
+  if (watching) return true;
+  if (!subscribed) {
+    subscribed = true;
+    winhelper.on("bar", onLine);
+    winhelper.onExit(ended);
+  }
+  watching = winhelper.send("bar", "watch");
+  if (!watching) ended();
+  else if (ownerWant()) winhelper.send("bar", ownerCommand());
+  return watching;
+}
+
+// Sends a line to the watch loop, starting it first; false when the helper cannot start now.
+function sendToWatch(line) {
+  return startTaskbarWatch() && winhelper.send("bar", line);
 }
 
 function setChipsOwner(hwnd, own, capture) {
@@ -121,54 +118,9 @@ function setChipsOwner(hwnd, own, capture) {
   owner.own = !!own;
   owner.capture = !!capture;
   if (owner.applied === ownerWant()) return;
-  // The running watch process applies it; a one-shot probe does so only when it is not up.
-  if (!sendToWatch(ownerCommand())) refreshAsync(true);
-}
-
-// One hidden PowerShell process reports when the taskbar slides away or comes back.
-function startTaskbarWatch() {
-  if (watchProc || process.platform !== "win32") return;
-  const { spawn } = require("child_process");
-  const proc = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", layoutScript(), "-Watch"], {
-    windowsHide: true,
-    stdio: ["pipe", "pipe", "ignore"],
-  });
-  watchProc = proc;
-  proc.stdin.on("error", () => {});
-  // Hand the process the current owner so it keeps the chips attached without a separate probe.
-  if (ownerWant()) sendToWatch(ownerCommand());
-  let buffer = "";
-  proc.stdout.setEncoding("utf8");
-  proc.stdout.on("data", (chunk) => {
-    if (watchProc !== proc) return;
-    buffer += chunk;
-    let index;
-    while ((index = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, index).trim();
-      buffer = buffer.slice(index + 1);
-      if (line === "shown=0" || line === "shown=1") {
-        for (const cb of watchCallbacks) cb(line === "shown=1");
-      } else if (line.startsWith("layout=")) {
-        try {
-          applyLayout(JSON.parse(line.slice(7)));
-        } catch {
-          /* keep previous */
-        }
-      }
-    }
-  });
-  const ended = () => {
-    if (watchProc !== proc) return;
-    watchProc = null;
-    if (!watchCallbacks.length) return;
-    watchRestart = setTimeout(() => {
-      watchRestart = null;
-      startTaskbarWatch();
-    }, 5000);
-    if (watchRestart.unref) watchRestart.unref();
-  };
-  proc.on("exit", ended);
-  proc.on("error", ended);
+  // A watch that was just started already has the owner.
+  if (watching) sendToWatch(ownerCommand());
+  else startTaskbarWatch();
 }
 
 function watchTaskbar(onChange) {
@@ -181,10 +133,8 @@ function stopTaskbarWatch() {
   watchCallbacks = [];
   if (watchRestart) clearTimeout(watchRestart);
   watchRestart = null;
-  const proc = watchProc;
-  watchProc = null;
-  if (!proc) return;
-  try { proc.kill(); } catch { /* already gone */ }
+  if (watching) winhelper.send("bar", "stop");
+  watching = false;
 }
 
 function toDipLayout(layout) {
@@ -196,16 +146,15 @@ function toDipLayout(layout) {
   return { ...layout, tray: convert(layout.tray), occupied: (layout.occupied || []).map(convert) };
 }
 
+// The watch streams fresh layouts; until its first one arrives the screen's work area stands in.
 function loadLayout() {
-  const now = Date.now();
-  // The watch process streams fresh layouts, so a reading never spawns a probe while it is up.
-  if (!cache.data || (now - cache.at > 8000 && !watchProc)) refreshAsync();
+  startTaskbarWatch();
   return cache.data || fallbackFromScreen();
 }
 
 function invalidate() {
   cache = { at: 0, data: cache.data };
-  if (!sendToWatch("probe")) refreshAsync();
+  sendToWatch("probe");
 }
 
 function axisOf(tray) {

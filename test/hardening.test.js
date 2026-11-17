@@ -67,7 +67,8 @@ test("A-09: the agy binary is read asynchronously, once per version, even when n
   const realFs = require("node:fs");
   const mockFs = { ...realFs, readFileSync: () => { throw new Error("sync read on the main thread"); }, promises: {
     stat: (p) => realFs.promises.stat(p),
-    readFile: (p, enc) => { reads++; return realFs.promises.readFile(p, enc); },
+    readFile: () => { throw new Error("the binary is read in chunks, never whole"); },
+    open: (p, flags) => { reads++; return realFs.promises.open(p, flags); },
   } };
   const gemini = load("src/adapters/gemini.js", { fs: mockFs }, ["extractOauthClient"]);
   assert.equal(await gemini.extractOauthClient(bin), null);
@@ -81,6 +82,47 @@ test("A-09: the agy binary is read asynchronously, once per version, even when n
   fs.utimesSync(bin, future, future);
   assert.deepEqual(await gemini.extractOauthClient(bin), { clientId, clientSecret });
   assert.equal(reads, 2);
+});
+
+test("A-09b: the chunked agy scan finds what a whole-file regex finds, across chunk boundaries", async (t) => {
+  const gemini = load("src/adapters/gemini.js", {}, ["scanBinary"]);
+  // The pre-1.17.3 reader: one latin1 string, the same two patterns.
+  const whole = (text) => {
+    const ids = [...text.matchAll(/(\d{10,}-[a-z0-9]+\.apps\.googleusercontent\.com)/g)].map((m) => m[1]);
+    const secrets = [];
+    for (const part of text.split("GOCSPX-").slice(1)) {
+      const body = (part.match(/^[A-Za-z0-9_]{20,40}/) || [])[0];
+      if (body) secrets.push("GOCSPX-" + body);
+    }
+    return ids.length && secrets.length ? { clientId: ids.find((id) => id.startsWith("1071")) || ids[0], clientSecret: secrets[0] } : null;
+  };
+  const dir = tempDir(t);
+  const bin = path.join(dir, "agy");
+  const suffix = [".apps", "googleusercontent", "com"].join(".");
+  const prefix = ["GOCSPX", ""].join("-");
+  let seed = 7;
+  const rand = (n) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+  const pick = (chars, n) => Array.from({ length: n }, () => chars[rand(chars.length)]).join("");
+  // Near misses too: short digit runs, a missing dash, short or long secrets, back-to-back prefixes.
+  const pieces = () => [
+    `${pick("0123456789", 9 + rand(6))}-${pick("abcdefghijklmnopqrstuvwxyz0123456789", 1 + rand(12))}${suffix}`,
+    `1071${pick("0123456789", 6 + rand(6))}-${pick("abcxyz019", 3 + rand(10))}${suffix}`,
+    `${pick("0123456789", 12)}${pick("abc", 2)}${suffix}`,
+    `${prefix}${pick("ABCxyz019_", 15 + rand(35))}`,
+    `${prefix}${prefix}${pick("ABCxyz019_", 25)}`,
+    pick("\u0000ÿ-._ aZ9", 1 + rand(40)),
+  ][rand(6)];
+  let found = 0;
+  for (let round = 0; round < 300; round++) {
+    const text = Array.from({ length: 4 + rand(30) }, pieces).join(pick(" -.\u0000", 1 + rand(3)));
+    fs.writeFileSync(bin, Buffer.from(text, "latin1"));
+    // The edge must outlast the longest match: a secret's trailing digits can start an id (about 90 bytes).
+    const chunk = 16 + rand(120);
+    const expected = whole(text);
+    if (expected) found++;
+    assert.deepEqual(await gemini.scanBinary(bin, { chunk, edge: 128 }), expected, `round ${round}, chunk ${chunk}`);
+  }
+  assert.ok(found > 100 && found < 290, `both outcomes are covered (${found} of 300 found a client)`);
 });
 
 test("A-10: floating chips on an unplugged monitor are pulled back onto a remaining screen", () => {

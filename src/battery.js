@@ -1,9 +1,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const si = require("systeminformation");
+// Windows uses native helpers; load the cross-platform probes only when needed.
+const si = () => require("systeminformation");
 const { cacheDir } = require("./paths");
 const Model = require("./battery-model");
-const { createWorker, spawnWorker } = require("./system");
+const { batterySample } = require("./system");
 const DAY = 86400000;
 
 class BatteryHistory {
@@ -55,8 +56,8 @@ class BatteryHistory {
 }
 
 function start(history, onUpdate, { read, interval = 10000, timeout = 8000, slowInterval = 600000 } = {}) {
-  const worker = !read && process.platform === "win32" ? createWorker({ start: () => spawnWorker("battery-windows.ps1") }) : null;
-  read ||= worker ? () => worker.sample() : () => si.battery();
+  // Hardware and battery requests share one serialized Windows helper.
+  read ||= process.platform === "win32" ? batterySample : () => si().battery();
   let stopped = false, paused = false, pending = false, generation = 0;
   let deadline, timer;
   let slow = false, misses = 0;
@@ -91,6 +92,6 @@ function start(history, onUpdate, { read, interval = 10000, timeout = 8000, slow
   timer = setInterval(refresh, interval);
   refresh();
   return { refresh, setPaused(value) { paused = value; generation++; history.boundary = true; if (!paused) refresh(); },
-    stop() { stopped = true; clearTimeout(deadline); clearInterval(timer); worker?.stop(); } };
+    stop() { stopped = true; clearTimeout(deadline); clearInterval(timer); } };
 }
 module.exports = { BatteryHistory, start };

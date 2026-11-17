@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { claudeConfigDir, codexHome, grokHome, cursorCliDir, cliOnPath } = require("./paths");
-const { createWorker, spawnWorker } = require("./system");
+const winhelper = require("./winhelper");
 const { launchFlags, resumeCommand, cleanModel } = require("./session-log");
 const { createRecordReader } = require("./session-records");
 
@@ -473,10 +473,9 @@ function processAlive(pid) {
   }
 }
 
-let worker = null;
+// Session processes and their terminals' screens come from the resident Windows helper ("sess" channel).
 function helperRequest(req) {
-  if (!worker) worker = createWorker({ start: () => spawnWorker("sessions-windows.ps1"), timeoutMs: 15_000 });
-  return worker.sample(JSON.stringify(req));
+  return winhelper.request("sess", JSON.stringify(req), { timeoutMs: 15_000 }).then((line) => JSON.parse(line));
 }
 
 function createWatcher({
@@ -1040,12 +1039,9 @@ function start(opts) {
       timer = setInterval(() => watcher.scan(), away ? AWAY_SCAN_MS : SCAN_MS);
       if (!away) watcher.scan();
     },
+    // The helper is shared with the hardware sampler and the taskbar; the app stops it when it quits.
     stop() {
       clearInterval(timer);
-      if (worker) {
-        worker.stop();
-        worker = null;
-      }
       try {
         if (opts && opts.sessionLog) opts.sessionLog.flush();
       } catch (err) {

@@ -819,6 +819,16 @@ canvas#trend {
   color: var(--muted);
 }
 
+/* Tokens and cost by session: the title over its tool and folder, a long title wrapped. */
+.session-title {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+#sessionUsageRows td {
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+}
+
 .two-col-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

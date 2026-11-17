@@ -1,3 +1,6 @@
+// First: a smoke run (--smoke-report=<file>) points every path into a throwaway profile.
+const smoke = require("./smoke");
+const SMOKE_REPORT = smoke.begin();
 const { app, BrowserWindow, Menu, Tray, Notification, nativeImage, nativeTheme, ipcMain, shell, screen, dialog, powerMonitor, safeStorage } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -13,6 +16,7 @@ const updater = require("./updater");
 const log = require("./log");
 const netUsage = require("./net");
 const systemUsage = require("./system");
+const winhelper = require("./winhelper");
 const batteryUsage = require("./battery");
 let batteryHistory;
 let batteryPoll;
@@ -24,6 +28,7 @@ const { Insights, displayPrefs } = require("./insights");
 const insightsWindow = require("./insights-window");
 const filesWindow = require("./files-window");
 const { createSessionFiles } = require("./session-files");
+const { createOffload } = require("./offload");
 const { PhoneLink } = require("./phone");
 const accounts = require("./accounts");
 const accountVault = require("./account-vault");
@@ -42,6 +47,7 @@ const LOGIN_LABEL = IS_WINDOWS ? "Start with Windows" : process.platform === "da
 
 let cfg;
 let flyout;
+let flyoutReleaseTimer;
 let chips;
 let clickAway;
 let tray;
@@ -136,6 +142,8 @@ function createWindow(opts) {
       nodeIntegration: false,
       sandbox: true,
       backgroundThrottling: false,
+      // Chromium's spellchecker loads (and first downloads) dictionaries no window here needs.
+      spellcheck: false,
     },
     ...opts,
   });
@@ -593,6 +601,7 @@ function showClickAway() {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        spellcheck: false,
       },
     });
     clickAway.setIgnoreMouseEvents(false);
@@ -654,6 +663,7 @@ function setFlyoutDocked(docked, opts = {}) {
     cfg.flyout_y = opts.keepPos && opts.y != null ? opts.y : pos[1];
   }
   config.save(cfg);
+  if (cfg.flyout_docked && !flyout) showFlyout();
   sendFlyoutState();
   if (!flyout) return;
   flyout.setAlwaysOnTop(true, cfg.flyout_docked ? "pop-up-menu" : "floating");
@@ -675,7 +685,8 @@ function setFlyoutPinned(pinned) {
 }
 
 function showFlyout(bounds) {
-  if (!flyout) return;
+  clearTimeout(flyoutReleaseTimer);
+  if (!flyout) createFlyout();
   if (flyout.isMinimized()) flyout.restore();
   placeFlyoutNearTray(bounds);
   flyout.show();
@@ -691,6 +702,13 @@ function hideFlyout(force) {
   if (!force && flyoutStaysOpen()) return;
   hideClickAway();
   flyout.hide();
+  clearTimeout(flyoutReleaseTimer);
+  flyoutReleaseTimer = setTimeout(() => {
+    if (!flyout || flyout.isVisible()) return;
+    flyout.destroy();
+    if (clickAway && !clickAway.isDestroyed()) clickAway.destroy();
+  }, 60_000);
+  flyoutReleaseTimer.unref();
   if (chips && !cfg.chips_hidden) keepWidgetOnTop(chips, cfg.chips_docked);
 }
 
@@ -1318,6 +1336,7 @@ function openSettings() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      spellcheck: false,
     },
   });
   settingsWin.setMenuBarVisibility(false);
@@ -1534,6 +1553,11 @@ function popupAppMenu() {
 }
 
 function createWindows() {
+  createChips();
+  if (flyoutStaysOpen()) showFlyout();
+}
+
+function createFlyout() {
   flyout = createWindow({
     width: 580,
     height: 280,
@@ -1564,8 +1588,20 @@ function createWindows() {
     flyout = null;
   });
   flyout.on("session-end", persistOnce);
-
-  createChips();
+  const win = flyout;
+  win.webContents.on("did-finish-load", () => {
+    sendFlyoutState();
+    win.webContents.send("usage://update", updater.getState());
+    win.webContents.send("usage://prefs", prefs());
+    if (latest) win.webContents.send("usage://snapshot", latest);
+    if (latestSessions) win.webContents.send("usage://sessions", latestSessions);
+    broadcastNet();
+    sendPairing();
+    refreshFileCounts();
+  });
+  win.webContents.on("render-process-gone", () => {
+    if (!win.isDestroyed()) win.webContents.reload();
+  });
 }
 
 function createChips() {
@@ -1653,8 +1689,7 @@ function wireIpc() {
   ipcMain.on("usage://drag-end", () => finishDrag());
   ipcMain.on("usage://flyout-hide", () => hideFlyout(true));
   ipcMain.on("usage://flyout-toggle", () => {
-    if (!flyout || flyout.isDestroyed()) return;
-    if (flyout.isVisible() && !flyoutStaysOpen()) hideFlyout(true);
+    if (flyout && flyout.isVisible() && !flyoutStaysOpen()) hideFlyout(true);
     else showFlyout();
   });
   ipcMain.on("usage://flyout-toggle-pin", () => setFlyoutPinned(!cfg.flyout_pinned));
@@ -1718,7 +1753,10 @@ function wireIpc() {
   ipcMain.handle("usage://get-battery", () => batteryView());
   ipcMain.on("usage://open-battery", () => {
     showFlyout();
-    if (flyout && !flyout.isDestroyed()) flyout.webContents.send("usage://focus-battery");
+    const win = flyout;
+    const focus = () => { if (!win.isDestroyed()) win.webContents.send("usage://focus-battery"); };
+    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", focus);
+    else focus();
   });
   // Pairing opens a port on the network, so only the flyout's own button can start it.
   ipcMain.handle("usage://pair-phone", (e) => (fromFlyout(e) ? beginPairing() : null));
@@ -1800,6 +1838,7 @@ if (process.platform === "win32") {
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
   app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 }
+require("./chromium").applySwitches(app.commandLine);
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -1818,7 +1857,8 @@ if (!gotLock) {
     );
     if (process.platform === "darwin" && app.dock) app.dock.hide();
     cfg = config.ensure();
-    if (IS_WINDOWS) {
+    // A smoke run changes nothing outside its throwaway profile: no folder menu, autostart or updates.
+    if (IS_WINDOWS && !SMOKE_REPORT) {
       // In the background once startup has settled; registering can take minutes.
       setTimeout(() => {
         folderMenu.install({ icon: app.isPackaged ? `${process.execPath},0` : path.join(__dirname, "ui", "icon.ico") })
@@ -1847,7 +1887,7 @@ if (!gotLock) {
           .catch((err) => log.error("folder menu", err));
       }, 20000);
     }
-    cfg.autostart = autostart.apply(cfg.autostart !== false);
+    if (!SMOKE_REPORT) cfg.autostart = autostart.apply(cfg.autostart !== false);
     config.save(cfg);
     applyTheme();
     insights = new Insights();
@@ -1890,7 +1930,19 @@ if (!gotLock) {
 
     history = new History();
     sessionLog = createSessionLog({ file: path.join(cacheDir(), "recent-sessions.json") });
-    sessionFiles = createSessionFiles({ cacheFile: path.join(cacheDir(), "session-files.json") });
+    // Session files read transcripts too, in a utility process that ends 90 s after the last scan.
+    // Each scan saves its parse state, so a quit while that process runs loses nothing.
+    const filesScans = createOffload(path.join(__dirname, "session-files.js"), {
+      inline: { createSessionFiles }, factory: "createSessionFiles",
+      options: { cacheFile: path.join(cacheDir(), "session-files.json") }, idleMs: 90_000, name: "session files",
+    });
+    sessionFiles = {
+      scan: (opts) => filesScans.call("scan", opts).then((result) => {
+        filesScans.call("flush").catch(() => {});
+        return result;
+      }),
+      flush: () => filesScans.stop(),
+    };
     filesWindow.init({ scanner: sessionFiles, providerOn, running: () => (latestSessions?.sessions || []).map((s) => s.key), prefs });
     phone = new PhoneLink({
       getConfig: () => cfg,
@@ -1910,7 +1962,8 @@ if (!gotLock) {
     wireIpc();
     createWindows();
     createTray();
-    startUpdater();
+    if (SMOKE_REPORT) smoke.run();
+    else startUpdater();
     batteryPoll = batteryUsage.start(batteryHistory, () => {
       for (const win of [chips, flyout]) if (win && !win.isDestroyed()) win.webContents.send("usage://battery", batteryView());
     });
@@ -1921,28 +1974,6 @@ if (!gotLock) {
       latestSystem = snapshot;
       if (chips && !chips.isDestroyed()) chips.webContents.send("usage://system", snapshot);
     });
-
-    flyout.webContents.on("did-finish-load", () => {
-      sendFlyoutState();
-      flyout.webContents.send("usage://update", updater.getState());
-      flyout.webContents.send("usage://prefs", prefs());
-      if (latest) flyout.webContents.send("usage://snapshot", latest);
-      if (latestSessions) flyout.webContents.send("usage://sessions", latestSessions);
-      sendPairing();
-      if (flyoutStaysOpen()) showFlyout();
-    });
-    const revive = (win) => {
-      if (!win || win.isDestroyed()) return;
-      win.webContents.on("render-process-gone", () => {
-        try {
-          if (win === chips) sendChipsLoading();
-          win.webContents.reload();
-        } catch {
-          /* ignore */
-        }
-      });
-    };
-    revive(flyout);
 
     let metricsTimer = null;
     const displaysChanged = () => {
@@ -2055,6 +2086,8 @@ function persistAll() {
   if (systemPoll) systemPoll.stop();
   netUsage.shutdown();
   if (taskbarLayout.stopTaskbarWatch) taskbarLayout.stopTaskbarWatch();
+  // Last: the sampler, the sessions and the taskbar above all use the Windows helper.
+  winhelper.stop();
   if (tray && !tray.isDestroyed()) tray.destroy();
 }
 

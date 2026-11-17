@@ -1,6 +1,6 @@
 {
   "name": "usage-monitor",
-  "version": "1.17.2",
+  "version": "1.18.0",
   "description": "Plan meters for Claude Code, Codex, Gemini, Grok Build, Cursor and GitHub Copilot, plus per-app network usage, for Windows, macOS and Linux",
   "main": "src/main.js",
   "private": true,
@@ -59,6 +59,9 @@
   "build": {
     "appId": "local.usage-monitor",
     "productName": "Usage Monitor",
+    "compression": "maximum",
+    "beforePack": "scripts/build-helper.js",
+    "afterPack": "scripts/after-pack.js",
     "files": [
       "src/**/*",
       "package.json",
@@ -91,6 +94,11 @@
     ],
     "win": {
       "icon": "src/ui/icon.ico",
+      "files": [
+        "src/**/*",
+        "package.json",
+        "!node_modules/systeminformation/**/*"
+      ],
       "target": [
         {
           "target": "nsis",
@@ -114,8 +122,8 @@
       "signAndEditExecutable": true,
       "extraResources": [
         {
-          "from": "scripts/taskbar-layout.ps1",
-          "to": "taskbar-layout.ps1"
+          "from": "helpers/windows/bin/UsageMonitorHelper.exe",
+          "to": "helper/UsageMonitorHelper.exe"
         },
         {
           "from": "helpers/windows",

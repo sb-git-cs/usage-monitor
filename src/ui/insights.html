@@ -209,10 +209,11 @@
         <div class="actions model-report-controls">
           <label>Model <select id="tokenModel"><option value="all">All models</option></select></label>
           <button class="btn btn-secondary" id="modelsCsv">Model CSV</button><button class="btn btn-secondary" id="modelsDailyCsv">Daily CSV</button>
+          <button class="btn btn-secondary" id="sessionsCsv">Session CSV</button>
           <button class="btn btn-ghost" id="modelsJson">Model JSON</button>
         </div>
-        <div class="table-container mt-md"><table class="data-table"><thead><tr><th>Provider / Model</th><th>Total</th><th>Input (uncached)</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning*</th><th>Observations</th></tr></thead><tbody id="modelUsageRows"></tbody></table></div>
-        <p class="fine">*Reasoning is part of output and is counted once. Values are observed tokens, not billed costs.</p>
+        <div class="table-container mt-md"><table class="data-table"><thead><tr><th>Provider / Model</th><th>Sessions</th><th>Total</th><th>Input (uncached)</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning*</th><th>Observations</th><th>API cost†</th></tr></thead><tbody id="modelUsageRows"></tbody></table></div>
+        <p class="fine">*Reasoning is part of output and is counted once. †What these tokens would cost at the providers' pay-as-you-go API list prices, including cache reads and writes; subscription plans are not billed per token. A model without a published price shows —.</p>
         <div id="tokenKpiGrid" class="token-kpis"></div>
 
         <div class="two-col-grid mt-lg">
@@ -241,8 +242,9 @@
       <section class="section-card"><h2>Recent sessions</h2><p class="fine">Closed sessions you can reopen in a terminal in their folder.</p>
         <div class="table-container"><table class="data-table"><thead><tr><th>Tool</th><th>Session</th><th>Folder</th><th>Last activity</th><th>Closed</th><th><span class="sr-only">Action</span></th></tr></thead><tbody id="recentSessionRows"></tbody></table></div>
       </section>
-      <section class="section-card"><h2>Recorded usage by session</h2><p class="fine">Local transcript identifiers are anonymized. Model reports combine usage across these sessions.</p>
-        <div class="table-container"><table class="data-table"><thead><tr><th>Session</th><th>Models</th><th>First / last observation</th><th>Total tokens</th></tr></thead><tbody id="sessionUsageRows"></tbody></table></div>
+      <section class="section-card"><h2>Tokens and cost by session</h2><p class="fine">Each Claude Code and Codex session of this period by its folder and title, with what each model used in it. Cost is at API list prices; subscription plans are not billed per token. Session CSV on the Models tab exports this table.</p>
+        <p id="sessionUsageSummary" class="fine"></p>
+        <div class="table-container"><table class="data-table"><thead><tr><th>Session</th><th>Model · tokens · cost</th><th>Active</th><th>Tokens</th><th>API cost</th></tr></thead><tbody id="sessionUsageRows"></tbody></table></div>
       </section>
     </div>
     <!-- NETWORK BUDGET -->

@@ -462,6 +462,11 @@ test("the cache file carries parse states to a new scanner, which reads nothing 
   const again = scanner(dir, { ...opts, onRead: (f) => reads.push(f) });
   assert.deepEqual(await again.scan(), first);
   assert.deepEqual(reads, []);
+  assert.equal(again.release(), true);
+  const restored = again.scan();
+  assert.equal(again.release(), false, "never release a scan that is in progress");
+  assert.deepEqual(await restored, first);
+  assert.deepEqual(reads, [], "released parse states reload from disk without rereading transcripts");
   again.flush();
   assert.equal(fs.statSync(cacheFile).mtimeMs, savedAt, "nothing changed, nothing written");
   // Another format version is not trusted.
@@ -858,4 +863,25 @@ test("Cursor Agent: a later scan reads only the blobs added since, and starts ov
   reads.length = 0;
   assert.deepEqual(rows((await s.scan()).sessions[0]), [["created", "D:\\w\\d.txt"], ["created", "D:\\w\\b.txt"], ["created", "D:\\w\\a.txt"]]);
   assert.deepEqual(reads, [1, 2, 3]);
+});
+
+
+test("idle scanner releases its parsed cache after a minute", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const dir = tmpdir(t), cacheFile = path.join(dir, "cache.json"), reads = [];
+  const cwd = "D:\\work\\api";
+  write(claudeFile(dir, "p", "s1"), jsonl([prompt("s1", cwd, T0, "go"), result("s1", cwd, T0 + 1000, create("D:\\work\\api\\a.txt"))]));
+  const instance = scanner(dir, { claudeDir: () => dir, cacheFile, onRead: f => reads.push(f) });
+  const first = await instance.scan();
+  assert.equal(first.sessions.length, 1);
+  reads.length = 0;
+  // An invalid disk cache only causes a transcript read once the in-memory state is released.
+  fs.writeFileSync(cacheFile, JSON.stringify({ version: 0, files: {} }));
+  t.mock.timers.tick(59_999);
+  assert.deepEqual(await instance.scan(), first);
+  assert.equal(reads.length, 0);
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(await instance.scan(), first);
+  assert.equal(reads.length, 1);
+  instance.release();
 });

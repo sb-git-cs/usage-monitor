@@ -796,6 +796,7 @@ function createSessionFiles({
   let chain = Promise.resolve();
   let loaded = false;
   let dirty = false;
+  let releaseTimer = null;
   let index = { sig: "", names: new Map() };
   let agyIndex = { sig: "", meta: new Map(), history: new Map() };
 
@@ -1575,19 +1576,44 @@ function createSessionFiles({
 
   // Scans run one at a time; a scan asked for again while it runs is shared.
   function scan({ days = 7, only = null } = {}) {
+    clearTimeout(releaseTimer);
     const d = Number.isFinite(Number(days)) && Number(days) > 0 ? Number(days) : 7;
     const set = only instanceof Set ? only : Array.isArray(only) ? new Set(only) : null;
     const key = `${d}|${set ? [...set].sort().join(",") : "*"}`;
     if (inflight.has(key)) return inflight.get(key);
     const run = chain.then(() => runScan(d, set)).catch(() => ({ sessions: [], coverage: { skipped: 1, truncated: false } }));
-    chain = run;
-    const shared = run.finally(() => inflight.delete(key));
+    chain = run.then(() => {});
+    const shared = run.finally(() => {
+      inflight.delete(key);
+      if (!inflight.size) {
+        releaseTimer = setTimeout(release, 60_000);
+        releaseTimer.unref();
+      }
+    });
     inflight.set(key, shared);
     return shared;
   }
 
+  // The durable parse cache avoids rereading transcripts next time the panel opens.
+  // Folder walks, image probes and parsed states need not stay in RAM while no view uses them.
+  function release() {
+    if (inflight.size) return false;
+    save();
+    if (cacheFile && dirty) return false;
+    clearTimeout(releaseTimer);
+    files.clear();
+    walks.clear();
+    probes.clear();
+    index = { sig: "", names: new Map() };
+    agyIndex = { sig: "", meta: new Map(), history: new Map() };
+    loaded = false;
+    dirty = false;
+    return true;
+  }
+
   return {
     scan,
+    release,
     flush() {
       save();
     },

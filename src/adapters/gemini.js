@@ -90,6 +90,63 @@ function findAgyBinary() {
   return null;
 }
 
+// The agy binary is over 200 MB. It is searched a few megabytes at a time as bytes: read as one
+// string, it stayed on the heap for good, because the client id and secret kept were slices of it.
+const SCAN_CHUNK = 4 * 1024 * 1024;
+// Longer than any client id or secret. Windows overlap by twice this, and each owns the matches
+// that start between its two edges, so a match on a chunk boundary is read whole, once.
+const SCAN_EDGE = 4096;
+const ID_SUFFIX = Buffer.from(".apps.googleusercontent.com", "latin1");
+const SECRET_PREFIX = Buffer.from("GOCSPX-", "latin1");
+const isDigit = (c) => c >= 48 && c <= 57;
+const isIdChar = (c) => isDigit(c) || (c >= 97 && c <= 122);
+const isSecretChar = (c) => isIdChar(c) || (c >= 65 && c <= 90) || c === 95;
+
+// Client ids as /\d{10,}-[a-z0-9]+\.apps\.googleusercontent\.com/g finds them, and secrets as
+// GOCSPX- followed by 20 to 40 of [A-Za-z0-9_] (ending at the next GOCSPX-), that start in
+// buf[lo, hi). Each is copied out, so nothing keeps buf alive.
+function clientMatches(buf, lo, hi, ids, secrets) {
+  for (let q = buf.indexOf(ID_SUFFIX); q !== -1; q = buf.indexOf(ID_SUFFIX, q + ID_SUFFIX.length)) {
+    let run = q;
+    while (run > 0 && isIdChar(buf[run - 1])) run--;
+    if (run === q || run < 2 || buf[run - 1] !== 45) continue;
+    let start = run - 1;
+    while (start > 0 && isDigit(buf[start - 1])) start--;
+    // A digit run that reaches the window's start may begin earlier: the previous window owns it.
+    if (run - 1 - start < 10 || start < lo || start >= hi) continue;
+    ids.push(buf.toString("latin1", start, q + ID_SUFFIX.length));
+  }
+  for (let p = buf.indexOf(SECRET_PREFIX); p !== -1;) {
+    const next = buf.indexOf(SECRET_PREFIX, p + SECRET_PREFIX.length);
+    const from = p + SECRET_PREFIX.length;
+    const limit = Math.min(from + 40, next === -1 ? buf.length : next);
+    let end = from;
+    while (end < limit && isSecretChar(buf[end])) end++;
+    if (end - from >= 20 && p >= lo && p < hi) secrets.push(buf.toString("latin1", p, end));
+    p = next;
+  }
+}
+
+async function scanBinary(file, { chunk = SCAN_CHUNK, edge = SCAN_EDGE } = {}) {
+  const ids = [];
+  const secrets = [];
+  const fh = await fs.promises.open(file, "r");
+  try {
+    const buf = Buffer.allocUnsafe(chunk + 2 * edge);
+    for (let offset = 0; ;) {
+      const { bytesRead } = await fh.read(buf, 0, buf.length, offset);
+      const last = bytesRead < buf.length;
+      clientMatches(buf.subarray(0, bytesRead), offset === 0 ? 0 : edge, last ? bytesRead : bytesRead - edge, ids, secrets);
+      if (last) break;
+      offset += bytesRead - 2 * edge;
+    }
+  } finally {
+    await fh.close();
+  }
+  if (!ids.length || !secrets.length) return null;
+  return { clientId: ids.find((id) => id.startsWith("1071")) || ids[0], clientSecret: secrets[0] };
+}
+
 // The OAuth client is embedded in the agy binary. The binary is read asynchronously, and a
 // lookup that found nothing is not repeated until the binary changes.
 async function extractOauthClient(binPath) {
@@ -111,23 +168,11 @@ async function extractOauthClient(binPath) {
   if (clientLookup.key === key) return null;
   clientLookup.key = key;
   if (!stat.isFile() || stat.size > MAX_BINARY_BYTES) return null;
-  let text;
   try {
-    text = await fs.promises.readFile(binPath, "latin1");
+    oauthClient = await scanBinary(binPath);
   } catch {
     return null;
   }
-  const ids = [...text.matchAll(/(\d{10,}-[a-z0-9]+\.apps\.googleusercontent\.com)/g)].map(
-    (m) => m[1]
-  );
-  const secrets = [];
-  for (const part of text.split("GOCSPX-").slice(1)) {
-    const body = (part.match(/^[A-Za-z0-9_]{20,40}/) || [])[0];
-    if (body) secrets.push("GOCSPX-" + body);
-  }
-  if (!ids.length || !secrets.length) return null;
-  const clientId = ids.find((id) => id.startsWith("1071")) || ids[0];
-  oauthClient = { clientId, clientSecret: secrets[0] };
   return oauthClient;
 }
 

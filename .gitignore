@@ -11,3 +11,4 @@ scripts/enum-taskbar.ps1
 .vscode/
 .npm-cache/
 .qa/
+helpers/windows/bin/

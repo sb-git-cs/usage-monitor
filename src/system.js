@@ -1,11 +1,9 @@
 const os = require("node:os");
-const path = require("node:path");
-const fs = require("node:fs");
-const { spawn } = require("node:child_process");
-const si = require("systeminformation");
+const winhelper = require("./winhelper");
+// Windows uses the native helper; load the cross-platform probes only when needed.
+const si = () => require("systeminformation");
 
 const SAMPLE_TIMEOUT_MS = 8000;
-const RESTART_GAP_MS = 30000;
 
 function percent(value) {
   return Number.isFinite(value) && value >= 0 ? Math.min(100, value) : null;
@@ -44,137 +42,32 @@ async function memoryUsage(platform = process.platform) {
     const total = os.totalmem();
     return total > 0 ? percent((total - os.freemem()) / total * 100) : null;
   }
-  const m = await si.mem();
+  const m = await si().mem();
   return m.total > 0 ? percent((m.total - m.available) / m.total * 100) : null;
 }
 
-// One PowerShell process answers every hardware sample: it reads "sample" lines on stdin and
-// writes one JSON line each. A sample that takes too long kills the process; the next sample
-// starts a new one, but not more often than every 30 seconds while it keeps failing.
-function createWorker({ start = spawnWorker, timeoutMs = SAMPLE_TIMEOUT_MS, restartGapMs = RESTART_GAP_MS, now = Date.now } = {}) {
-  let child = null;
-  let buffer = "";
-  let waiting = null;
-  let startedAt = -Infinity;
-
-  function settle(err, value) {
-    const w = waiting;
-    waiting = null;
-    if (!w) return;
-    clearTimeout(w.timer);
-    if (err) w.reject(err);
-    else w.resolve(value);
-  }
-
-  function discard(proc) {
-    if (child !== proc) return;
-    child = null;
-    buffer = "";
-    try {
-      proc.kill();
-    } catch {
-      /* already gone */
-    }
-  }
-
-  function launch() {
-    const proc = start();
-    child = proc;
-    buffer = "";
-    startedAt = now();
-    proc.stdout.setEncoding("utf8");
-    proc.stdout.on("data", (chunk) => {
-      if (child !== proc) return;
-      buffer += chunk;
-      let i;
-      while ((i = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, i).trim();
-        buffer = buffer.slice(i + 1);
-        if (!line) continue;
-        let data;
-        try {
-          data = JSON.parse(line);
-        } catch (err) {
-          settle(err);
-          continue;
-        }
-        settle(null, data);
-      }
-    });
-    proc.on("error", (err) => {
-      discard(proc);
-      settle(err);
-    });
-    proc.on("exit", () => {
-      discard(proc);
-      settle(new Error("hardware sampler exited"));
-    });
-    proc.stdin.on("error", () => {});
-    return proc;
-  }
-
-  function sample(request = "sample") {
-    if (waiting) return Promise.reject(new Error("a hardware sample is already running"));
-    if (!child && now() - startedAt < restartGapMs) return Promise.reject(new Error("hardware sampler is restarting"));
-    const proc = child || launch();
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        discard(proc);
-        settle(new Error("hardware sample timed out"));
-      }, timeoutMs);
-      waiting = { resolve, reject, timer };
-      proc.stdin.write(`${request}\n`);
-    });
-  }
-
-  function stop() {
-    const proc = child;
-    settle(new Error("stopped"));
-    if (!proc) return;
-    child = null;
-    try {
-      proc.stdin.end("exit\n");
-    } catch {
-      /* already closed */
-    }
-    // stdin closing ends the loop; make sure anyway.
-    setTimeout(() => {
-      try {
-        proc.kill();
-      } catch {
-        /* already gone */
-      }
-    }, 1000).unref();
-  }
-
-  return { sample, stop, get pid() { return child ? child.pid : null; } };
-}
-
-// Reads the script from stdin up to SCRIPT_END, then runs it; requests follow on the same stream.
-const SCRIPT_END = "# end of script";
-const BOOTSTRAP = `$s = New-Object Text.StringBuilder; while ($null -ne ($l = [Console]::In.ReadLine()) -and $l -ne '${SCRIPT_END}') { [void]$s.AppendLine($l) }; Invoke-Expression $s.ToString()`;
-
-function spawnWorker(file = "system-windows.ps1") {
-  // Electron can read inside app.asar; PowerShell cannot run a -File path inside it. The script goes
-  // in on stdin, not the command line, which Windows limits to 32,767 characters.
-  const script = fs.readFileSync(path.join(__dirname, file), "utf8");
-  const proc = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(BOOTSTRAP, "utf16le").toString("base64")], {
-    windowsHide: true,
-    stdio: ["pipe", "pipe", "ignore"],
-  });
-  proc.stdin.on("error", () => {});
-  proc.stdin.write(`${script.replace(/\r\n/g, "\n")}\n${SCRIPT_END}\n`);
-  return proc;
-}
-
-let worker = null;
+// Hardware and battery samples come from the resident Windows helper ("sys" channel), which answers
+// them one at a time and in order. Callers asking for the same reading while it runs share it.
+const pendingSamples = new Map();
 
 function windowsSample(request = "sample") {
-  if (!worker) worker = createWorker();
-  return worker.sample(request);
+  if (pendingSamples.has(request)) return pendingSamples.get(request);
+  const shared = winhelper.request("sys", request, { timeoutMs: SAMPLE_TIMEOUT_MS }).then((line) => JSON.parse(line)).finally(() => {
+    if (pendingSamples.get(request) === shared) pendingSamples.delete(request);
+  });
+  pendingSamples.set(request, shared);
+  return shared;
 }
 
-// Elsewhere si.graphics() starts system_profiler (macOS) or lspci (Linux) on every call. Only
+function batterySample() { return windowsSample("battery"); }
+
+// The helper also serves the sessions and the taskbar, so the sampler only forgets its shared readings;
+// the app stops the helper itself when it quits.
+function stopWindowsWorker() {
+  pendingSamples.clear();
+}
+
+// Elsewhere si().graphics() starts system_profiler (macOS) or lspci (Linux) on every call. Only
 // nvidia-smi reports utilization, so without it the GPU list is re-read every 10 minutes.
 const GRAPHICS_REFRESH_MS = 600000;
 let graphicsCache = null;
@@ -190,7 +83,7 @@ async function hardwareSample(withStorage = false, platform = process.platform) 
     return out;
   }
   const reuse = graphicsCache && !graphicsCache.live && Date.now() - graphicsCache.at < GRAPHICS_REFRESH_MS;
-  const [graphics, io] = await Promise.allSettled([reuse ? { controllers: graphicsCache.controllers } : si.graphics(), si.fsStats()]);
+  const [graphics, io] = await Promise.allSettled([reuse ? { controllers: graphicsCache.controllers } : si().graphics(), si().fsStats()]);
   const controllers = graphics.status === "fulfilled" ? graphics.value.controllers || [] : null;
   const usage = (controllers || []).map((g) => percent(g.utilizationGpu)).filter((v) => v !== null);
   if (!reuse && controllers) graphicsCache = { at: Date.now(), controllers, live: usage.length > 0 };
@@ -239,7 +132,7 @@ function start(onUpdate) {
     const withStorage = windows && hardwareCount++ % 6 === 0;
     collect("hardware", () => hardwareSample(withStorage), { gpu: null, disk: null, diskRate: null, disks: [] });
   };
-  const storage = () => collect("storage", async () => storageUsage(await si.fsSize()), { space: null, volumes: [] });
+  const storage = () => collect("storage", async () => storageUsage(await si().fsSize()), { space: null, volumes: [] });
   let timers = [];
   function run() {
     memoryTicks = 0;
@@ -267,12 +160,9 @@ function start(onUpdate) {
     stop() {
       stopped = true;
       timers.forEach(clearInterval);
-      if (worker) {
-        worker.stop();
-        worker = null;
-      }
+      stopWindowsWorker();
     },
   };
 }
 
-module.exports = { start, cpuUsage, storageUsage, percent, memoryUsage, hardwareSample, createWorker, spawnWorker };
+module.exports = { start, cpuUsage, storageUsage, percent, memoryUsage, hardwareSample, batterySample };
