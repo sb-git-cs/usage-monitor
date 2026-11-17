@@ -10,8 +10,33 @@ const os = require("node:os");
 const path = require("node:path");
 
 const FLAG = "--smoke-report=";
+// The app gives up and reports where it was stuck before scripts/packaged-smoke.js (120 s) kills it.
+const DEADLINE_MS = 95000;
 let report = null;
+let current = "starting";
+let finished = false;
 const crashes = [];
+const started = Date.now();
+
+// Each step goes to stdout as it starts, so a CI log shows where a run stopped.
+function stage(name) {
+  current = name;
+  try { process.stdout.write(`[smoke +${((Date.now() - started) / 1000).toFixed(1)} s] ${name}\n`); } catch { /* no stdout */ }
+}
+
+function within(promise, ms, what) {
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms / 1000} s`)), ms); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+function finish(result, code) {
+  if (finished) return;
+  finished = true;
+  fs.writeFileSync(report, JSON.stringify(result, null, 2));
+  stage(`report written, exiting with ${code}`);
+  require("electron").app.exit(code);
+}
 
 // Call first in main.js, before anything reads a path. Returns the report file, or null.
 function begin(argv = process.argv) {
@@ -19,6 +44,12 @@ function begin(argv = process.argv) {
   if (!arg) return null;
   report = path.resolve(arg.slice(FLAG.length));
   const { app } = require("electron");
+  stage("begin");
+  setTimeout(() => finish({ error: `the smoke run was still at "${current}" after ${DEADLINE_MS / 1000} s`, stage: current, crashes }, 1), DEADLINE_MS);
+  app.once("ready", () => stage("ready"));
+  let windowsCreated = 0;
+  app.on("browser-window-created", () => stage(`window ${++windowsCreated} created`));
+  app.once("before-quit", () => stage("quitting"));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "usage-monitor-smoke-"));
   for (const name of ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"]) {
     process.env[name] = path.join(dir, name.toLowerCase());
@@ -84,10 +115,10 @@ async function offloadCheck() {
   const reports = createOffload(path.join(__dirname, "tokens.js"), { name: "smoke tokens" });
   const files = createOffload(path.join(__dirname, "session-files.js"), { factory: "createSessionFiles", options: {}, name: "smoke files" });
   try {
-    const started = Date.now();
-    const report = await reports.call("scanTokens", { days: 1 });
-    const scan = await files.call("scan", { days: 7, only: new Set(["none"]) });
-    return { ok: !!(report && report.summary) && Array.isArray(scan.sessions), separate: reports.separate, ms: Date.now() - started };
+    const t0 = Date.now();
+    const report = await within(reports.call("scanTokens", { days: 1 }), 30000, "the token report's utility process");
+    const scan = await within(files.call("scan", { days: 7, only: new Set(["none"]) }), 30000, "the session-files utility process");
+    return { ok: !!(report && report.summary) && Array.isArray(scan.sessions), separate: reports.separate, ms: Date.now() - t0 };
   } catch (err) {
     return { ok: false, error: err.message };
   } finally {
@@ -98,11 +129,8 @@ async function offloadCheck() {
 
 // Called once the app is ready and its windows exist; writes the report and quits, whatever happens.
 function run(settleMs = 12000) {
-  const { app } = require("electron");
-  return collect(settleMs).catch((err) => {
-    fs.writeFileSync(report, JSON.stringify({ error: String(err && err.stack || err), crashes }, null, 2));
-    app.exit(1);
-  });
+  stage(`windows created, settling for ${settleMs / 1000} s`);
+  return collect(settleMs).catch((err) => finish({ error: String(err && err.stack || err), stage: current, crashes }, 1));
 }
 
 async function collect(settleMs) {
@@ -113,21 +141,33 @@ async function collect(settleMs) {
     if (win.isDestroyed()) continue;
     const entry = { page: win.webContents.getURL().split("/").pop(), visible: win.isVisible() };
     try {
-      const frame = await win.webContents.capturePage();
+      stage(`capturing ${entry.page}${entry.visible ? "" : " (hidden)"}`);
+      const frame = await within(win.webContents.capturePage(), 10000, `capturing ${entry.page}`);
       entry.painted = painted(frame);
-      if (entry.visible) entry.onScreenPct = await onScreen(win, frame).catch(() => null);
+      if (entry.visible) {
+        stage(`reading the screen under ${entry.page}`);
+        entry.onScreenPct = await within(onScreen(win, frame), 15000, "reading the screen").catch((err) => {
+          entry.onScreenError = err.message;
+          return null;
+        });
+      }
     } catch (err) {
       entry.error = err.message;
     }
     windows.push(entry);
   }
+  stage("reading process metrics");
   const result = {
     platform: process.platform, arch: process.arch, electron: process.versions.electron, packaged: app.isPackaged,
     processes: app.getAppMetrics().map((m) => ({ type: m.type, service: m.serviceName || null })),
-    gpu: app.getGPUFeatureStatus(), windows, helper: await helperCheck(), offload: await offloadCheck(), crashes,
+    gpu: app.getGPUFeatureStatus(), windows,
   };
-  fs.writeFileSync(report, JSON.stringify(result, null, 2));
-  app.exit(0);
+  stage("helper round trip");
+  result.helper = await helperCheck();
+  stage("utility process scans");
+  result.offload = await offloadCheck();
+  result.crashes = crashes;
+  finish(result, 0);
 }
 
 module.exports = { begin, run, FLAG };

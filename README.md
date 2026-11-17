@@ -43,7 +43,7 @@ Sign in once to the tools you want metered (`claude`, `codex login`, `agy`, `gro
 
 ## What you see
 
-**New in 1.18.0:** Insights and its report show which coding session used how many tokens, of which model, and what they would cost at API list prices, with a cumulative view per model (subscription plans are not billed per token; **Session CSV** exports it all). The app is also much lighter: on Windows it idles at about 137 MB of private memory in 3 processes instead of about 763 MB in 14, one small helper replaces the PowerShell processes it kept open, and the Windows download is about 13 MB smaller.
+**New in 1.18.0:** Insights and its report show which coding session used how many tokens, of which model, and what they would cost at API list prices, with a cumulative view per model (subscription plans are not billed per token; **Session CSV** exports it all). The panel's Codex card lists your banked resets and when each one expires. The app is also much lighter: on Windows it idles at about 137 MB of private memory in 3 processes instead of about 763 MB in 14, one small helper replaces the PowerShell processes it kept open, and the Windows download is about 13 MB smaller.
 
 **New in 1.17.1:** the **Session files** window also lists **Antigravity** and **Cursor Agent** sessions, read from their own conversation databases, so the PDFs, documents and code an Antigravity conversation wrote show up next to the Claude Code, Codex and Grok Build ones. Recent rows of both tools get a file count on the panel's Sessions card.
 

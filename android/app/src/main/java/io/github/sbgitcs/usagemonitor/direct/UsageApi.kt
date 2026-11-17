@@ -299,7 +299,7 @@ class UsageApi(private val http: Http = UrlHttp) {
                 }
             }
             val count = num(body.obj("rate_limit_reset_credits")?.v("available_count"))
-            if (count != null && count > 0) windows.add(labelWindow("credits", "Reset credits ×${count.toLong()}"))
+            if (count != null && count > 0) windows.add(labelWindow("credits", "Banked resets ×${count.toLong()}"))
             val plan = (body.v("plan_type") as? String)?.takeIf { it.isNotEmpty() }?.replaceFirstChar { it.uppercase() }
             return provider("codex", "Codex", plan, windows, now)
         }

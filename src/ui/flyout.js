@@ -265,6 +265,30 @@ async function pickAccount(select) {
   showNotice(result.message || result.error || "");
 }
 
+// A plan's credits line. Banked resets (Codex) list when each one expires, soonest first; one
+// that has expired since the last reading is left out.
+const BANKED_SHOWN = 5;
+function creditsHtml(w) {
+  const now = Date.now();
+  const banked = (Array.isArray(w.banked) ? w.banked : []).filter((b) => b && Date.parse(b.expires_at) > now);
+  if (!banked.length) return `<div class="credits">${escapeHtml(w.label)}</div>`;
+  const titles = [...new Set(banked.map((b) => b.title || ""))];
+  const shared = titles.length === 1 && titles[0] ? titles[0] : "";
+  const day = (iso) => new Date(Date.parse(iso)).toLocaleDateString([], { month: "short", day: "numeric" });
+  const left = (iso) => {
+    const ms = Date.parse(iso) - now;
+    return ms >= 86400000 ? `${Math.floor(ms / 86400000)}d left` : `${formatEta(iso)} left`;
+  };
+  const rows = banked.slice(0, BANKED_SHOWN).map((b) => {
+    const granted = formatWhen(b.granted_at);
+    const tip = `${b.title || "Banked reset"} · expires ${formatWhen(b.expires_at)}${granted ? ` · granted ${granted}` : ""}`;
+    const what = shared ? "" : `${b.title || "Banked reset"} · `;
+    return `<li title="${escapeHtml(tip)}"><span class="banked-when">${escapeHtml(`${what}Expires ${day(b.expires_at)}`)}</span><span class="banked-left">${escapeHtml(left(b.expires_at))}</span></li>`;
+  });
+  if (banked.length > BANKED_SHOWN) rows.push(`<li class="banked-more">+${banked.length - BANKED_SHOWN} more</li>`);
+  return `<div class="credits banked"><div class="banked-head">${escapeHtml(w.label)}${shared ? ` <span class="banked-title">· ${escapeHtml(shared)}</span>` : ""}</div><ul class="banked-list">${rows.join("")}</ul></div>`;
+}
+
 function render(snapshot) {
   if (document.activeElement?.classList?.contains("account-pick")) {
     pendingSnapshot = snapshot;
@@ -324,7 +348,7 @@ function render(snapshot) {
       parts.push(`<div class="metrics">`);
       for (const w of p.windows || []) {
         if (w.kind === "credits" && w.used_pct == null) {
-          extras.push(`<div class="credits">${escapeHtml(w.label)}</div>`);
+          extras.push(creditsHtml(w));
           continue;
         }
         const alert = alerting(w) ? " alert" : "";

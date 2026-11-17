@@ -205,6 +205,62 @@ test("Codex recognizes API key logins without making subscription requests", asy
   assert.equal((await adapter.fetchUsage()).status.state, "unknown");
 });
 
+test("Codex lists its banked resets by expiry and asks for them again only when the count changes", async () => {
+  const day = (n) => new Date(Date.now() + n * 86400000).toISOString();
+  const usage = (count) => ({ rate_limit: { primary_window: { used_percent: 5, limit_window_seconds: 18000, reset_after_seconds: 100 } },
+    rate_limit_reset_credits: { available_count: count, applicable_available_count: 0 } });
+  const details = { available_count: 3, total_earned_count: 0, credits: [
+    { id: "later", status: "available", is_supported_by_plan: true, title: "Full reset (Weekly + 5 hr)", granted_at: day(-5), expires_at: day(25) },
+    { id: "soon", status: "available", is_supported_by_plan: true, title: "Full reset (Weekly + 5 hr)", granted_at: day(-17), expires_at: day(13) },
+    { id: "used", status: "redeemed", title: "Full reset", expires_at: day(10) },
+    { id: "expired", status: "available", title: "Full reset", expires_at: day(-1) },
+    { id: "other plan", status: "available", is_supported_by_plan: false, title: "Full reset", expires_at: day(3) },
+  ] };
+  let count = 3;
+  const urls = [];
+  const codex = load("src/adapters/codex.js", {
+    fs: { readFileSync: () => JSON.stringify({ tokens: { access_token: "fake", account_id: "acct" } }) },
+    "../paths": { ...noPaths, codexAuth: () => "auth.json", fileExists: () => true },
+    "../http": { getJson: async (url, headers) => {
+      urls.push(url);
+      assert.equal(headers["ChatGPT-Account-Id"], "acct");
+      return { status: 200, json: url.endsWith("/wham/usage") ? usage(count) : details };
+    } },
+  });
+  const credits = async () => (await codex.fetchUsage()).windows.find((w) => w.kind === "credits");
+  const first = await credits();
+  assert.equal(first.label, "Banked resets ×3", "the summary's count: the list may be capped");
+  assert.equal(first.used_pct, null);
+  assert.deepEqual(first.banked, [
+    { title: "Full reset (Weekly + 5 hr)", granted_at: details.credits[1].granted_at, expires_at: details.credits[1].expires_at },
+    { title: "Full reset (Weekly + 5 hr)", granted_at: details.credits[0].granted_at, expires_at: details.credits[0].expires_at },
+  ]);
+  assert.equal(urls.filter((u) => u.endsWith("/rate-limit-reset-credits")).length, 1);
+  await credits();
+  assert.equal(urls.filter((u) => u.endsWith("/rate-limit-reset-credits")).length, 1, "the next poll reuses the list");
+  count = 2;
+  assert.equal((await credits()).label, "Banked resets ×2");
+  assert.equal(urls.filter((u) => u.endsWith("/rate-limit-reset-credits")).length, 2, "a used or new reset asks again");
+  count = 0;
+  assert.equal(await credits(), undefined, "no banked resets, no line and no extra request");
+  assert.equal(urls.filter((u) => u.endsWith("/rate-limit-reset-credits")).length, 2);
+});
+
+test("Codex still shows the banked reset count when their dates cannot be read", async () => {
+  const codex = load("src/adapters/codex.js", {
+    fs: { readFileSync: () => JSON.stringify({ tokens: { access_token: "fake", account_id: "acct" } }) },
+    "../paths": { ...noPaths, codexAuth: () => "auth.json", fileExists: () => true },
+    "../http": { getJson: async (url) => (url.endsWith("/wham/usage")
+      ? { status: 200, json: { rate_limit: { primary_window: { used_percent: 5, limit_window_seconds: 18000 } }, rate_limit_reset_credits: { available_count: 1 } } }
+      : { status: 403, json: null, text: "<html>blocked</html>" }) },
+  });
+  const result = await codex.fetchUsage();
+  assert.equal(result.status.state, "ok");
+  const credits = result.windows.find((w) => w.kind === "credits");
+  assert.equal(credits.label, "Banked resets ×1");
+  assert.equal("banked" in credits, false);
+});
+
 test("Claude does not manufacture zero utilization from a reset timestamp", () => {
   const adapter = load("src/adapters/claude.js", {}, ["mapUsage"]);
   const result = adapter.mapUsage({ five_hour: { resets_at: "2030-01-01T00:00:00Z" } }, {});

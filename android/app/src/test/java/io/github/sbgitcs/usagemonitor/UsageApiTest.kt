@@ -80,7 +80,7 @@ class UsageApiTest {
         assertEquals(30.0, p.windows[1].usedPct!!, 0.0)
         assertEquals(now + 60_000, p.windows[1].resetsAt)
         assertEquals("Spark 5h", p.windows[2].label)
-        assertEquals("Reset credits ×2", p.windows[3].label)
+        assertEquals("Banked resets ×2", p.windows[3].label)
         assertNull(p.windows[3].usedPct)
     }
 

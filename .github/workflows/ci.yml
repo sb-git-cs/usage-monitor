@@ -65,11 +65,14 @@ jobs:
         if: runner.os == 'Linux'
         run: npx electron-builder --linux --x64 --dir --publish never
       # The built app runs in a throwaway profile and reports its processes, painting and crashes.
+      # The script ends a stuck app after 120 s; the step limit is the backstop.
       - name: Packaged app smoke run
         if: runner.os != 'Linux'
+        timeout-minutes: 6
         run: node scripts/packaged-smoke.js
       - name: Packaged app smoke run (virtual display)
         if: runner.os == 'Linux'
+        timeout-minutes: 6
         run: xvfb-run -a node scripts/packaged-smoke.js
 
   android:

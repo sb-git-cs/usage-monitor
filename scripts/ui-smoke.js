@@ -60,6 +60,12 @@ const snapshot = { providers: [
   ] },
   { id: "codex", display_name: "Codex", status: { state: "ok" }, windows: [
     { kind: "five_hour", label: "5h", used_pct: 80, remaining_pct: 20, resets_at: future, forecast_at: new Date(Date.now() + 1800000).toISOString(), burn_per_hour: 40 },
+    // Banked resets: one has expired since the reading, so two are listed, soonest first.
+    { kind: "credits", label: "Banked resets ×3", used_pct: null, remaining_pct: null, resets_at: null, banked: [
+      { title: hostile, granted_at: new Date(Date.now() - 86400000 * 10).toISOString(), expires_at: new Date(Date.now() - 60000).toISOString() },
+      { title: hostile, granted_at: new Date(Date.now() - 86400000 * 4).toISOString(), expires_at: new Date(Date.now() + 86400000 * 13.5).toISOString() },
+      { title: hostile, granted_at: new Date(Date.now() - 86400000).toISOString(), expires_at: new Date(Date.now() + 86400000 * 25.5).toISOString() },
+    ] },
   ] },
   { id: "gemini", display_name: "Gemini", status: { state: "stale" }, windows: [
     { kind: "quota", label: "Pro", used_pct: null, remaining_pct: null },
@@ -140,6 +146,17 @@ async function check(file) {
         meters: document.querySelectorAll('[role="progressbar"]').length,
       })`);
       assert.deepEqual(overview, { reporting: "2 of 4", attention: "2 at risk", coverage: "2 unavailable or cached", meters: 4 });
+      const banked = await win.webContents.executeJavaScript(`(() => {
+        const el = document.querySelector('.provider[data-id="codex"] .banked');
+        return el && { head: el.querySelector('.banked-head').textContent,
+          rows: [...el.querySelectorAll('li')].map((li) => [li.querySelector('.banked-when').textContent, li.querySelector('.banked-left').textContent, li.title]) };
+      })()`);
+      assert.equal(banked.head, `Banked resets ×3 · ${hostile}`, "the shared title once, as text");
+      assert.deepEqual(banked.rows.map((r) => r[1]), ["13d left", "25d left"], "an expired reset is left out; soonest first");
+      for (const [when, , title] of banked.rows) {
+        assert.match(when, /^Expires \S+ \d+$/);
+        assert.match(title, /expires .+ · granted /);
+      }
       await win.webContents.executeJavaScript(`document.querySelector('.provider').focus()`);
       win.webContents.send("usage://snapshot", snapshot);
       await new Promise((resolve) => setTimeout(resolve, 100));

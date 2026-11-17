@@ -5,6 +5,13 @@ const { getJson } = require("../http");
 const { jwtExpMs } = require("../jwt");
 
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+// Each banked reset with its dates; the usage response only counts them.
+const RESETS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+// Dates change only when a reset is granted, used or expires, so the list is asked for again when
+// the count changes or after an hour, and a failed read is retried after ten minutes.
+const RESETS_TTL_MS = 60 * 60_000;
+const RESETS_RETRY_MS = 10 * 60_000;
+const bankedCache = { key: null, at: 0, list: null };
 
 function probe() {
   return {
@@ -45,7 +52,40 @@ function usedOf(w) {
   return left == null ? null : 100 - left;
 }
 
-function mapWham(body) {
+function isoOrNull(value) {
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
+// The banked resets that can still be used, soonest expiry first. The list may be capped, so the
+// usage response's available_count stays the count shown.
+function bankedResets(body, now = Date.now()) {
+  return (Array.isArray(body && body.credits) ? body.credits : [])
+    .filter((c) => c && c.status === "available" && c.is_supported_by_plan !== false && Date.parse(c.expires_at) > now)
+    .map((c) => ({
+      title: typeof c.title === "string" && c.title.trim() ? c.title.trim() : null,
+      granted_at: isoOrNull(c.granted_at),
+      expires_at: isoOrNull(c.expires_at),
+    }))
+    .sort((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
+}
+
+async function loadBanked(headers, account, count) {
+  const key = `${account || ""}|${count}`;
+  const age = Date.now() - bankedCache.at;
+  if (bankedCache.key === key && age < (bankedCache.list ? RESETS_TTL_MS : RESETS_RETRY_MS)) return bankedCache.list;
+  let list = null;
+  try {
+    const res = await getJson(RESETS_URL, { ...headers, Accept: "application/json" });
+    if (res.status === 200 && res.json && Array.isArray(res.json.credits)) list = bankedResets(res.json);
+  } catch {
+    list = null;
+  }
+  Object.assign(bankedCache, { key, at: Date.now(), list });
+  return list;
+}
+
+function mapWham(body, banked = null) {
   const windows = [];
   const rl = body.rate_limit || {};
   const primary = rl.primary_window;
@@ -95,10 +135,11 @@ function mapWham(body) {
   if (credits && credits.available_count > 0) {
     windows.push({
       kind: "credits",
-      label: `Reset credits ×${credits.available_count}`,
+      label: `Banked resets ×${credits.available_count}`,
       used_pct: null,
       remaining_pct: null,
       resets_at: null,
+      ...(Array.isArray(banked) ? { banked } : {}),
     });
   }
   const plan = typeof body.plan_type === "string" && body.plan_type
@@ -154,11 +195,12 @@ async function fetchUsage() {
     });
   }
 
-  const res = await getJson(USAGE_URL, {
+  const headers = {
     Authorization: `Bearer ${tokens.access_token}`,
     "ChatGPT-Account-Id": tokens.account_id || "",
     "User-Agent": "Mozilla/5.0 usage-monitor/1.0",
-  });
+  };
+  const res = await getJson(USAGE_URL, headers);
 
   // Only 401 means the login expired. A 403 can come from the site's firewall, so it stays
   // retryable and the last reading is kept.
@@ -183,7 +225,8 @@ async function fetchUsage() {
       message: `HTTP ${res.status}`,
     });
   }
-  const mapped = mapWham(res.json);
+  const count = Number(res.json.rate_limit_reset_credits && res.json.rate_limit_reset_credits.available_count);
+  const mapped = mapWham(res.json, count > 0 ? await loadBanked(headers, tokens.account_id, count) : null);
   if (!mapped.windows.length) {
     // Without rate_limit the body is a changed or error response, and the last good reading is
     // kept. With it but no window, the plan reports no limits.

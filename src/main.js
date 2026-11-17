@@ -1988,9 +1988,12 @@ if (!gotLock) {
     screen.on("display-added", displaysChanged);
 
     if (!latest) sendChipsLoading();
-    // Saved sign-ins are encrypted with the OS keychain when Electron can reach it.
+    // Saved sign-ins are encrypted with the OS keychain when Electron can reach it. A smoke run
+    // leaves the keychain of macOS and Linux alone: it is outside the throwaway profile, and the
+    // dialog it can raise there would stop a run that nobody is watching.
     try {
-      const canEncrypt = !!(safeStorage && typeof safeStorage.isEncryptionAvailable === "function" && safeStorage.isEncryptionAvailable());
+      const keychain = !(SMOKE_REPORT && process.platform !== "win32");
+      const canEncrypt = keychain && !!(safeStorage && typeof safeStorage.isEncryptionAvailable === "function" && safeStorage.isEncryptionAvailable());
       const { readGenericCredential, writeGenericCredential } = require("./wincred");
       accountVault.init({
         ...(canEncrypt ? { available: true, encrypt: (text) => safeStorage.encryptString(text), decrypt: (buf) => safeStorage.decryptString(buf) } : { available: false }),

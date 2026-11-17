@@ -8,7 +8,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { inProcess } = require("../src/chromium");
 const { unusedFiles } = require("./after-pack");
 const pkg = require("../package.json");
@@ -54,16 +54,66 @@ function check(report, app) {
   return failures;
 }
 
+const POSIX = process.platform !== "win32";
+const LIMIT_MS = 120000;
+
+// The app's processes, which on macOS and Linux share the process group it was started in.
+function group(pgid) {
+  const ps = spawnSync("ps", ["-A", "-o", "pid=,pgid=,stat=,etime=,command="], { encoding: "utf8", timeout: 10000 });
+  return String(ps.stdout || "").split("\n").map((l) => l.trim()).filter((l) => l && l.split(/\s+/)[1] === String(pgid));
+}
+
+// What a hung app is doing: its processes and, on macOS, where its main thread is waiting.
+function diagnose(pid) {
+  if (!POSIX) return;
+  console.error(`processes of the app:\n  ${group(pid).join("\n  ") || "(none)"}`);
+  if (process.platform !== "darwin") return;
+  const out = path.join(os.tmpdir(), `um-smoke-sample-${pid}.txt`);
+  let run = spawnSync("/usr/bin/sample", [String(pid), "3", "-mayDie", "-file", out], { encoding: "utf8", timeout: 40000 });
+  if (!fs.existsSync(out)) run = spawnSync("sudo", ["-n", "/usr/bin/sample", String(pid), "3", "-mayDie", "-file", out], { encoding: "utf8", timeout: 40000 });
+  if (!fs.existsSync(out)) return console.error(`no stack sample: ${String(run.stderr || run.error || "").trim()}`);
+  const lines = fs.readFileSync(out, "utf8").split("\n");
+  const start = lines.findIndex((l) => /Thread_\d+.*com\.apple\.main-thread/.test(l));
+  const rest = start < 0 ? [] : lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^\s{4}\d+ Thread_\d+/.test(l));
+  console.error(`main thread of the app (sampled 3 s):\n${(start < 0 ? lines.slice(0, 80) : [lines[start], ...rest.slice(0, end < 0 ? 150 : Math.min(end, 150))])
+    .map((l) => l.slice(0, 240)).join("\n")}`);
+}
+
+// Ends the app and every process it started; a helper left running would hold the step's output open.
+function killAll(child) {
+  if (!POSIX) {
+    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", timeout: 15000 });
+    return;
+  }
+  try { process.kill(-child.pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* already gone */ } }
+}
+
 async function main() {
   const app = findApp();
   if (!app || !fs.existsSync(app.exe)) throw new Error(`no built app in ${dist}; run electron-builder --dir first`);
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "um-smoke-report-")), "report.json");
   const args = [`--smoke-report=${file}`, ...(process.platform === "linux" ? ["--no-sandbox"] : [])];
   const code = await new Promise((resolve, reject) => {
-    const child = spawn(app.exe, args, { stdio: "inherit" });
-    const timer = setTimeout(() => { child.kill(); reject(new Error("the app did not finish its smoke run within 120 s")); }, 120000);
-    child.on("error", reject);
-    child.on("exit", (exitCode) => { clearTimeout(timer); resolve(exitCode); });
+    // Its own process group, so the group can be ended as a whole.
+    const child = spawn(app.exe, args, { stdio: "inherit", detached: POSIX });
+    const timer = setTimeout(() => {
+      console.error(`the app did not finish its smoke run within ${LIMIT_MS / 1000} s`);
+      diagnose(child.pid);
+      killAll(child);
+      child.unref();
+      reject(new Error(`the app did not finish its smoke run within ${LIMIT_MS / 1000} s`));
+    }, LIMIT_MS);
+    child.on("error", (err) => { clearTimeout(timer); reject(err); });
+    child.on("exit", (exitCode, signal) => {
+      clearTimeout(timer);
+      if (POSIX) {
+        const left = group(child.pid);
+        if (left.length) console.error(`processes still running after the app exited, now ended:\n  ${left.join("\n  ")}`);
+        try { process.kill(-child.pid, "SIGKILL"); } catch { /* none left */ }
+      }
+      resolve(exitCode == null ? `signal ${signal}` : exitCode);
+    });
   });
   if (!fs.existsSync(file)) throw new Error(`the app exited (${code}) without a report`);
   const report = JSON.parse(fs.readFileSync(file, "utf8"));
