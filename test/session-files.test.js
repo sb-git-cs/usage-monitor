@@ -871,7 +871,8 @@ test("idle scanner releases its parsed cache after a minute", async (t) => {
   const dir = tmpdir(t), cacheFile = path.join(dir, "cache.json"), reads = [];
   const cwd = "D:\\work\\api";
   write(claudeFile(dir, "p", "s1"), jsonl([prompt("s1", cwd, T0, "go"), result("s1", cwd, T0 + 1000, create("D:\\work\\api\\a.txt"))]));
-  const instance = scanner(dir, { claudeDir: () => dir, cacheFile, onRead: f => reads.push(f) });
+  // Windows paths, so the folder reads as absolute on every platform, as in the tests above.
+  const instance = scanner(dir, { claudeDir: () => dir, platform: "win32", cacheFile, onRead: f => reads.push(f) });
   const first = await instance.scan();
   assert.equal(first.sessions.length, 1);
   reads.length = 0;

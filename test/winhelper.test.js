@@ -165,9 +165,14 @@ test("the real helper answers each channel from one hidden process", { skip: pro
     assert.deepEqual(JSON.parse(await h.request("sess", JSON.stringify({ op: "peek", pid: 0x7ffffff0, expect: "x" }))), { shown: false });
     assert.deepEqual(JSON.parse(await h.request("sess", "not json")), { error: true });
     assert.deepEqual(JSON.parse(await h.request("cred", JSON.stringify({ op: "read", target: "usage-monitor:test:missing" }))), { text: null });
-    const layout = new Promise((resolve) => h.on("bar", (line) => { if (line.startsWith("layout=")) resolve(JSON.parse(line.slice(7))); }));
+    // An idle helper never keeps Node running, so the wait for a line nobody asked for needs its own timer.
+    let timer;
+    const layout = Promise.race([
+      new Promise((resolve) => h.on("bar", (line) => { if (line.startsWith("layout=")) resolve(JSON.parse(line.slice(7))); })),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("no taskbar layout within 20 s")), 20000); }),
+    ]);
     assert.equal(h.send("bar", "watch"), true);
-    const first = await layout;
+    const first = await layout.finally(() => clearTimeout(timer));
     assert.ok(Array.isArray(first.occupied) && typeof first.shown === "boolean");
     assert.equal(h.pid, pid, "still the same process");
   } finally {
